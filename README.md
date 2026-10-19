@@ -170,11 +170,11 @@ Escolha uma das formas:
 - **Pelo navegador:** abra o arquivo `kernel.bin` neste repositório e clique em **Download raw file** (ícone de download).
 - **Pelo terminal (Linux e macOS):**
   ```bash
-  curl -L -o kernel.bin https://github.com/SEU_USUARIO/novaera-kernel/raw/main/kernel.bin
+  curl -L -o kernel.bin https://github.com/josedavimoura579-ai/NewEra-Karnel/raw/main/kernel.bin
   ```
 - **Pelo PowerShell (Windows):**
   ```powershell
-  Invoke-WebRequest -Uri https://github.com/SEU_USUARIO/novaera-kernel/raw/main/kernel.bin -OutFile kernel.bin
+  Invoke-WebRequest -Uri https://github.com/josedavimoura579-ai/NewEra-Karnel/raw/main/kernel.bin -OutFile kernel.bin
   ```
 
 ### Passo 2 — Instale o QEMU
