@@ -262,7 +262,7 @@ Para sair, feche a janela do QEMU.
 
 ```bash
 sudo apt install nasm clang lld qemu-system-x86
-git clone https://github.com/SEU_USUARIO/novaera-kernel.git
+git clone https://github.com/josedavimoura579-ai/NewEra-Karnel.git
 cd novaera-kernel
 bash build.sh
 qemu-system-i386 -kernel kernel.bin -m 64M
@@ -273,7 +273,7 @@ qemu-system-i386 -kernel kernel.bin -m 64M
 ```bash
 pkg update && pkg install nasm clang lld git
 pkg install qemu-system-x86-64     # o nome do pacote pode variar entre versões do Termux
-git clone https://github.com/SEU_USUARIO/novaera-kernel.git
+git clone https://github.com/josedavimoura579-ai/NewEra-Karnel.git
 cd novaera-kernel
 bash build.sh
 bash run.sh            # tela de texto dentro do Termux; use "bash run.sh vnc" para janela gráfica via app VNC
