@@ -146,4 +146,17 @@ Com ela, o programa pode usar `inb()` e `outb()` para falar com as
 portas do hardware e `sys_irq_assinar()` para receber interrupções.
 O `usuario/teclado.c` é um driver completo: leia-o como exemplo.
 
+## O compilador dentro do NovaEra
+
+O NovaEra já roda o **QBE**, a metade de trás do compilador do NEFS. No
+shell do seu sistema:
+
+```
+qbe /usr/share/qbe/ola.ssa
+```
+
+Ele lê a linguagem intermediária do QBE (SSA) e escreve o assembly x86_64,
+igual ao que o QBE escreve no Linux. O QBE não foi reescrito: é o código
+original compilado com a libc do NovaEra (veja a pasta `portes/`).
+
 Próximo capítulo: `nefs livro 5`.

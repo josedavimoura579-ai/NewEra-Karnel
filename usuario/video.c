@@ -3,6 +3,9 @@
  *  NovaEra - usuario/video.c   (PID 1, anel 3)
  *  Servidor de vídeo: o ÚNICO processo com a memória VGA mapeada.
  *  Quem quiser escrever na tela manda uma mensagem para ele.
+ *  Tudo o que vai para a tela também sai pela porta serial COM1, sem
+ *  conversão: no QEMU, "-serial stdio" mostra a saída no terminal de fora
+ *  (útil para testes e para guardar o que um programa escreveu).
  * ===========================================================================
  */
 #include "ulib.h"
@@ -64,6 +67,33 @@ static void putc(char c, u8 cor)
     }
 }
 
+/* ------------------------- Porta serial (COM1) ------------------------- */
+
+#define COM1 0x3F8u
+
+static void serial_iniciar(void)
+{
+    outb(COM1 + 1, 0x00);     /* sem interrupções */
+    outb(COM1 + 3, 0x80);     /* DLAB: vai definir a velocidade */
+    outb(COM1 + 0, 0x01);     /* divisor 1 = 115200 bps */
+    outb(COM1 + 1, 0x00);
+    outb(COM1 + 3, 0x03);     /* 8 bits, sem paridade, 1 bit de parada */
+    outb(COM1 + 2, 0xC7);     /* liga e limpa as filas (FIFO) */
+}
+
+static void serial_byte(u8 b)
+{
+    while (!(inb(COM1 + 5) & 0x20)) { }   /* espera a saída esvaziar */
+    outb(COM1, b);
+}
+
+static void serial_escreve(u8 b)
+{
+    if (b == '\n')      serial_byte('\r');
+    else if (b == '\b') { serial_byte('\b'); serial_byte(' '); }
+    serial_byte(b);
+}
+
 /* ------------------------- Acentos: UTF-8 -> CP437 ------------------------
  * Os textos em C e nos arquivos são UTF-8 ("ç" = 0xC3 0xA7); a placa VGA
  * usa a tabela CP437 ("ç" = 0x87). Uma sequência UTF-8 válida é
@@ -110,14 +140,17 @@ int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
     cursor_ler();
+    serial_iniciar();
 
     msg_t m;
     for (;;) {
         sys_receber(PID_QUALQUER, &m);
 
         if (m.tipo == MSG_VIDEO_ESCREVER) {
-            for (u32 i = 0; i < MSG_TEXTO_MAX && m.texto[i]; i++)
+            for (u32 i = 0; i < MSG_TEXTO_MAX && m.texto[i]; i++) {
                 escreve_byte((u8)m.texto[i], (u8)m.arg[0]);
+                serial_escreve((u8)m.texto[i]);
+            }
         } else if (m.tipo == MSG_VIDEO_LIMPAR) {
             limpar();
         }

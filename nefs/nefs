@@ -120,6 +120,7 @@ cmd_novo() {
     mkdir -p "$pasta/usuario/bin"
     cp "$NEFS_MODELO"/usuario/bin/*.c "$pasta/usuario/bin/"
     cp -r "$NEFS_MODELO/libc" "$pasta/libc"           # a libc do NovaEra (nlibc)
+    [ -d "$NEFS_MODELO/portes" ] && cp -r "$NEFS_MODELO/portes" "$pasta/portes"   # QBE e outros portes
     chmod +x "$pasta/build.sh"
 
     # A identidade do sistema novo. O prompt é o nome sem espaços.

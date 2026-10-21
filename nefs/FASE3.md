@@ -65,8 +65,16 @@ Cada etapa termina com algo testável no QEMU e vira um pull request.
   - núcleo: SSE ligado e FPU salva por processo; `SYS_ESPERAR(0)` = qualquer filho
   - *Teste: `testelibc`, 47 testes conferidos antes com a glibc no Linux,
     passa no NovaEra compilado com clang e com cproc + QBE.*
-- [ ] **Etapa 4 — QBE rodando no NovaEra** (primeiro marco grande)
-  - *Teste: `qbe arquivo.ssa` gera, dentro do NovaEra, o mesmo assembly que no Linux.*
+- [x] **Etapa 4 — QBE rodando no NovaEra** (primeiro marco grande)
+  - **portes** (`portes/<nome>/receita`): programas de fora compilados do
+    código original, sem nenhuma mudança, com a nlibc; `portes/baixar.sh`
+    baixa e confere o SHA-256, e o `build.sh` os põe no initrd
+  - o QBE 1.3 é o primeiro porte: `/bin/qbe` e exemplos em `/usr/share/qbe`
+  - o servidor de vídeo copia a saída para a porta serial (COM1): no QEMU,
+    `-serial stdio` mostra tudo do lado de fora
+  - *Teste: os 76 arquivos de teste do QBE e o `kernel.c` em SSA (70 KB),
+    compilados dentro do NovaEra, dão o mesmo assembly, byte a byte, que o
+    QBE no Linux. O QBE compilado com clang e com cproc + QBE.*
 - [ ] **Etapa 5 — `nefs-as` e `nefs-ld`**
   - assembler para o subconjunto que o QBE gera; ligador ELF simples
   - os `.asm` do NovaEra reescritos na sintaxe AT&T, para um único assembler bastar

@@ -208,6 +208,7 @@ novaera-kernel/
 │   └── bin/          #   os comandos: ls, cat, echo, mkdir, rm, novafetch...
 ├── build.sh          # Compila os programas, embute-os e liga o kernel.bin
 ├── libc/             # A libc do NovaEra: include/ (cabeçalhos), src/, crt0.asm
+├── portes/           # Programas de fora compilados para o NovaEra (o QBE)
 ├── nefs/             # O NEFS: comando nefs, Livro do NEFS e a ISO (separado do núcleo)
 ├── run.sh            # Atalho para rodar no QEMU (pensado para o Termux)
 ├── kernel.bin        # Binário pronto para rodar
@@ -403,7 +404,8 @@ O QBE gera código para x86_64, e foi por isso que o NovaEra passou para 64 bits
   - [x] Etapa 1 — programas ELF, initrd, heap, pilha sob demanda, criar/esperar processos
   - [x] Etapa 2 — servidores de arquivos, terminal e pipes; `ls`, `cat`, `echo`, `mkdir`, `rm`, `novafetch`
   - [x] Etapa 3 — a libc do NovaEra (nlibc) e ponto flutuante no núcleo
-  - [ ] Etapas 4 a 8 — QBE, assembler/ligador, cproc, autossuficiência, ISO
+  - [x] Etapa 4 — o QBE rodando dentro do NovaEra (`qbe /usr/share/qbe/ola.ssa`)
+  - [ ] Etapas 5 a 8 — assembler/ligador, cproc, autossuficiência, ISO
 
 ### Fases futuras (depois da Fase 3)
 

@@ -176,6 +176,11 @@ cp "$REPO"/usuario/*.c "$REPO"/usuario/*.h "$REPO"/usuario/*.asm "$REPO"/usuario
 mkdir -p "$MODELO/usuario/bin"
 cp "$REPO"/usuario/bin/*.c "$MODELO/usuario/bin/"
 cp -r "$REPO/libc" "$MODELO/libc"
+# Os portes (o QBE que roda dentro do NovaEra), já com as fontes: a ISO
+# não precisa de internet para compilá-los.
+mkdir -p "$REPO/portes/fontes"
+cp "$FONTES/qbe-$QBE_VERSAO.tar.xz" "$REPO/portes/fontes/" 2>/dev/null || true
+cp -r "$REPO/portes" "$MODELO/portes"
 # O NovaEra original já compilado, para comparar com o seu sistema:
 #   qemu-system-x86_64 -kernel /usr/share/nefs/novaera/kernel.bin \
 #       -initrd /usr/share/nefs/novaera/initrd.tar -display curses

@@ -9,7 +9,9 @@
 #   3. compila a libc do NovaEra (libc/) e os programas de usuario/bin/,
 #      ligados com ela, e junta tudo no initrd.tar, que o GRUB/QEMU
 #      entregam ao núcleo junto com o kernel.bin
-#   4. compila o núcleo e liga o kernel.bin
+#   4. compila os portes (portes/*/receita, como o QBE) com a mesma libc
+#      e os põe no initrd, se as fontes já foram baixadas
+#   5. compila o núcleo e liga o kernel.bin
 #
 #  Compiladores aceitos (variável CC):
 #    CC=clang  (padrão)                    -> Linux, Termux
@@ -66,14 +68,16 @@ case "$(basename "$CC")" in
         # -mno-red-zone: uma interrupção no anel 0 escreveria em cima da
         #  "zona vermelha" da pilha; -mgeneral-regs-only: o núcleo não usa SSE.
         CFLAGS_NUCLEO="$COMUNS -mno-red-zone -mgeneral-regs-only"
-        CFLAGS="$COMUNS" ;;
+        CFLAGS="$COMUNS"
+        SEM_AVISOS="-w" ;;
     *)
         # cproc + QBE: o QBE só usa SSE para números de ponto flutuante (o
         # núcleo não tem nenhum) e o núcleo nunca é interrompido no meio do
         # código C (as interrupções ficam desligadas no anel 0, menos em
         # cpu_ocioso), então a "zona vermelha" não é problema.
         CFLAGS_NUCLEO="-std=c11"
-        CFLAGS="-std=c11" ;;
+        CFLAGS="-std=c11"
+        SEM_AVISOS="" ;;
 esac
 CFLAGS_NUCLEO="$CFLAGS_NUCLEO -I. -Ibuild"
 CFLAGS="$CFLAGS -nostdinc -Ilibc/include -I. -Ibuild -Iusuario"
@@ -192,17 +196,63 @@ for fonte in usuario/bin/*.c; do
     # shellcheck disable=SC2086
     ligar_programa "build/initrd/bin/$nome" build/libc/crt0.o build/sys.o "build/bin-$nome.o" $LIBC
 done
+
+# --- 4. Os portes: programas de fora (portes/<nome>/receita) ----------------
+# Cada porte é compilado do código original, sem mudanças, com a libc do
+# NovaEra. Só entra se as fontes já estiverem em portes/fontes/ (veja
+# portes/baixar.sh); sem elas, o sistema é construído sem o porte.
+for receita in portes/*/receita; do
+    [ -f "$receita" ] || continue
+    dir="$(dirname "$receita")"
+    (
+        # shellcheck disable=SC1090
+        . "./$receita"
+        arquivo="portes/fontes/$(basename "$URL")"
+        if [ ! -f "$arquivo" ]; then
+            echo "  portes: $NOME $VERSAO sem fontes (rode portes/baixar.sh), fica de fora"
+            exit 0
+        fi
+        rm -rf "build/portes/$PASTA"
+        mkdir -p build/portes
+        case "$arquivo" in
+            *.xz) xz -dc "$arquivo" | tar -C build/portes -xf - ;;
+            *.gz) gzip -dc "$arquivo" | tar -C build/portes -xf - ;;
+            *)    tar -C build/portes -xf "$arquivo" ;;
+        esac
+        # Arquivos do NovaEra que o porte precisa (como o config.h do QBE).
+        for extra in "$dir"/*; do
+            case "$extra" in */receita|*/exemplos) continue ;; esac
+            cp "$extra" "build/portes/$PASTA/"
+        done
+        objs=""
+        for fonte in $FONTES; do
+            obj="build/portes/$PASTA/$(echo "$fonte" | tr / _).o"
+            # Sem avisos: o código é de outro projeto; eles são assunto de lá.
+            # shellcheck disable=SC2086
+            "$CC" $CFLAGS $SEM_AVISOS -c "build/portes/$PASTA/$fonte" -o "$obj"
+            objs="$objs $obj"
+        done
+        # shellcheck disable=SC2086
+        ligar_programa "build/initrd/bin/$NOME" build/libc/crt0.o build/sys.o $objs $LIBC
+        if [ -n "${EXEMPLOS:-}" ] && [ -d "$dir/exemplos" ]; then
+            mkdir -p "build/initrd$EXEMPLOS"
+            cp "$dir"/exemplos/* "build/initrd$EXEMPLOS/"
+        fi
+        echo "  portes: $NOME $VERSAO -> bin/$NOME ($(wc -c < "build/initrd/bin/$NOME") bytes)"
+    )
+done
+
 # Formato ustar: o que o núcleo sabe ler. Data, dono e ordem fixos: o mesmo
 # código gera sempre o mesmo initrd.tar. O tar do BusyBox já usa ustar e
 # não conhece essas opções.
 if ! tar --format=ustar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
-         -C build/initrd -cf build/initrd.tar bin etc 2>/dev/null; then
-    tar -C build/initrd -cf build/initrd.tar bin etc
+         -C build/initrd -cf build/initrd.tar $(ls build/initrd) 2>/dev/null; then
+    tar -C build/initrd -cf build/initrd.tar $(ls build/initrd)
 fi
 cp build/initrd.tar initrd.tar
 echo "  usuario/bin/*.c + etc/ -> initrd.tar ($(ls build/initrd/bin | wc -l) programas, $(wc -c < initrd.tar) bytes)"
 
-# --- 4. Núcleo ---------------------------------------------------------------
+# --- 5. Núcleo ---------------------------------------------------------------
 
 nasm -f elf64 boot.asm -o build/boot.o
 nasm -f elf64 cpu.asm -o build/cpu.o
