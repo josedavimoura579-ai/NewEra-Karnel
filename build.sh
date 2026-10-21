@@ -4,9 +4,11 @@
 #
 #   1. lê sistema.conf e programas.lista e gera build/sistema.h,
 #      build/programas.h e build/programas.asm
-#   2. compila cada programa do usuário (usuario/<nome>.c + crt0.asm)
-#      como binário puro para 0x40000000
-#   3. compila o núcleo, embute os programas e liga o kernel.bin
+#   2. compila os servidores do boot (usuario/<nome>.c + crt0.asm) como
+#      programas ELF, que o núcleo embute
+#   3. compila os programas de usuario/bin/ e junta todos no initrd.tar,
+#      que o GRUB/QEMU entregam ao núcleo junto com o kernel.bin
+#   4. compila o núcleo e liga o kernel.bin
 #
 #  Compiladores aceitos (variável CC):
 #    CC=clang  (padrão)                    -> Linux, Termux
@@ -27,9 +29,6 @@ if [ -z "${OBJCOPY:-}" ]; then
     if command -v objcopy >/dev/null; then OBJCOPY=objcopy; else OBJCOPY=llvm-objcopy; fi
 fi
 
-# Liga um ELF e o converte em binário puro. Por que não "ld --oformat binary"
-# direto? Porque assim o ld do binutils não resolve os acessos pela GOT que
-# o QBE gera, e o código acabaria lendo endereços zerados.
 # Os programas do NovaEra não têm cabeçalhos de segmento com permissões
 # separadas (o núcleo mapeia tudo); o aviso "RWX" do ld do binutils é esperado.
 LDFLAGS=""
@@ -37,6 +36,16 @@ if "$LD" --help 2>/dev/null | grep -q -- --no-warn-rwx-segments; then
     LDFLAGS="--no-warn-rwx-segments"
 fi
 
+# Liga um programa do usuário: um ELF, que o núcleo sabe carregar.
+ligar_programa() {
+    saida="$1"; shift
+    # shellcheck disable=SC2086
+    "$LD" -m elf_x86_64 -nostdlib $LDFLAGS -T usuario/usuario.ld -o "$saida" build/crt0.o "$@"
+}
+
+# Liga um ELF e o converte em binário puro (o kernel.bin). Por que não
+# "ld --oformat binary" direto? Porque assim o ld do binutils não resolve
+# os acessos pela GOT que o QBE gera, e o código acabaria lendo zeros.
 ligar() {
     script="$1"; saida="$2"; shift 2
     # shellcheck disable=SC2086
@@ -112,7 +121,7 @@ global prog_${nome}_ini
 global prog_${nome}_fim
 align 8
 prog_${nome}_ini:
-    incbin "build/$nome.bin"
+    incbin "build/$nome.elf"
 prog_${nome}_fim:
 EOF
     echo "extern const u8 prog_${nome}_ini[], prog_${nome}_fim[];" >> build/programas.h
@@ -128,17 +137,36 @@ done < programas.lista
 } >> build/programas.h
 echo "section .note.GNU-stack noalloc noexec nowrite progbits" >> build/programas.asm
 
-# --- 2. Programas do usuário -------------------------------------------------
+# --- 2. Servidores do boot ---------------------------------------------------
 
 nasm -f elf64 usuario/crt0.asm -o build/crt0.o
 for prog in $PROGRAMAS; do
     # shellcheck disable=SC2086
     "$CC" $CFLAGS -c "usuario/$prog.c" -o "build/$prog.o"
-    ligar usuario/usuario.ld "build/$prog.bin" build/crt0.o "build/$prog.o"
-    echo "  usuario/$prog.c -> build/$prog.bin ($(wc -c < "build/$prog.bin") bytes)"
+    ligar_programa "build/$prog.elf" "build/$prog.o"
+    echo "  usuario/$prog.c -> build/$prog.elf ($(wc -c < "build/$prog.elf") bytes)"
 done
 
-# --- 3. Núcleo ---------------------------------------------------------------
+# --- 3. Programas do initrd (usuario/bin/*.c -> bin/<nome>) -----------------
+
+rm -rf build/initrd
+mkdir -p build/initrd/bin
+for fonte in usuario/bin/*.c; do
+    [ -f "$fonte" ] || continue
+    nome="$(basename "$fonte" .c)"
+    # shellcheck disable=SC2086
+    "$CC" $CFLAGS -Iusuario -c "$fonte" -o "build/bin-$nome.o"
+    ligar_programa "build/initrd/bin/$nome" "build/bin-$nome.o"
+done
+# Formato ustar: o que o núcleo sabe ler. O tar do BusyBox já usa ustar e
+# não conhece a opção --format.
+if ! tar --format=ustar -C build/initrd -cf build/initrd.tar bin 2>/dev/null; then
+    tar -C build/initrd -cf build/initrd.tar bin
+fi
+cp build/initrd.tar initrd.tar
+echo "  usuario/bin/*.c -> initrd.tar ($(ls build/initrd/bin | wc -l) programas, $(wc -c < initrd.tar) bytes)"
+
+# --- 4. Núcleo ---------------------------------------------------------------
 
 nasm -f elf64 boot.asm -o build/boot.o
 nasm -f elf64 cpu.asm -o build/cpu.o

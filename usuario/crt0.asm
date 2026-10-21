@@ -9,16 +9,15 @@
 
 bits 64
 
-; O núcleo começa a executar no primeiro byte do programa (0x40000000),
-; que é este _start, com RBX e RCX como argumentos. Se main() voltar,
-; o processo termina. A pilha já chega alinhada em 16 bytes.
+; O núcleo começa a executar no ponto de entrada do ELF, que é este
+; _start, com RDI = argc e RSI = argv (os textos ficam no topo da pilha).
+; O valor que main() devolve vira o código de saída do processo.
 section .text.entrada progbits alloc exec nowrite
 global _start
 extern main
 _start:
-    mov rdi, rbx                     ; 1º argumento de main (ABI System V)
-    mov rsi, rcx                     ; 2º argumento
-    call main
+    call main                        ; main(argc, argv): RDI e RSI já prontos
+    mov rbx, rax                     ; código de saída
     mov eax, 7                       ; SYS_SAIR
     int 0x80
 .fim:

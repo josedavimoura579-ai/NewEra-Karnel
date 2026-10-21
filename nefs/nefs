@@ -62,7 +62,8 @@ Crie o seu próprio sistema operacional sobre o microkernel NovaEra.
 Uso: nefs <comando> [argumentos]
 
   novo <pasta> [nome]   cria um sistema novo a partir do NovaEra
-  programa <nome>       cria um programa (processo do anel 3) no sistema
+  comando <nome>        cria um comando do shell (programa do initrd)
+  programa <nome>       cria um servidor que sobe no boot (programas.lista)
   compilar              compila o sistema e gera o kernel.bin
   rodar                 liga o sistema numa máquina virtual (QEMU)
   iso                   gera uma ISO inicializável do sistema (GRUB)
@@ -116,6 +117,8 @@ cmd_novo() {
     done
     cp "$NEFS_MODELO"/usuario/*.c "$NEFS_MODELO"/usuario/*.h \
        "$NEFS_MODELO"/usuario/*.asm "$NEFS_MODELO"/usuario/*.ld "$pasta/usuario/"
+    mkdir -p "$pasta/usuario/bin"
+    cp "$NEFS_MODELO"/usuario/bin/*.c "$pasta/usuario/bin/"
     chmod +x "$pasta/build.sh"
 
     # A identidade do sistema novo. O prompt é o nome sem espaços.
@@ -169,22 +172,11 @@ cmd_programa() {
  */
 #include "ulib.h"
 
-/* Pede ao servidor de vídeo (PID 1) para escrever um texto. */
-static void escreve(const char *s, u8 cor)
+int main(int argc, char **argv)
 {
-    msg_t m;
-    msg_zera(&m);
-    m.tipo   = MSG_VIDEO_ESCREVER;
-    m.arg[0] = cor;
-    for (u32 i = 0; s[i] && i < MSG_TEXTO_MAX - 1; i++)
-        m.texto[i] = s[i];
-    sys_enviar(PID_VIDEO, &m);
-}
+    (void)argc; (void)argv;
 
-void main(u64 reinicios, u64 falha)
-{
-    (void)reinicios; (void)falha;
-
+    /* escreve() pede ao servidor de vídeo (PID 1) para mostrar o texto. */
     escreve("Ola! Aqui e o programa $nome (PID $pid).\n", COR(COR_VERDE_CLARO));
 
     /* Um servidor passa a vida esperando mensagens e respondendo. */
@@ -198,6 +190,40 @@ EOF
     printf '%-11s -\n' "$nome" >> "$PROJETO/programas.lista"
     ok "programa '$nome' criado: usuario/$nome.c (PID $pid)"
     dica "ele já está em programas.lista; rode  nefs compilar  &&  nefs rodar"
+}
+
+cmd_comando() {
+    [ $# -ge 1 ] || erro "uso: nefs comando <nome>"
+    achar_projeto
+    nome="$1"
+    case "$nome" in
+        *[!a-z0-9_]*|[!a-z]*) erro "nome inválido: use letras minúsculas, números e _, começando por letra" ;;
+    esac
+    [ ! -f "$PROJETO/usuario/bin/$nome.c" ] || erro "usuario/bin/$nome.c já existe"
+    mkdir -p "$PROJETO/usuario/bin"
+    cat > "$PROJETO/usuario/bin/$nome.c" <<EOF
+/*
+ * usuario/bin/$nome.c - um comando do shell. Criado por "nefs comando $nome".
+ *
+ * O build o coloca no initrd como bin/$nome; o shell o executa quando você
+ * digita "$nome" (com argumentos, se quiser). O valor que main() devolve é
+ * o código de saída.
+ */
+#include "ulib.h"
+
+int main(int argc, char **argv)
+{
+    escreve("Ola do comando $nome!\n", COR(COR_VERDE_CLARO));
+    for (int i = 1; i < argc; i++) {
+        escreve("  argumento: ", COR(COR_CINZA_CLARO));
+        escreve(argv[i], COR(COR_AMARELO));
+        escreve("\n", COR(COR_BRANCO));
+    }
+    return 0;
+}
+EOF
+    ok "comando '$nome' criado: usuario/bin/$nome.c"
+    dica "rode  nefs compilar  &&  nefs rodar  e digite  $nome  no shell do seu sistema"
 }
 
 cmd_compilar() {
@@ -217,9 +243,11 @@ cmd_rodar() {
     # Sem interface gráfica (ISO do NEFS, SSH, Termux): a tela vai para o terminal.
     if [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
         dica "para sair do QEMU: Alt+2, digite  quit  e Enter"
-        exec qemu-system-x86_64 -kernel "$PROJETO/kernel.bin" -m 64M -nic none -display curses
+        exec qemu-system-x86_64 -kernel "$PROJETO/kernel.bin" -initrd "$PROJETO/initrd.tar" \
+             -m 64M -nic none -display curses
     fi
-    exec qemu-system-x86_64 -kernel "$PROJETO/kernel.bin" -m 64M -nic none
+    exec qemu-system-x86_64 -kernel "$PROJETO/kernel.bin" -initrd "$PROJETO/initrd.tar" \
+         -m 64M -nic none
 }
 
 cmd_iso() {
@@ -231,12 +259,14 @@ cmd_iso() {
     rm -rf "$raiz"
     mkdir -p "$raiz/boot/grub"
     cp "$PROJETO/kernel.bin" "$raiz/boot/kernel.bin"
+    cp "$PROJETO/initrd.tar" "$raiz/boot/initrd.tar"
     . "$PROJETO/sistema.conf"
     cat > "$raiz/boot/grub/grub.cfg" <<EOF
 set timeout=2
 set default=0
 menuentry "$NOME $VERSAO" {
     multiboot /boot/kernel.bin
+    module /boot/initrd.tar
     boot
 }
 EOF
@@ -289,6 +319,7 @@ case "$comando" in
     ferramentas)          cmd_ferramentas ;;
     novo)                 cmd_novo "$@" ;;
     programa)             cmd_programa "$@" ;;
+    comando)              cmd_comando "$@" ;;
     compilar)             cmd_compilar ;;
     rodar)                cmd_rodar ;;
     iso)                  cmd_iso ;;

@@ -30,13 +30,22 @@ typedef unsigned long long u64;
 #define SYS_IRQ_ASSINAR  4   /* (irq)            só drivers: IRQ -> mensagem */
 #define SYS_TEMPO        5   /* ()               ticks desde o boot (100 Hz) */
 #define SYS_TAREFA_INFO  6   /* (pid, msg*)      nome/estado de um processo  */
-#define SYS_SAIR         7   /* ()               encerra o processo          */
+#define SYS_SAIR         7   /* (código)         encerra o processo          */
 #define SYS_RESPONDER    8   /* (destino, msg*)  responde a um CHAMAR; nunca bloqueia */
 #define SYS_MEMORIA      9   /* ()               (KiB livres << 32) | KiB total */
+#define SYS_CRIAR       10   /* (caminho, argv)  executa um programa do initrd; devolve o PID */
+#define SYS_ESPERAR     11   /* (pid)            espera o filho terminar; devolve o código */
+#define SYS_SBRK        12   /* (incremento)     aumenta o heap; devolve o fim anterior */
+#define SYS_PID         13   /* ()               o PID de quem chama          */
+#define SYS_INITRD_INFO 14   /* (índice, msg*)   texto = nome, arg[0] = tamanho de um arquivo */
 
 #define ERRO_INVALIDO   (-1) /* argumento ou ponteiro inválido */
 #define ERRO_SEM_PERMISSAO (-2)
 #define ERRO_PID        (-3) /* processo inexistente ou morto */
+#define ERRO_NAO_ACHADO (-4) /* arquivo não existe no initrd */
+#define ERRO_SEM_MEMORIA (-5)
+#define ERRO_FORMATO    (-6) /* o arquivo não é um programa ELF x86_64 válido */
+#define ERRO_LOTADO     (-7) /* não há vaga para mais processos */
 
 /* --------------------------- Processos fixos ----------------------------
  * O NovaEra ainda não tem um servidor de nomes: cada servidor tem um
@@ -48,14 +57,14 @@ typedef unsigned long long u64;
 #define PID_QUALQUER 0xFFFFFFFFu   /* em SYS_RECEBER: aceita de qualquer um */
 
 /* ------------------------------ Mensagem --------------------------------
- * Tamanho fixo (80 bytes). O núcleo copia a mensagem inteira de um espaço
+ * Tamanho fixo (88 bytes). O núcleo copia a mensagem inteira de um espaço
  * de endereçamento para o outro: os processos nunca veem a memória alheia. */
 #define MSG_TEXTO_MAX 64u
 
 typedef struct {
     u32  origem;                 /* preenchido PELO NÚCLEO: quem enviou */
     u32  tipo;                   /* MSG_* abaixo */
-    u32  arg[2];
+    u32  arg[4];
     char texto[MSG_TEXTO_MAX];
 } msg_t;
 
@@ -67,23 +76,37 @@ typedef struct {
 #define MSG_REINICIAR      21    /* o driver do teclado controla a linha RESET */
 #define MSG_OK             99
 
-/* Estados de processo (usados por SYS_TAREFA_INFO em arg[0]) */
+/* Estados de processo. SYS_TAREFA_INFO devolve: arg[0] = estado,
+ * arg[1] = reinícios, arg[2] = exceção da última falha, arg[3] = PID do pai. */
 #define ESTADO_LIVRE      0
 #define ESTADO_PRONTO     1
 #define ESTADO_ENVIANDO   2
 #define ESTADO_RECEBENDO  3
-#define ESTADO_MORTO      4
+#define ESTADO_MORTO      4      /* servidor que falhou demais e desistiu  */
+#define ESTADO_ESPERANDO  5      /* em SYS_ESPERAR, aguardando um filho    */
+#define ESTADO_ZUMBI      6      /* terminou; o pai ainda não leu o código */
+
+/* Código de saída de quem foi encerrado por uma exceção: 128 + vetor
+ * (o mesmo costume do Unix). Ex.: falha de página (14) = 142. */
+#define SAIDA_FALHA_BASE  128
 
 /* ------------------------- Mapa de memória virtual ----------------------
  * 0x00000000 - 0x3FFFFFFF  núcleo (1 GiB, mapeado igual à memória física,
  *                          visível SOMENTE no anel 0)
- * 0x40000000 - 0x4000FFFF  programa do usuário (código + dados, 64 KiB)
- * 0x40100000 - 0x40103FFF  pilha do usuário (16 KiB)
- * 0x40200000 - 0x40200FFF  memória de vídeo 0xB8000 (só no servidor de vídeo) */
-#define USUARIO_BASE        0x40000000u
-#define USUARIO_IMG_TAM     0x00010000u
-#define USUARIO_PILHA_BASE  0x40100000u
-#define USUARIO_PILHA_TAM   0x00004000u
-#define USUARIO_VGA         0x40200000u
+ * 0x40000000 - 0x4FFFFFFF  programa (segmentos do ELF), até 256 MiB
+ * ...depois do programa    heap, cresce para cima com SYS_SBRK, até 0x60000000
+ * 0x70000000 - 0x70000FFF  memória de vídeo 0xB8000 (só no servidor de vídeo)
+ * 0x7FF00000 - 0x7FFFEFFF  pilha (1 MiB), cresce para baixo sob demanda;
+ *                          no topo ficam os argumentos (argc, argv)       */
+#define USUARIO_BASE        0x40000000ull
+#define USUARIO_PROG_FIM    0x50000000ull
+#define USUARIO_HEAP_FIM    0x60000000ull
+#define USUARIO_VGA         0x70000000ull
+#define USUARIO_PILHA_TOPO  0x7FFFF000ull
+#define USUARIO_PILHA_TAM   0x00100000ull
+#define USUARIO_FIM         USUARIO_PILHA_TOPO
+
+#define ARGV_MAX       16u   /* argumentos por programa      */
+#define ARGV_BYTES   1024u   /* soma do tamanho dos textos   */
 
 #endif

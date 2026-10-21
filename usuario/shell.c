@@ -3,32 +3,15 @@
  *  NovaEra - usuario/shell.c   (PID 3, anel 3)
  *  O shell é um programa comum: não enxerga a tela nem o teclado.
  *  Para escrever, manda mensagem ao servidor de vídeo; para ler uma
- *  tecla, faz uma chamada ao driver de teclado.
+ *  tecla, faz uma chamada ao driver de teclado. Um comando que ele não
+ *  conhece é procurado no initrd (bin/<comando>) e executado como um
+ *  processo filho.
  * ===========================================================================
  */
 #include "ulib.h"
 #include "sistema.h"      /* gerado de sistema.conf pelo build.sh */
 
 /* ------------------------- Conversa com os servidores -------------------- */
-
-static void escreve(const char *s, u8 cor)
-{
-    msg_t m;
-    while (*s) {                           /* textos longos vão em pedaços */
-        msg_zera(&m);
-        m.tipo   = MSG_VIDEO_ESCREVER;
-        m.arg[0] = cor;
-        u32 i = 0;
-        while (*s && i < MSG_TEXTO_MAX - 1) m.texto[i++] = *s++;
-        sys_enviar(PID_VIDEO, &m);
-    }
-}
-
-static void escreve_num(u32 n, u8 cor)
-{
-    char buf[11];
-    escreve(num_texto(n, buf), cor);
-}
 
 /* Escreve s e completa com espaços até 'largura' colunas. */
 static void escreve_coluna(const char *s, u32 largura, u8 cor)
@@ -56,7 +39,9 @@ static char ler_tecla(void)
 
 /* ------------------------------- Comandos -------------------------------- */
 
-static const char *const ESTADOS[] = { "livre", "pronto", "enviando", "recebendo", "morto" };
+static const char *const ESTADOS[] = {
+    "livre", "pronto", "enviando", "recebendo", "morto", "esperando", "zumbi"
+};
 static const char *const EXCECOES[] = {
     "Divisao por zero", "Debug", "NMI", "Breakpoint", "Overflow",
     "Limite excedido", "Opcode invalido", "FPU indisponivel", "Falta dupla",
@@ -73,14 +58,17 @@ static void cmd_ajuda(void)
     escreve("  mem      ", c); escreve("memoria fisica livre\n", d);
     escreve("  tempo    ", c); escreve("tempo desde o boot\n", d);
     escreve("  sobre    ", c); escreve("o que e um microkernel\n", d);
+    escreve("  programas", c); escreve(" lista os programas do initrd\n", d);
     escreve("  invadir  ", c); escreve("tenta ler a memoria do nucleo (e o shell morre!)\n", d);
     escreve("  reboot   ", c); escreve("reinicia o computador\n", d);
+    escreve("Outro nome executa bin/<nome> do initrd, com argumentos: ", d);
+    escreve("ola um dois\n", c);
 }
 
 static void cmd_ps(void)
 {
     const u8 t = COR(COR_CIANO_CLARO), v = COR(COR_BRANCO);
-    escreve("PID  NOME       ANEL  ESTADO      REINICIOS\n", t);
+    escreve("PID  NOME       ANEL  PAI  ESTADO      REINICIOS\n", t);
     for (u32 pid = 0; ; pid++) {
         msg_t m;
         if (sys_tarefa_info(pid, &m) < 0) break;
@@ -89,7 +77,8 @@ static void cmd_ps(void)
         escreve_coluna(num_texto(pid, buf), 5, v);
         escreve_coluna(m.texto, 11, v);
         escreve_coluna(pid == 0 ? "0" : "3", 6, v);
-        escreve_coluna(m.arg[0] <= ESTADO_MORTO ? ESTADOS[m.arg[0]] : "?", 12, v);
+        escreve_coluna(num_texto(m.arg[3], buf), 5, v);
+        escreve_coluna(m.arg[0] <= ESTADO_ZUMBI ? ESTADOS[m.arg[0]] : "?", 12, v);
         escreve_num(m.arg[1], v);
         escreve("\n", v);
     }
@@ -132,6 +121,21 @@ static void cmd_invadir(void)
     escreve("\n", COR(COR_VERMELHO_CLARO));
 }
 
+static void cmd_programas(void)
+{
+    msg_t m;
+    u32 i = 0;
+    for (; sys_initrd_info(i, &m) == 0; i++) {
+        escreve("  ", COR(COR_BRANCO));
+        escreve_coluna(m.texto, 24, COR(COR_AMARELO));
+        escreve_num(m.arg[0], COR(COR_BRANCO));
+        escreve(" bytes\n", COR(COR_CINZA_CLARO));
+    }
+    if (i == 0)
+        escreve("O initrd esta vazio ou nao foi carregado (qemu -initrd initrd.tar).\n",
+                COR(COR_CINZA_CLARO));
+}
+
 static void cmd_reboot(void)
 {
     escreve("Pedindo ao driver de teclado para reiniciar...\n", COR(COR_AMARELO));
@@ -167,13 +171,69 @@ static void ler_linha(void)
     linha[n] = '\0';
 }
 
+/* Executa bin/<comando> do initrd e espera ele terminar. */
+static void programa_rodar(char **argv)
+{
+    static char caminho[100];
+    const char *nome = argv[0];
+    u32 i = 0;
+    int tem_barra = 0;
+    for (u32 j = 0; nome[j]; j++) if (nome[j] == '/') tem_barra = 1;
+    if (!tem_barra) {                       /* "ola" -> "bin/ola" */
+        caminho[i++] = 'b'; caminho[i++] = 'i'; caminho[i++] = 'n'; caminho[i++] = '/';
+    }
+    for (u32 j = 0; nome[j] && i < sizeof(caminho) - 1; j++) caminho[i++] = nome[j];
+    caminho[i] = '\0';
+
+    long pid = sys_criar(caminho, argv);
+    if (pid == ERRO_NAO_ACHADO) {
+        escreve("Comando desconhecido: ", COR(COR_VERMELHO_CLARO));
+        escreve(nome, COR(COR_BRANCO));
+        escreve("\nDigite 'ajuda' ou 'programas'.\n", COR(COR_CINZA_CLARO));
+        return;
+    }
+    if (pid < 0) {
+        escreve("Nao consegui executar ", COR(COR_VERMELHO_CLARO));
+        escreve(caminho, COR(COR_BRANCO));
+        escreve(pid == ERRO_FORMATO ? ": nao e um programa ELF valido\n"
+                                    : ": sem memoria ou sem vaga para processos\n",
+                COR(COR_VERMELHO_CLARO));
+        return;
+    }
+
+    long codigo = sys_esperar((u32)pid);
+    if (codigo >= SAIDA_FALHA_BASE && codigo < SAIDA_FALHA_BASE + 32) {
+        u32 v = (u32)(codigo - SAIDA_FALHA_BASE);
+        escreve("[nucleo] ", COR(COR_VERMELHO_CLARO));
+        escreve(nome, COR(COR_BRANCO));
+        escreve(" foi encerrado: ", COR(COR_VERMELHO_CLARO));
+        escreve(v < sizeof(EXCECOES) / sizeof(EXCECOES[0]) ? EXCECOES[v] : "excecao",
+                COR(COR_BRANCO));
+        escreve(". O sistema continua de pe.\n", COR(COR_VERMELHO_CLARO));
+    } else if (codigo != 0) {
+        escreve("[", COR(COR_CINZA_CLARO));
+        escreve(nome, COR(COR_CINZA_CLARO));
+        escreve(" terminou com codigo ", COR(COR_CINZA_CLARO));
+        escreve_num((u32)codigo, COR(COR_BRANCO));
+        escreve("]\n", COR(COR_CINZA_CLARO));
+    }
+}
+
 static void executar(void)
 {
-    char *cmd = linha;
-    while (*cmd == ' ') cmd++;
-    u32 n = str_tam(cmd);
-    while (n > 0 && cmd[n - 1] == ' ') cmd[--n] = '\0';
-    if (n == 0) return;
+    /* Separa a linha em palavras: argv[0] é o comando. */
+    char *argv[ARGV_MAX + 1];
+    u32 argc = 0;
+    char *p = linha;
+    while (*p && argc < ARGV_MAX) {
+        while (*p == ' ') *p++ = '\0';
+        if (!*p) break;
+        argv[argc++] = p;
+        while (*p && *p != ' ') p++;
+    }
+    argv[argc] = 0;
+    if (argc == 0) return;
+    const char *cmd = argv[0];
 
     if      (str_igual(cmd, "ajuda"))   cmd_ajuda();
     else if (str_igual(cmd, "limpar"))  limpar_tela();
@@ -183,22 +243,26 @@ static void executar(void)
     else if (str_igual(cmd, "sobre"))   cmd_sobre();
     else if (str_igual(cmd, "invadir")) cmd_invadir();
     else if (str_igual(cmd, "reboot"))  cmd_reboot();
-    else {
-        escreve("Comando desconhecido: ", COR(COR_VERMELHO_CLARO));
-        escreve(cmd, COR(COR_BRANCO));
-        escreve("\nDigite 'ajuda' para ver os comandos.\n", COR(COR_CINZA_CLARO));
-    }
+    else if (str_igual(cmd, "programas")) cmd_programas();
+    else programa_rodar(argv);
 }
 
-void main(u64 reinicios, u64 falha)
+int main(int argc, char **argv)
 {
+    (void)argc; (void)argv;
+
+    /* Fui reiniciado pelo núcleo? Ele guarda quantas vezes e por quê. */
+    msg_t eu;
+    sys_tarefa_info((u32)sys_pid(), &eu);
+    u32 reinicios = eu.arg[1], falha = eu.arg[2];
+
     if (reinicios) {
         escreve("\n[nucleo] O shell anterior foi encerrado: ", COR(COR_VERMELHO_CLARO));
         escreve(falha < sizeof(EXCECOES) / sizeof(EXCECOES[0]) ? EXCECOES[falha] : "excecao",
                 COR(COR_BRANCO));
         escreve(".\n[nucleo] O resto do sistema continua de pe. Shell reiniciado (",
                 COR(COR_VERMELHO_CLARO));
-        escreve_num((u32)reinicios, COR(COR_BRANCO));
+        escreve_num(reinicios, COR(COR_BRANCO));
         escreve(").\n\n", COR(COR_VERMELHO_CLARO));
     } else {
         escreve("Shell do " SISTEMA_NOME " (processo 3, anel 3, 64 bits). Digite 'ajuda'.\n\n",

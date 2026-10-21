@@ -134,15 +134,17 @@ Estado atual: **NovaEra Microkernel v3.0** (alfa).
 | **Seções** | `.text` (com `.multiboot` no início), `.rodata`, `.data`, `.bss` — alinhadas em 4 KiB (`linker.ld`) |
 | **Segmentação (GDT)** | Código de 64 bits e dados do núcleo (`0x08`/`0x10`, anel 0) e do usuário (`0x1B`/`0x23`, anel 3), mais a TSS de 64 bits (`0x28`, 16 bytes) |
 | **Memória física** | Lê `mem_upper` do Multiboot; quadros de 4 KiB acima do núcleo numa lista livre encadeada (alocar e liberar em O(1)); até 1 GiB |
-| **Paginação** | 4 níveis (PML4 → PDPT → PD → PT), um espaço de endereçamento por processo. O 1º GiB é do núcleo (páginas de 2 MiB), presente em todos os processos mas só para o anel 0. Programa em `0x40000000` (64 KiB), pilha em `0x40100000` (16 KiB) |
-| **Processos** | Até 8. PID 0 = núcleo (ocioso, `hlt`), 1 = vídeo, 2 = teclado, 3 = shell. Cada um tem pilha de núcleo própria; a TSS aponta para ela |
+| **Paginação** | 4 níveis (PML4 → PDPT → PD → PT), um espaço de endereçamento por processo. O 1º GiB é do núcleo (páginas de 2 MiB), presente em todos os processos mas só para o anel 0. Programa a partir de `0x40000000`, heap logo depois (até `0x60000000`), pilha de até 1 MiB abaixo de `0x7FFFF000`, que cresce sob demanda (falha de página na pilha = página nova) |
+| **Processos** | Até 32. PID 0 = núcleo (ocioso, `hlt`), 1 = vídeo, 2 = teclado, 3 = shell; os outros são criados com `CRIAR`. Cada um tem pilha de núcleo própria (a TSS aponta para ela), pai, código de saída e o estado zumbi até o pai chamar `ESPERAR` |
+| **Programas** | **ELF de 64 bits**: os servidores do boot vêm embutidos no `kernel.bin`; os outros vêm do **initrd** (`initrd.tar`, um módulo Multiboot entregue pelo GRUB ou por `qemu -initrd`). Recebem `main(argc, argv)` e devolvem o código de saída |
 | **Escalonador** | Preemptivo, *round-robin*, com o timer PIT a **100 Hz** (IRQ 0) |
-| **Chamadas de sistema** | `int 0x80` (única porta da IDT com DPL 3): `ENVIAR`, `RECEBER`, `CHAMAR`, `RESPONDER`, `CEDER`, `IRQ_ASSINAR`, `TEMPO`, `TAREFA_INFO`, `MEMORIA`, `SAIR` |
+| **Chamadas de sistema** | `int 0x80` (única porta da IDT com DPL 3): `ENVIAR`, `RECEBER`, `CHAMAR`, `RESPONDER`, `CEDER`, `IRQ_ASSINAR`, `TEMPO`, `TAREFA_INFO`, `MEMORIA`, `SAIR`, `CRIAR`, `ESPERAR`, `SBRK`, `PID`, `INITRD_INFO`. Todo ponteiro recebido é conferido nas tabelas de página antes de o núcleo tocar nele |
 | **IPC** | Síncrono, por mensagens de 80 bytes copiadas pelo núcleo entre espaços de endereçamento (estilo L4/MINIX). `RESPONDER` nunca bloqueia, para que um servidor não fique refém de um cliente |
 | **Interrupções** | IRQ 0 é do núcleo. As outras viram **mensagens `MSG_IRQ`** para o driver que as assinou; o PIC só libera uma IRQ quando alguém a assina |
 | **Drivers** | No anel 3 com IOPL 3 (podem usar `in`/`out`). **Vídeo**: o único processo com `0xB8000` mapeado. **Teclado**: PS/2 *set 1*, layout US, Shift e Caps Lock, também faz o `reboot` pela porta `0x64` |
 | **Supervisão** | Uma exceção no anel 3 encerra só o processo culpado, devolve a memória dele e o recarrega (até 5 vezes), avisando-o do motivo. Uma exceção no anel 0 mostra o painel vermelho de pânico |
-| **Shell (anel 3)** | `ajuda` · `limpar` · `ps` · `mem` · `tempo` · `sobre` · `invadir` (demonstra a proteção de memória) · `reboot` |
+| **Shell (anel 3)** | `ajuda` · `limpar` · `ps` · `mem` · `tempo` · `sobre` · `programas` · `invadir` (demonstra a proteção de memória) · `reboot`. Qualquer outro nome executa `bin/<nome>` do initrd, com argumentos |
+| **Programas do initrd** (`usuario/bin/`) | `ola` (mostra os argumentos) · `codigo N` (sai com o código N) · `memoria [MiB]` (testa o heap e a pilha) · `falha` (um programa com bug, isolado pelo núcleo) · `filho` (cria outro processo e espera por ele) |
 | **Linguagens** | Assembly NASM + C11 *freestanding*, sem assembly embutido nem atributos de compilador: compila com o clang (`CC=clang`, padrão) ou com o cproc + QBE do NEFS (`CC=cproc`). Liga com `ld.lld` ou com o `ld` do binutils |
 | **Configuração** | `sistema.conf` (nome, versão, lema, prompt) e `programas.lista` (processos e permissões); o `build.sh` gera `build/sistema.h`, `build/programas.h` e `build/programas.asm` |
 | **Dependências em tempo de execução** | Nenhuma. Sem libc; os `#include` são a ABI (`novaera.h`) e os arquivos gerados pelo build |
@@ -169,7 +171,7 @@ Experimente no shell:
 
 ### O que o NovaEra **ainda não** tem
 
-Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), carregar programas do disco (hoje eles vão embutidos no `kernel.bin`), mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, driver de disco e sistema de arquivos. Veja o [Roteiro](#roteiro).
+Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), servidor de arquivos e terminal (Etapa 2 da [Fase 3](nefs/FASE3.md)),  mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, driver de disco e sistema de arquivos. Veja o [Roteiro](#roteiro).
 
 ### Estrutura do repositório
 
@@ -180,7 +182,7 @@ novaera-kernel/
 ├── programas.lista   # Os processos que o núcleo inicia no boot
 ├── boot.asm          # Multiboot, GDT/TSS, stubs, int 0x80, troca de contexto (NASM)
 ├── cpu.asm           # Instruções especiais da CPU como funções (NASM)
-├── kernel.c          # O microkernel: memória, paginação, processos, IPC (C puro)
+├── kernel.c          # O microkernel: memória, paginação, processos, ELF, IPC (C puro)
 ├── linker.ld         # Mapa de memória do núcleo a partir de 1 MiB
 ├── usuario/          # Tudo o que roda no anel 3
 │   ├── crt0.asm      #   _start, int 0x80 e E/S de portas
@@ -188,11 +190,13 @@ novaera-kernel/
 │   ├── usuario.ld    #   todo programa mora em 0x40000000
 │   ├── video.c       #   servidor de vídeo (PID 1)
 │   ├── teclado.c     #   driver de teclado PS/2 (PID 2)
-│   └── shell.c       #   o shell (PID 3)
+│   ├── shell.c       #   o shell (PID 3)
+│   └── bin/          #   os programas do initrd (ola, codigo, memoria, falha, filho)
 ├── build.sh          # Compila os programas, embute-os e liga o kernel.bin
 ├── nefs/             # O NEFS: comando nefs, Livro do NEFS e a ISO (separado do núcleo)
 ├── run.sh            # Atalho para rodar no QEMU (pensado para o Termux)
 ├── kernel.bin        # Binário pronto para rodar
+├── initrd.tar        # Os programas do initrd, prontos (qemu -initrd)
 └── README.md
 ```
 
@@ -200,20 +204,22 @@ novaera-kernel/
 
 ## Rodando o kernel no seu computador
 
-Você **não precisa compilar nada**. Basta baixar o `kernel.bin` e rodá-lo no **QEMU**, um emulador livre que simula um PC x86 completo.
+Você **não precisa compilar nada**. Basta baixar o `kernel.bin` e o `initrd.tar` (os programas que o shell executa) e rodá-los no **QEMU**, um emulador livre que simula um PC x86 completo.
 
-### Passo 1 — Baixe o `kernel.bin`
+### Passo 1 — Baixe o `kernel.bin` e o `initrd.tar`
 
 Escolha uma das formas:
 
-- **Pelo navegador:** abra o arquivo `kernel.bin` neste repositório e clique em **Download raw file** (ícone de download).
+- **Pelo navegador:** abra os arquivos `kernel.bin` e `initrd.tar` neste repositório e clique em **Download raw file** (ícone de download).
 - **Pelo terminal (Linux e macOS):**
   ```bash
   curl -L -o kernel.bin https://github.com/josedavimoura579-ai/NewEra-Karnel/raw/main/kernel.bin
+  curl -L -o initrd.tar https://github.com/josedavimoura579-ai/NewEra-Karnel/raw/main/initrd.tar
   ```
 - **Pelo PowerShell (Windows):**
   ```powershell
   Invoke-WebRequest -Uri https://github.com/josedavimoura579-ai/NewEra-Karnel/raw/main/kernel.bin -OutFile kernel.bin
+  Invoke-WebRequest -Uri https://github.com/josedavimoura579-ai/NewEra-Karnel/raw/main/initrd.tar -OutFile initrd.tar
   ```
 
 ### Passo 2 — Instale o QEMU
@@ -260,17 +266,19 @@ sudo dnf install qemu-system-x86
 
 ### Passo 3 — Rode
 
-Na pasta onde está o `kernel.bin`:
+Na pasta onde estão o `kernel.bin` e o `initrd.tar`:
 
 ```bash
-qemu-system-x86_64 -kernel kernel.bin -m 64M
+qemu-system-x86_64 -kernel kernel.bin -initrd initrd.tar -m 64M
 ```
+
+Sem o `-initrd`, o sistema liga do mesmo jeito, mas o shell só tem os comandos embutidos.
 
 > O NovaEra é 64 bits: use `qemu-system-x86_64`. Com `qemu-system-i386`, a tela mostra um aviso vermelho e o sistema para.
 >
 > **Windows sem `PATH` configurado:**
 > ```powershell
-> & "C:\Program Files\qemu\qemu-system-x86_64.exe" -kernel kernel.bin -m 64M
+> & "C:\Program Files\qemu\qemu-system-x86_64.exe" -kernel kernel.bin -initrd initrd.tar -m 64M
 > ```
 
 Uma janela abre com um PC virtual. Em menos de um segundo você verá a tela azul com a mensagem:
@@ -295,6 +303,10 @@ Clique dentro da janela do QEMU para dar foco ao teclado e digite:
 | `mem` | Mostra a memória física livre. |
 | `tempo` | Mostra há quanto tempo o sistema está ligado. |
 | `sobre` | Explica, em quatro linhas, o que é um microkernel. |
+| `programas` | Lista os programas do initrd. |
+| `ola um dois` | Executa o programa `bin/ola` do initrd, que mostra os argumentos. Qualquer programa do initrd roda assim, pelo nome. |
+| `filho` | Um programa que cria outro processo e espera ele terminar. |
+| `falha` | Um programa com bug: o núcleo o encerra e o shell segue em frente. |
 | `invadir` | O shell tenta ler a memória do núcleo, é encerrado e reiniciado. |
 | `reboot` | Reinicia a máquina virtual (quem faz isso é o driver de teclado, fora do núcleo). |
 
@@ -309,7 +321,7 @@ sudo apt install nasm clang lld qemu-system-x86
 git clone https://github.com/josedavimoura579-ai/NewEra-Karnel.git
 cd novaera-kernel
 bash build.sh
-qemu-system-x86_64 -kernel kernel.bin -m 64M
+qemu-system-x86_64 -kernel kernel.bin -initrd initrd.tar -m 64M
 ```
 
 **No Android (Termux)** — o caminho em que o NovaEra nasceu:
@@ -366,7 +378,10 @@ O QBE gera código para x86_64, e foi por isso que o NovaEra passou para 64 bits
 
 - [x] **Fase 1** — a ISO do NEFS: um Linux mínimo com cproc + QBE, o comando `nefs` e o Livro 1. Veja [`nefs/README.md`](nefs/README.md)
 - [ ] **Fase 2** — preparar o núcleo: programas ELF, sistema de arquivos, criação de processos e uma libc mínima
-- [ ] **Fase 3** — portar cproc + QBE + assembler + linker para o NovaEra e gerar a **ISO do compilador NEFS**
+- [ ] **Fase 3** — o NEFS rodando 100% sobre o NovaEra, sem Linux. Plano em 8 etapas: [`nefs/FASE3.md`](nefs/FASE3.md)
+  - [x] Etapa 1 — programas ELF, initrd, heap, pilha sob demanda, criar/esperar processos
+  - [ ] Etapa 2 — servidores de arquivos e terminal
+  - [ ] Etapas 3 a 8 — libc, QBE, assembler/ligador, cproc, autossuficiência, ISO
 
 ---
 

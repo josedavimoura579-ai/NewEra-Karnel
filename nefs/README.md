@@ -48,7 +48,8 @@ Para compilar com o cproc, o NovaEra respeita os limites dele:
 | Comando | O que faz |
 |---|---|
 | `nefs novo <pasta> [nome]` | cria um sistema novo a partir do NovaEra |
-| `nefs programa <nome>` | cria um programa (processo do anel 3) e o registra em `programas.lista` |
+| `nefs comando <nome>` | cria um comando do shell em `usuario/bin/` (vai para o initrd) |
+| `nefs programa <nome>` | cria um servidor que sobe no boot e o registra em `programas.lista` |
 | `nefs compilar` | compila o sistema (cproc, ou clang fora da ISO) |
 | `nefs rodar` | liga o sistema no QEMU (na ISO, a tela aparece no próprio terminal) |
 | `nefs iso` | gera a ISO inicializável do sistema, com GRUB |

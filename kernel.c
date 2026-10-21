@@ -14,6 +14,8 @@
  *    - Paginação de 4 níveis: cada processo tem o seu próprio espaço
  *    - Processos, TSS e troca de contexto
  *    - Escalonador preemptivo (timer PIT a 100 Hz, round-robin)
+ *    - Programas ELF, do kernel.bin ou do initrd (um .tar do GRUB/QEMU),
+ *      com argumentos, heap, pilha sob demanda e código de saída
  *    - IPC síncrono por mensagens (enviar / receber / chamar / responder)
  *    - IRQs entregues como mensagens aos drivers que as assinaram
  *    - Supervisão: um processo que falha é encerrado e reiniciado
@@ -241,20 +243,36 @@ static u64 quadro_alocar(void)
     return q;
 }
 
+/* O initrd: um arquivo .tar que o GRUB ou o QEMU (-initrd) carregam na
+ * memória junto com o núcleo, como "módulo" Multiboot. Ele traz os
+ * programas que o shell pode executar. */
+static const u8 *initrd;
+static u64       initrd_tam;
+
 /* Multiboot: se o bit 0 das flags estiver ligado, mem_upper diz quantos
- * KiB de RAM existem acima de 1 MiB. */
+ * KiB de RAM existem acima de 1 MiB; o bit 3 diz que há módulos. */
 static void memoria_iniciar(u64 mbi_endereco)
 {
     u64 fim = MEMORIA_NUCLEO;
+    u64 ocupado = (u64)_kernel_fim;          /* nada abaixo disto é livre */
     if (mbi_endereco) {
         const u32 *mbi = (const u32 *)mbi_endereco;
         if (mbi[0] & 1) {
             u64 real = 0x100000ull + (u64)mbi[2] * 1024u;
             if (real < fim) fim = real;
         }
+        if ((mbi[0] & 8) && mbi[5] > 0) {
+            /* Cada módulo: [início, fim, texto, reservado]. Usamos o 1º. */
+            const u32 *mod = (const u32 *)(u64)mbi[6];
+            initrd     = (const u8 *)(u64)mod[0];
+            initrd_tam = (u64)(mod[1] - mod[0]);
+            for (u32 i = 0; i < mbi[5]; i++)
+                if ((u64)mod[4 * i + 1] > ocupado)
+                    ocupado = mod[4 * i + 1];
+        }
     }
 
-    u64 ini = ((u64)_kernel_fim + QUADRO - 1) & ~(u64)(QUADRO - 1);
+    u64 ini = (ocupado + QUADRO - 1) & ~(u64)(QUADRO - 1);
     for (u64 q = fim - QUADRO; q >= ini; q -= QUADRO) {   /* do fim para o início: */
         quadro_liberar(q);                                /* o 1º alocado é o mais baixo */
         quadros_total++;
@@ -316,6 +334,20 @@ static int mapear(u64 *pml4, u64 virtual, u64 fisico, u64 flags)
     if (!pt) return 0;
     pt[(virtual >> 12) & 511] = fisico | flags;
     return 1;
+}
+
+/* Endereço físico por trás de um endereço virtual, ou 0 se não houver
+ * página presente e acessível ao anel 3. */
+static u64 traduzir(u64 *pml4, u64 virtual)
+{
+    u64 *tabela = pml4;
+    for (int nivel = 39; nivel >= 12; nivel -= 9) {
+        u64 e = tabela[(virtual >> nivel) & 511];
+        if (!(e & PG_PRESENTE) || !(e & PG_USUARIO)) return 0;
+        if (nivel == 12) return (e & PG_ENDERECO) | (virtual & 0xFFF);
+        tabela = tabela_de(e);
+    }
+    return 0;
 }
 
 /* Devolve à lista livre tudo o que pertence só ao processo. */
@@ -505,16 +537,13 @@ static void timer_iniciar(void)
  *  Processos
  * =========================================================================== */
 
-#define MAX_TAREFAS       16u
+#define MAX_TAREFAS       32u
 #define PILHA_NUCLEO_TAM  QUADRO
 #define MAX_REINICIOS     5u
 
-#define T_DRIVER   0x1u        /* pode usar IN/OUT (IOPL 3) e assinar IRQs */
-#define T_VGA      0x2u        /* recebe a memória de vídeo mapeada */
-
-typedef struct {
-    const u8 *ini, *fim;       /* imagem embutida no kernel.bin */
-} programa_t;
+#define T_DRIVER     0x1u      /* pode usar IN/OUT (IOPL 3) e assinar IRQs */
+#define T_VGA        0x2u      /* recebe a memória de vídeo mapeada */
+#define T_REINICIAR  0x4u      /* servidor do boot: recarregado se falhar */
 
 /* Uma linha de programas.lista (a tabela PROGRAMAS vem de build/programas.h) */
 typedef struct {
@@ -527,15 +556,21 @@ typedef struct {
     u32        estado;         /* ESTADO_* (novaera.h) */
     char       nome[12];
     u32        flags;
-    programa_t prog;
+    const u8  *imagem;         /* o ELF: no kernel.bin ou no initrd */
+    u64        imagem_tam;
+    u32        pai;            /* quem o criou (0 = o núcleo, no boot) */
     u32        reinicios;
+    u32        ultima_falha;   /* exceção que causou o último encerramento */
+    long       codigo_saida;   /* guardado até o pai chamar SYS_ESPERAR */
 
     u64       *diretorio;      /* PML4: o espaço de endereçamento (CR3) */
     u8        *pilha_nucleo;   /* onde o quadro_t fica enquanto está parado */
     quadro_t  *quadro;
+    u64        heap_ini, heap_fim;   /* o heap cresce com SYS_SBRK */
+    u64        pilha_baixo;    /* página mais baixa da pilha já mapeada */
 
     /* IPC */
-    u32        alvo;           /* para quem envia / de quem quer receber */
+    u32        alvo;           /* para quem envia / de quem quer receber / filho esperado */
     u32        chamando;       /* SYS_CHAMAR: depois de enviar, espera resposta */
     u32        ordem;          /* ordem de chegada na fila do destino */
     u64        msg_usuario;    /* endereço da msg_t no espaço do processo */
@@ -553,60 +588,240 @@ static u32      ticks;          /* só muda e é lida no núcleo, com IF=0 */
 
 #include "programas.h"     /* gerado de programas.lista pelo build.sh */
 
+static int str_igual(const char *a, const char *b)
+{
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+
+/* Guarda o nome curto do processo: o que vem depois da última '/'. */
 static void nome_copia(char *dst, const char *src)
 {
+    for (const char *p = src; *p; p++)
+        if (*p == '/') src = p + 1;
     u32 i = 0;
     for (; src[i] && i < 11; i++) dst[i] = src[i];
     dst[i] = '\0';
 }
 
+/* ---------------------------- O initrd (tar) -----------------------------
+ * Um .tar é uma sequência de cabeçalhos de 512 bytes, cada um seguido do
+ * conteúdo do arquivo (arredondado para 512). Nome no byte 0, tamanho em
+ * octal no byte 124, tipo no byte 156 e a assinatura "ustar" no 257.     */
+
+static u64 octal(const u8 *p, u32 n)
+{
+    u64 v = 0;
+    for (u32 i = 0; i < n && p[i] >= '0' && p[i] <= '7'; i++)
+        v = v * 8 + (u64)(p[i] - '0');
+    return v;
+}
+
+/* A i-ésima entrada que é um arquivo comum. */
+static int tar_entrada(u32 indice, const char **nome, const u8 **dados, u64 *tam)
+{
+    u64 pos = 0;
+    u32 n = 0;
+    while (initrd && pos + 512 <= initrd_tam) {
+        const u8 *h = initrd + pos;
+        if (h[0] == 0) break;                        /* blocos zerados: fim */
+        if (h[257] != 'u' || h[258] != 's' || h[259] != 't' ||
+            h[260] != 'a' || h[261] != 'r') break;   /* não é ustar */
+        u64 t = octal(h + 124, 12);
+        if (t > initrd_tam - pos - 512) break;       /* arquivo cortado */
+        if ((h[156] == '0' || h[156] == 0) && h[99] == 0 && n++ == indice) {
+            *nome  = (const char *)h;
+            if ((*nome)[0] == '.' && (*nome)[1] == '/') *nome += 2;
+            *dados = h + 512;
+            *tam   = t;
+            return 1;
+        }
+        pos += 512 + ((t + 511) & ~511ull);
+    }
+    return 0;
+}
+
+static int tar_achar(const char *caminho, const u8 **dados, u64 *tam)
+{
+    const char *nome;
+    for (u32 i = 0; tar_entrada(i, &nome, dados, tam); i++)
+        if (str_igual(nome, caminho)) return 1;
+    return 0;
+}
+
+/* --------------------------- Carregador ELF ------------------------------
+ * Um executável ELF de 64 bits diz, no cabeçalho, onde começa (e_entry) e
+ * quais pedaços do arquivo vão para quais endereços (os segmentos
+ * PT_LOAD). Os campos são lidos byte a byte: sem structs "packed".       */
+
+#define ELF_PT_LOAD   1u
+#define ELF_X86_64   62u
+
+static u64 le16(const u8 *p) { return (u64)p[0] | (u64)p[1] << 8; }
+static u64 le32(const u8 *p) { return le16(p) | le16(p + 2) << 16; }
+static u64 le64(const u8 *p) { return le32(p) | le32(p + 4) << 32; }
+
+/* Mapeia páginas novas (zeradas) cobrindo [ini, fim), menos as que já existem. */
+static int mapear_faixa(u64 *pml4, u64 ini, u64 fim)
+{
+    for (u64 v = ini & ~0xFFFull; v < fim; v += QUADRO) {
+        if (traduzir(pml4, v)) continue;
+        u64 q = quadro_alocar();
+        if (!q || !mapear(pml4, v, q, PG_PRESENTE | PG_ESCRITA | PG_USUARIO))
+            return 0;
+    }
+    return 1;
+}
+
+/* Copia bytes para dentro de OUTRO espaço de endereçamento, página a
+ * página, pelo endereço físico (o núcleo enxerga toda a RAM). */
+static int copiar_para_espaco(u64 *pml4, u64 destino, const void *origem, u64 n)
+{
+    const u8 *o = origem;
+    while (n) {
+        u64 fisico = traduzir(pml4, destino);
+        if (!fisico) return 0;
+        u64 cabe = QUADRO - (destino & 0xFFF);
+        if (cabe > n) cabe = n;
+        mem_copia((void *)fisico, o, cabe);
+        destino += cabe;
+        o       += cabe;
+        n       -= cabe;
+    }
+    return 1;
+}
+
+/* Carrega o ELF do processo no seu espaço; devolve o ponto de entrada (0 = erro). */
+static u64 elf_carregar(tarefa_t *t)
+{
+    const u8 *e = t->imagem;
+    u64 tam = t->imagem_tam;
+    if (tam < 64 || e[0] != 0x7F || e[1] != 'E' || e[2] != 'L' || e[3] != 'F' ||
+        e[4] != 2 || e[5] != 1 || le16(e + 18) != ELF_X86_64)
+        return 0;                                    /* não é ELF64 x86_64 */
+
+    u64 phoff = le64(e + 32), phent = le16(e + 54), phnum = le16(e + 56);
+    if (phent < 56 || phoff > tam || phent * phnum > tam - phoff) return 0;
+
+    u64 fim_prog = USUARIO_BASE;
+    for (u64 i = 0; i < phnum; i++) {
+        const u8 *ph = e + phoff + i * phent;
+        if (le32(ph) != ELF_PT_LOAD) continue;
+        u64 off = le64(ph + 8), va = le64(ph + 16);
+        u64 no_arquivo = le64(ph + 32), na_memoria = le64(ph + 40);
+        if (va < USUARIO_BASE || va >= USUARIO_PROG_FIM ||
+            na_memoria > USUARIO_PROG_FIM - va || no_arquivo > na_memoria ||
+            off > tam || no_arquivo > tam - off)
+            return 0;                                /* fora da área do programa */
+        if (!mapear_faixa(t->diretorio, va, va + na_memoria) ||
+            !copiar_para_espaco(t->diretorio, va, e + off, no_arquivo))
+            return 0;                                /* o resto (.bss) fica zerado */
+        if (va + na_memoria > fim_prog) fim_prog = va + na_memoria;
+    }
+
+    u64 entrada = le64(e + 24);
+    if (entrada < USUARIO_BASE || entrada >= fim_prog) return 0;
+    t->heap_ini = t->heap_fim = (fim_prog + QUADRO - 1) & ~(u64)(QUADRO - 1);
+    return entrada;
+}
+
+/* ------------------------- Argumentos (argc, argv) -----------------------
+ * Ficam no topo da pilha do novo processo: primeiro os textos, depois o
+ * vetor de ponteiros terminado em 0. _start recebe RDI = argc, RSI = argv. */
+
+typedef struct {
+    u32  argc;
+    u32  bytes;                       /* quanto de 'texto' está em uso */
+    char texto[ARGV_BYTES];           /* "ola\0mundo\0..." */
+} args_t;
+
+static args_t args_tmp;               /* o núcleo roda com IF=0: um só basta */
+
+static int args_por(args_t *a, const char *texto)
+{
+    u32 n = tamanho_str(texto) + 1;
+    if (a->argc >= ARGV_MAX || n > ARGV_BYTES - a->bytes) return 0;
+    mem_copia(a->texto + a->bytes, texto, n);
+    a->bytes += n;
+    a->argc++;
+    return 1;
+}
+
+static int pilha_preparar(tarefa_t *t, const args_t *a, u64 *rsp, u64 *argv)
+{
+    u64 topo = USUARIO_PILHA_TOPO;
+    if (!mapear_faixa(t->diretorio, topo - QUADRO, topo)) return 0;
+    t->pilha_baixo = topo - QUADRO;
+
+    u64 textos = (topo - a->bytes) & ~7ull;
+    if (!copiar_para_espaco(t->diretorio, textos, a->texto, a->bytes)) return 0;
+
+    u64 ptrs[ARGV_MAX + 1];
+    u32 pos = 0;
+    for (u32 i = 0; i < a->argc; i++) {
+        ptrs[i] = textos + pos;
+        pos += tamanho_str(a->texto + pos) + 1;
+    }
+    ptrs[a->argc] = 0;
+
+    u64 vetor = (textos - (a->argc + 1) * 8) & ~15ull;   /* alinhado em 16 */
+    if (!copiar_para_espaco(t->diretorio, vetor, ptrs, (a->argc + 1) * 8)) return 0;
+    *argv = vetor;
+    *rsp  = vetor;
+    return 1;
+}
+
+/* A pilha cresce sozinha: um acesso logo abaixo dela ganha páginas novas. */
+static int pilha_crescer(tarefa_t *t, u64 endereco)
+{
+    if (!t->diretorio || endereco < USUARIO_PILHA_TOPO - USUARIO_PILHA_TAM ||
+        endereco >= t->pilha_baixo)
+        return 0;
+    u64 pagina = endereco & ~0xFFFull;
+    if (!mapear_faixa(t->diretorio, pagina, t->pilha_baixo)) return 0;
+    t->pilha_baixo = pagina;
+    return 1;
+}
+
 /*
  * Prepara um processo para rodar do zero: espaço de endereçamento novo,
- * imagem copiada para 0x40000000, pilha do usuário e um quadro_t "falso"
- * que, quando retomado com IRET, cai no anel 3 no início do programa.
- * RBX e RCX iniciais viram os argumentos de main() (ver usuario/ulib.h).
+ * o ELF carregado, a pilha com os argumentos e um quadro_t "falso" que,
+ * quando retomado com IRETQ, cai no anel 3 no ponto de entrada do programa.
  */
-static int processo_carregar(u32 pid, u64 arg1, u64 arg2)
+static long processo_carregar(u32 pid, const args_t *a)
 {
     tarefa_t *t = &tarefas[pid];
-    u64 tam = (u64)(t->prog.fim - t->prog.ini);
-    if (tam > USUARIO_IMG_TAM) return 0;
 
     t->diretorio = espaco_criar();
-    if (!t->diretorio) return 0;
+    if (!t->diretorio) return ERRO_SEM_MEMORIA;
 
-    for (u64 off = 0; off < USUARIO_IMG_TAM; off += QUADRO) {
-        u64 q = quadro_alocar();
-        if (!q) return 0;
-        if (off < tam)
-            mem_copia((void *)q, t->prog.ini + off, tam - off < QUADRO ? tam - off : QUADRO);
-        if (!mapear(t->diretorio, USUARIO_BASE + off, q, PG_PRESENTE | PG_ESCRITA | PG_USUARIO))
-            return 0;
-    }
-    for (u64 off = 0; off < USUARIO_PILHA_TAM; off += QUADRO) {
-        u64 q = quadro_alocar();
-        if (!q || !mapear(t->diretorio, USUARIO_PILHA_BASE + off, q,
-                          PG_PRESENTE | PG_ESCRITA | PG_USUARIO))
-            return 0;
-    }
-    if (t->flags & T_VGA)
-        mapear(t->diretorio, USUARIO_VGA, 0xB8000, PG_PRESENTE | PG_ESCRITA | PG_USUARIO);
+    u64 entrada = elf_carregar(t), rsp = 0, argv = 0;
+    long erro = entrada ? 0 : ERRO_FORMATO;
+    if (!erro && !pilha_preparar(t, a, &rsp, &argv)) erro = ERRO_SEM_MEMORIA;
+    if (!erro && (t->flags & T_VGA) &&
+        !mapear(t->diretorio, USUARIO_VGA, 0xB8000, PG_PRESENTE | PG_ESCRITA | PG_USUARIO))
+        erro = ERRO_SEM_MEMORIA;
 
     /* A pilha do núcleo é do PID para sempre: assim um reinício pode
      * acontecer enquanto o núcleo ainda está rodando sobre ela. */
-    if (!t->pilha_nucleo) {
+    if (!erro && !t->pilha_nucleo) {
         t->pilha_nucleo = (u8 *)quadro_alocar();
-        if (!t->pilha_nucleo) return 0;
+        if (!t->pilha_nucleo) erro = ERRO_SEM_MEMORIA;
+    }
+    if (erro) {
+        espaco_destruir(t->diretorio);
+        t->diretorio = 0;
+        return erro;
     }
 
     quadro_t *q = (quadro_t *)(t->pilha_nucleo + PILHA_NUCLEO_TAM - sizeof(quadro_t));
     mem_zera(q, sizeof(*q));
-    q->rbx    = arg1;
-    q->rcx    = arg2;
-    q->rip    = USUARIO_BASE;                      /* _start fica no começo */
+    q->rdi    = a->argc;
+    q->rsi    = argv;
+    q->rip    = entrada;
     q->cs     = SEL_CODIGO_USUARIO;
     q->rflags = 0x202 | ((t->flags & T_DRIVER) ? 0x3000u : 0);  /* IF + IOPL */
-    q->rsp    = USUARIO_PILHA_BASE + USUARIO_PILHA_TAM;
+    q->rsp    = rsp;
     q->ss     = SEL_DADOS_USUARIO;
 
     t->quadro         = q;
@@ -615,17 +830,22 @@ static int processo_carregar(u32 pid, u64 arg1, u64 arg2)
     t->entregar       = 0;
     t->irqs           = 0;
     t->irqs_pendentes = 0;
-    return 1;
+    return 0;
 }
 
+/* Um servidor do boot (programas.lista), embutido no kernel.bin. */
 static int processo_criar(u32 pid, const char *nome, const u8 *ini, const u8 *fim, u32 flags)
 {
     tarefa_t *t = &tarefas[pid];
     nome_copia(t->nome, nome);
-    t->flags    = flags;
-    t->prog.ini = ini;
-    t->prog.fim = fim;
-    return processo_carregar(pid, 0, 0);
+    t->flags      = flags | T_REINICIAR;
+    t->imagem     = ini;
+    t->imagem_tam = (u64)(fim - ini);
+    t->pai        = PID_KERNEL;
+
+    mem_zera(&args_tmp, sizeof(args_tmp));
+    args_por(&args_tmp, nome);
+    return processo_carregar(pid, &args_tmp) == 0;
 }
 
 /* O PID 0 é o próprio núcleo: depois do boot, kernel_main() vira o
@@ -656,6 +876,31 @@ static void escalonar(void)
 }
 
 /* ===========================================================================
+ *  Memória do usuário: o núcleo só toca num endereço que o processo passou
+ *  depois de conferir que ele é do anel 3 e está mapeado. Sem isso, um
+ *  ponteiro ruim numa chamada de sistema derrubaria o núcleo inteiro.
+ * =========================================================================== */
+
+static int usuario_valido(tarefa_t *t, u64 p, u64 n)
+{
+    if (p < USUARIO_BASE || p >= USUARIO_FIM || n > USUARIO_FIM - p) return 0;
+    for (u64 v = p & ~0xFFFull; v < p + n; v += QUADRO)
+        if (!traduzir(t->diretorio, v) && !pilha_crescer(t, v)) return 0;
+    return 1;
+}
+
+/* Copia um texto do usuário (com o '\0'); devolve o tamanho ou -1. */
+static long texto_do_usuario(tarefa_t *t, u64 p, char *dst, u32 max)
+{
+    for (u32 i = 0; i < max; i++, p++) {
+        if ((i == 0 || (p & 0xFFF) == 0) && !usuario_valido(t, p, 1)) return -1;
+        dst[i] = *(const char *)p;
+        if (!dst[i]) return i;
+    }
+    return -1;
+}
+
+/* ===========================================================================
  *  IPC: troca de mensagens síncrona (estilo L4 / MINIX)
  *
  *  ENVIAR bloqueia até o destino RECEBER, e vice-versa: é um "encontro".
@@ -665,19 +910,12 @@ static void escalonar(void)
  *  dentro de outro.
  * =========================================================================== */
 
-/* O endereço cabe inteiro na área do programa ou na pilha? */
-static int ponteiro_ok(u64 p)
-{
-    u64 tam = sizeof(msg_t);
-    if (p >= USUARIO_BASE && p <= USUARIO_BASE + USUARIO_IMG_TAM - tam) return 1;
-    if (p >= USUARIO_PILHA_BASE && p <= USUARIO_PILHA_BASE + USUARIO_PILHA_TAM - tam) return 1;
-    return 0;
-}
-
+/* Existe e pode conversar? (livre, morto e zumbi não podem) */
 static int pid_vivo(u64 pid)
 {
-    return pid > 0 && pid < MAX_TAREFAS &&
-           tarefas[pid].estado != ESTADO_LIVRE && tarefas[pid].estado != ESTADO_MORTO;
+    if (pid == 0 || pid >= MAX_TAREFAS) return 0;
+    u32 e = tarefas[pid].estado;
+    return e != ESTADO_LIVRE && e != ESTADO_MORTO && e != ESTADO_ZUMBI;
 }
 
 /* Acorda um processo bloqueado, devolvendo 'resultado' no seu RAX. */
@@ -775,14 +1013,16 @@ static void ipc_receber(u32 origem)
 }
 
 /* ===========================================================================
- *  Supervisão: o que acontece quando um processo do usuário falha
+ *  Fim de um processo e supervisão
  *
- *  Num núcleo monolítico, um bug no driver derruba o sistema inteiro.
- *  Aqui, o núcleo encerra só o processo culpado, libera a memória dele e
- *  o carrega de novo, avisando-o (RBX = reinícios, RCX = exceção).
+ *  Um programa termina chamando SYS_SAIR ou quando a CPU gera uma exceção
+ *  nele. Num núcleo monolítico, um bug no driver derruba o sistema
+ *  inteiro; aqui, o núcleo encerra só o processo culpado e libera a
+ *  memória dele. Os servidores do boot são recarregados; os outros
+ *  programas viram "zumbis" até o pai ler o código de saída.
  * =========================================================================== */
 
-static void processo_encerrar(u32 pid, int reiniciar, u64 motivo)
+static void processo_encerrar(u32 pid, long codigo, int falhou, u64 vetor)
 {
     tarefa_t *t = &tarefas[pid];
 
@@ -793,13 +1033,14 @@ static void processo_encerrar(u32 pid, int reiniciar, u64 motivo)
     espaco_destruir(t->diretorio);
     t->diretorio = 0;
     t->estado = ESTADO_MORTO;
+    if (falhou) t->ultima_falha = (u32)vetor;
 
     if (t->irqs) {                          /* ninguém mais atende essas IRQs */
         pic_mascara |= (u16)t->irqs;
         pic_aplicar_mascara();
     }
 
-    /* Quem estava esperando por ele não pode ficar preso para sempre. */
+    /* Quem estava conversando com ele não pode ficar preso para sempre. */
     for (u32 i = 1; i < MAX_TAREFAS; i++) {
         tarefa_t *o = &tarefas[i];
         if ((o->estado == ESTADO_ENVIANDO || o->estado == ESTADO_RECEBENDO) && o->alvo == pid) {
@@ -808,11 +1049,84 @@ static void processo_encerrar(u32 pid, int reiniciar, u64 motivo)
         }
     }
 
-    if (reiniciar && t->reinicios < MAX_REINICIOS) {
-        t->reinicios++;
-        if (!processo_carregar(pid, t->reinicios, motivo))
-            t->estado = ESTADO_MORTO;
+    /* Os filhos dele ficam órfãos; os zumbis já podem ir embora. (Antes
+     * de um reinício: o processo recarregado não conhece esses filhos.) */
+    for (u32 i = 1; i < MAX_TAREFAS; i++) {
+        if (tarefas[i].pai != pid || i == pid) continue;
+        if (tarefas[i].estado == ESTADO_ZUMBI) tarefas[i].estado = ESTADO_LIVRE;
+        tarefas[i].pai = PID_KERNEL;
     }
+
+    /* Servidor do boot que falhou: carrega de novo. */
+    if ((t->flags & T_REINICIAR) && falhou && t->reinicios < MAX_REINICIOS) {
+        t->reinicios++;
+        mem_zera(&args_tmp, sizeof(args_tmp));
+        args_por(&args_tmp, t->nome);
+        if (processo_carregar(pid, &args_tmp) == 0) return;
+    }
+    if (t->flags & T_REINICIAR) return;     /* servidor desistiu: fica MORTO */
+
+    /* O pai está esperando? Entrega o código. Senão, vira zumbi. */
+    t->codigo_saida = codigo;
+    tarefa_t *pai = &tarefas[t->pai];
+    if (t->pai != PID_KERNEL && pai->estado == ESTADO_ESPERANDO && pai->alvo == pid) {
+        acordar(pai, codigo);
+        t->estado = ESTADO_LIVRE;
+    } else if (pid_vivo(t->pai)) {
+        t->estado = ESTADO_ZUMBI;
+    } else {
+        t->estado = ESTADO_LIVRE;
+    }
+}
+
+/* SYS_CRIAR: carrega um programa do initrd num processo novo. */
+static long processo_executar(tarefa_t *eu, u64 caminho_usuario, u64 argv_usuario)
+{
+    static char caminho[100];
+    if (texto_do_usuario(eu, caminho_usuario, caminho, sizeof(caminho)) < 0)
+        return ERRO_INVALIDO;
+
+    const u8 *imagem;
+    u64 tam;
+    if (!tar_achar(caminho, &imagem, &tam)) return ERRO_NAO_ACHADO;
+
+    /* Os argumentos: um vetor de ponteiros do usuário, terminado em 0.
+     * Sem vetor, o programa recebe só o próprio caminho como argv[0]. */
+    mem_zera(&args_tmp, sizeof(args_tmp));
+    if (!argv_usuario) {
+        args_por(&args_tmp, caminho);
+    } else {
+        for (u32 i = 0; ; i++) {
+            u64 ptr = argv_usuario + 8ull * i;
+            if (!usuario_valido(eu, ptr, 8)) return ERRO_INVALIDO;
+            u64 texto = *(const u64 *)ptr;
+            if (!texto) break;
+            char *dst = args_tmp.texto + args_tmp.bytes;
+            long n = texto_do_usuario(eu, texto, dst, ARGV_BYTES - args_tmp.bytes);
+            if (n < 0 || args_tmp.argc >= ARGV_MAX) return ERRO_INVALIDO;
+            args_tmp.bytes += (u32)n + 1;
+            args_tmp.argc++;
+        }
+    }
+
+    u32 pid = 1;
+    while (pid < MAX_TAREFAS && tarefas[pid].estado != ESTADO_LIVRE) pid++;
+    if (pid == MAX_TAREFAS) return ERRO_LOTADO;
+
+    tarefa_t *t = &tarefas[pid];
+    nome_copia(t->nome, caminho);
+    t->flags        = 0;
+    t->imagem       = imagem;
+    t->imagem_tam   = tam;
+    t->pai          = atual;
+    t->reinicios    = 0;
+    t->ultima_falha = 0;
+    long erro = processo_carregar(pid, &args_tmp);
+    if (erro) {
+        t->estado = ESTADO_LIVRE;
+        return erro;
+    }
+    return pid;
 }
 
 /* ===========================================================================
@@ -827,8 +1141,8 @@ static long syscall_executar(quadro_t *q)
     switch (q->rax) {
     case SYS_ENVIAR:
     case SYS_CHAMAR:
-        if (!pid_vivo(a) || a == atual) return ERRO_PID;
-        if (!ponteiro_ok(b))            return ERRO_INVALIDO;
+        if (!pid_vivo(a) || a == atual)              return ERRO_PID;
+        if (!usuario_valido(eu, b, sizeof(msg_t)))   return ERRO_INVALIDO;
         mem_copia(&eu->caixa, (const void *)b, sizeof(msg_t));
         eu->msg_usuario = b;               /* a resposta do CHAMAR volta aqui */
         eu->chamando    = (q->rax == SYS_CHAMAR);
@@ -836,7 +1150,7 @@ static long syscall_executar(quadro_t *q)
         return 0;
 
     case SYS_RECEBER:
-        if (!ponteiro_ok(b)) return ERRO_INVALIDO;
+        if (!usuario_valido(eu, b, sizeof(msg_t))) return ERRO_INVALIDO;
         if (a != PID_QUALQUER && a != PID_KERNEL && !pid_vivo(a)) return ERRO_PID;
         eu->msg_usuario = b;
         ipc_receber((u32)a);
@@ -844,7 +1158,7 @@ static long syscall_executar(quadro_t *q)
 
     case SYS_RESPONDER:
         /* Nunca bloqueia: um servidor não pode ficar refém de um cliente. */
-        if (!pid_vivo(a) || !ponteiro_ok(b)) return ERRO_PID;
+        if (!pid_vivo(a) || !usuario_valido(eu, b, sizeof(msg_t))) return ERRO_PID;
         if (tarefas[a].estado != ESTADO_RECEBENDO || tarefas[a].alvo != atual)
             return ERRO_INVALIDO;          /* o cliente não está esperando por mim */
         mem_copia(&eu->caixa, (const void *)b, sizeof(msg_t));
@@ -865,12 +1179,14 @@ static long syscall_executar(quadro_t *q)
         return (long)ticks;
 
     case SYS_TAREFA_INFO: {
-        if (a >= MAX_TAREFAS) return ERRO_PID;
-        if (!ponteiro_ok(b))  return ERRO_INVALIDO;
+        if (a >= MAX_TAREFAS)                        return ERRO_PID;
+        if (!usuario_valido(eu, b, sizeof(msg_t)))   return ERRO_INVALIDO;
         msg_t *m = (msg_t *)b;
         mem_zera(m, sizeof(*m));
         m->arg[0] = tarefas[a].estado;
         m->arg[1] = tarefas[a].reinicios;
+        m->arg[2] = tarefas[a].ultima_falha;
+        m->arg[3] = tarefas[a].pai;
         nome_copia(m->texto, tarefas[a].nome);
         return 0;
     }
@@ -879,8 +1195,51 @@ static long syscall_executar(quadro_t *q)
         return (long)(((quadros_livres * 4) << 32) | (quadros_total * 4));
 
     case SYS_SAIR:
-        processo_encerrar(atual, 0, 0);
+        processo_encerrar(atual, (long)a, 0, 0);
         return 0;
+
+    case SYS_CRIAR:
+        return processo_executar(eu, a, b);
+
+    case SYS_ESPERAR: {
+        if (a == 0 || a >= MAX_TAREFAS || tarefas[a].pai != atual ||
+            tarefas[a].estado == ESTADO_LIVRE)
+            return ERRO_PID;                         /* não é meu filho */
+        if (tarefas[a].estado == ESTADO_ZUMBI) {     /* já terminou */
+            tarefas[a].estado = ESTADO_LIVRE;
+            return tarefas[a].codigo_saida;
+        }
+        eu->estado = ESTADO_ESPERANDO;               /* acorda no fim do filho */
+        eu->alvo   = (u32)a;
+        return 0;
+    }
+
+    case SYS_SBRK: {
+        long incremento = (long)a;
+        u64 antigo = eu->heap_fim;
+        if (incremento < 0 || (u64)incremento > USUARIO_HEAP_FIM - antigo)
+            return ERRO_SEM_MEMORIA;
+        if (!mapear_faixa(eu->diretorio, antigo, antigo + (u64)incremento))
+            return ERRO_SEM_MEMORIA;
+        eu->heap_fim = antigo + (u64)incremento;
+        return (long)antigo;
+    }
+
+    case SYS_PID:
+        return atual;
+
+    case SYS_INITRD_INFO: {
+        const char *nome;
+        const u8 *dados;
+        u64 tam;
+        if (!usuario_valido(eu, b, sizeof(msg_t))) return ERRO_INVALIDO;
+        if (!tar_entrada((u32)a, &nome, &dados, &tam)) return ERRO_NAO_ACHADO;
+        msg_t *m = (msg_t *)b;
+        mem_zera(m, sizeof(*m));
+        m->arg[0] = (u32)tam;
+        for (u32 i = 0; nome[i] && i < MSG_TEXTO_MAX - 1; i++) m->texto[i] = nome[i];
+        return 0;
+    }
     }
     return ERRO_INVALIDO;
 }
@@ -932,7 +1291,11 @@ quadro_t *interrupt_dispatch(quadro_t *q)
     if (q->vetor < 32) {
         if ((q->cs & 3) == 0)
             kernel_panico(q);                    /* o núcleo falhou: fim */
-        processo_encerrar(atual, 1, q->vetor);  /* o usuário falhou: isola */
+        if (q->vetor == 14 && pilha_crescer(&tarefas[atual], cpu_ler_cr2())) {
+            /* só faltava pilha: a página nova já está lá, tenta de novo */
+        } else {                                 /* o usuário falhou: isola */
+            processo_encerrar(atual, SAIDA_FALHA_BASE + (long)q->vetor, 1, q->vetor);
+        }
     } else if (q->vetor < 48) {
         u32 irq = q->vetor - 32;
         if (irq == 0) {
@@ -1017,6 +1380,23 @@ void kernel_main(u64 magic, u64 mbi_endereco)
     term_escreve(" KiB livres em quadros de 4 KiB\n", ATTR(VGA_BRANCO, FUNDO));
 
     term_status(1, "Paginacao de 4 niveis: nucleo protegido do anel 3");
+
+    if (initrd) {                            /* quantos programas vieram? */
+        const char *nome;
+        const u8 *dados;
+        u64 tam;
+        u32 n = 0;
+        while (tar_entrada(n, &nome, &dados, &tam)) n++;
+        term_escreve("[",    ATTR(VGA_CINZA_CLARO, FUNDO));
+        term_escreve(" OK ", ATTR(VGA_VERDE_CLARO, FUNDO));
+        term_escreve("] initrd: ", ATTR(VGA_CINZA_CLARO, FUNDO));
+        term_numero(n, ATTR(VGA_BRANCO, FUNDO));
+        term_escreve(" arquivos (", ATTR(VGA_BRANCO, FUNDO));
+        term_numero((u32)(initrd_tam / 1024), ATTR(VGA_BRANCO, FUNDO));
+        term_escreve(" KiB)\n", ATTR(VGA_BRANCO, FUNDO));
+    } else {
+        term_escreve("[ -- ] sem initrd: so os servidores do boot\n", ATTR(VGA_CINZA_CLARO, FUNDO));
+    }
 
     tss_iniciar();
     idt_iniciar();

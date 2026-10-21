@@ -64,9 +64,9 @@ static void putc(char c, u8 cor)
     }
 }
 
-void main(u64 reinicios, u64 falha)
+int main(int argc, char **argv)
 {
-    (void)reinicios; (void)falha;
+    (void)argc; (void)argv;
     cursor_ler();
 
     msg_t m;

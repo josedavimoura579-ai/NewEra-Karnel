@@ -26,7 +26,20 @@ static inline long sys_irq_assinar(u32 irq)             { return syscall2(SYS_IR
 static inline u32  sys_tempo(void)                      { return (u32)syscall2(SYS_TEMPO, 0, 0); }
 static inline long sys_tarefa_info(u32 pid, msg_t *m)   { return syscall2(SYS_TAREFA_INFO, pid, (u64)m); }
 static inline u64  sys_memoria(void)                    { return (u64)syscall2(SYS_MEMORIA, 0, 0); }
-static inline void sys_sair(void)                      { syscall2(SYS_SAIR, 0, 0); for (;;) ; }
+static inline void sys_sair(int codigo)                 { syscall2(SYS_SAIR, (u64)(long)codigo, 0); for (;;) ; }
+static inline long sys_esperar(u32 pid)                 { return syscall2(SYS_ESPERAR, pid, 0); }
+static inline long sys_pid(void)                        { return syscall2(SYS_PID, 0, 0); }
+static inline long sys_initrd_info(u32 i, msg_t *m)     { return syscall2(SYS_INITRD_INFO, i, (u64)m); }
+
+/* Executa um programa do initrd (ex.: "bin/ola"). argv termina em 0; com
+ * argv = 0 o programa recebe só o caminho. Devolve o PID do filho. */
+static inline long sys_criar(const char *caminho, char *const *argv)
+{
+    return syscall2(SYS_CRIAR, (u64)caminho, (u64)argv);
+}
+
+/* Aumenta o heap em 'bytes'; devolve o início da área nova (ou erro < 0). */
+static inline long sys_sbrk(u64 bytes)                  { return syscall2(SYS_SBRK, bytes, 0); }
 
 /* ----------------- Portas de E/S (só para drivers, IOPL 3) --------------- */
 
@@ -81,10 +94,33 @@ enum {
 };
 #define COR(texto) ((u8)((texto) | (COR_AZUL << 4)))
 
-/* ------------------------------ Ponto de entrada -------------------------
- * Todo programa define main(). Quem a chama é _start, em crt0.asm, que
- * entrega os dois argumentos que o núcleo deixou em RBX e RCX.            */
+/* ------------------------------- Na tela ---------------------------------
+ * Escrever é pedir ao servidor de vídeo (PID 1); textos longos vão em
+ * pedaços que cabem numa mensagem.                                         */
 
-void main(u64 arg1, u64 arg2);
+static inline void escreve(const char *s, u8 cor)
+{
+    msg_t m;
+    while (*s) {
+        msg_zera(&m);
+        m.tipo   = MSG_VIDEO_ESCREVER;
+        m.arg[0] = cor;
+        u32 i = 0;
+        while (*s && i < MSG_TEXTO_MAX - 1) m.texto[i++] = *s++;
+        sys_enviar(PID_VIDEO, &m);
+    }
+}
+
+static inline void escreve_num(u32 n, u8 cor)
+{
+    char buf[11];
+    escreve(num_texto(n, buf), cor);
+}
+
+/* ------------------------------ Ponto de entrada -------------------------
+ * Todo programa define main(argc, argv), como em qualquer C. Quem a chama
+ * é _start, em crt0.asm; o valor devolvido vira o código de saída.        */
+
+int main(int argc, char **argv);
 
 #endif

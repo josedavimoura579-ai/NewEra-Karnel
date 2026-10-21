@@ -93,9 +93,9 @@ static void atender_leitor(void)
     leitor = 0;
 }
 
-void main(u64 reinicios, u64 falha)
+int main(int argc, char **argv)
 {
-    (void)reinicios; (void)falha;
+    (void)argc; (void)argv;
 
     for (int i = 0; i < 16 && (inb(TECLADO_STATUS) & 0x01); i++)
         inb(TECLADO_DADOS);                /* esvazia bytes pendentes */

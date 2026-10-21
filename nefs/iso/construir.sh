@@ -173,9 +173,12 @@ for f in kernel.c boot.asm cpu.asm novaera.h linker.ld build.sh sistema.conf \
 done
 cp "$REPO"/usuario/*.c "$REPO"/usuario/*.h "$REPO"/usuario/*.asm "$REPO"/usuario/*.ld \
    "$MODELO/usuario/"
+mkdir -p "$MODELO/usuario/bin"
+cp "$REPO"/usuario/bin/*.c "$MODELO/usuario/bin/"
 # O NovaEra original já compilado, para comparar com o seu sistema:
-#   qemu-system-x86_64 -kernel /usr/share/nefs/novaera/kernel.bin -display curses
-(cd "$REPO" && sh build.sh >/dev/null) && cp "$REPO/kernel.bin" "$MODELO/kernel.bin"
+#   qemu-system-x86_64 -kernel /usr/share/nefs/novaera/kernel.bin \
+#       -initrd /usr/share/nefs/novaera/initrd.tar -display curses
+(cd "$REPO" && sh build.sh >/dev/null) && cp "$REPO/kernel.bin" "$REPO/initrd.tar" "$MODELO/"
 cp -r "$REPO/nefs/livro" "$RAIZ/usr/share/nefs/livro"
 
 cp "$AQUI/raiz/init" "$RAIZ/init"

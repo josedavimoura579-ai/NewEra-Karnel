@@ -12,6 +12,7 @@ QEMU="$(command -v qemu-system-x86_64 || true)"   # o NovaEra é 64 bits
 
 MODO="${1:-curses}"
 BASE=(-kernel kernel.bin -m 64M -nic none)
+[ -f initrd.tar ] && BASE+=(-initrd initrd.tar)   # os programas que o shell executa
 
 if [ "$MODO" != "vnc" ] && ! "$QEMU" -display help 2>&1 | grep -qw curses; then
     echo "Este QEMU não tem modo curses; usando VNC."
