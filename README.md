@@ -407,10 +407,16 @@ O QBE gera código para x86_64, e foi por isso que o NovaEra passou para 64 bits
 
 ### Fases futuras (depois da Fase 3)
 
-- [ ] **Usuários e permissões**: dono de arquivo, usuário comum e administrador (o que permitiria um `sudo`)
-- [ ] **Rede**: driver de placa de rede e TCP/IP, como servidores no anel 3
-- [ ] **Pacotes**: um formato de pacote e um gerenciador (o que permitiria um "apt" do NovaEra)
-- [ ] **Interface gráfica**: modo gráfico, mouse, janelas e fontes, como mais um servidor
+O destino é que cada pessoa possa criar o próprio sistema de **dois jeitos**:
+**manual** (estilo Arch/LFS, peça por peça, seguindo o livro) ou **pronto**
+(estilo Debian/Ubuntu, com instalador e área de trabalho). O caminho é em
+degraus, e cada fase já entrega algo usável. Detalhes em
+[`nefs/ROTEIRO.md`](nefs/ROTEIRO.md).
+
+- [ ] **Fase 4 — base POSIX e o modo manual**: sinais e `kill`, threads, `mmap`, sockets locais, usuários e permissões (`sudo`), e o modo **manual estilo Arch** completo no livro
+- [ ] **Fase 5 — gráficos**: framebuffer em alta resolução, mouse, fontes e um servidor de janelas no anel 3
+- [ ] **Fase 6 — a área de trabalho do NovaEra e o modo pronto**: painel, menu, janelas, gerenciador de arquivos e terminal gráfico (no estilo do XFCE), pacotes e um **instalador estilo Debian/Ubuntu** com a opção "com área de trabalho"
+- [ ] **Fase 7 — rede e o XFCE4 de verdade**: TCP/IP, porte do GCC ou do clang, do X11, do GTK e do **XFCE4**
 
 ---
 

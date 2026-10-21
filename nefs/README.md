@@ -107,3 +107,7 @@ e gera a ISO. Os fontes ficam guardados em `nefs/iso/fontes/`.
 - [ ] Disco persistente para guardar os projetos
 - [ ] Site do NEFS
 - [ ] Livro 2: sistema de arquivos, memória compartilhada, drivers de disco
+
+O roteiro completo, do terminal até a área de trabalho (modo manual estilo
+Arch, modo pronto estilo Debian/Ubuntu e o XFCE4), está em
+[`ROTEIRO.md`](ROTEIRO.md).
