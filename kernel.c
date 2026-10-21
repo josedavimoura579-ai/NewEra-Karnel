@@ -31,7 +31,7 @@
 #include "novaera.h"
 #include "sistema.h"      /* gerado de sistema.conf pelo build.sh */
 
-#define VGA_MEMORIA ((volatile u16 *)0xB8000)
+#define VGA_MEMORIA 0xB8000ull   /* acessada por mem_escreve16 (cpu.asm) */
 #define VGA_COLUNAS 80u
 #define VGA_LINHAS  25u
 
@@ -59,6 +59,7 @@ enum vga_cor {
 
 void outb(u16 porta, u8 valor);
 u8   inb(u16 porta);
+void mem_escreve16(u64 endereco, u16 valor);
 void cpu_carregar_cr3(u64 pml4);
 u64  cpu_ler_cr2(void);
 void cpu_carregar_idt(u64 base, u16 limite);
@@ -104,13 +105,13 @@ static inline u16 vga_celula(char c, u8 atributo)
 static void vga_limpar(u8 atributo)
 {
     for (u32 i = 0; i < VGA_COLUNAS * VGA_LINHAS; i++)
-        VGA_MEMORIA[i] = vga_celula(' ', atributo);
+        mem_escreve16(VGA_MEMORIA + 2 * i, vga_celula(' ', atributo));
 }
 
 static void vga_putc(u32 linha, u32 coluna, char c, u8 atributo)
 {
     if (linha >= VGA_LINHAS || coluna >= VGA_COLUNAS) return;
-    VGA_MEMORIA[linha * VGA_COLUNAS + coluna] = vga_celula(c, atributo);
+    mem_escreve16(VGA_MEMORIA + 2 * (linha * VGA_COLUNAS + coluna), vga_celula(c, atributo));
 }
 
 /* Escreve caractere por caractere; devolve a próxima coluna livre. */
@@ -548,7 +549,7 @@ static tarefa_t tarefas[MAX_TAREFAS];
 static u32      atual;                 /* índice (= PID) de quem está rodando */
 static u64      cr3_atual;
 static u32      contador_ordem;
-static volatile u32 ticks;
+static u32      ticks;          /* só muda e é lida no núcleo, com IF=0 */
 
 #include "programas.h"     /* gerado de programas.lista pelo build.sh */
 
@@ -903,7 +904,7 @@ static _Noreturn void kernel_panico(const quadro_t *q)
 
     const u8 a = ATTR(VGA_BRANCO, VGA_VERMELHO);
     for (u32 i = 0; i < VGA_COLUNAS * 3; i++)
-        VGA_MEMORIA[i] = vga_celula(' ', a);
+        mem_escreve16(VGA_MEMORIA + 2 * i, vga_celula(' ', a));
 
     u32 c = vga_print(0, 1, "*** PANICO DO NUCLEO: ", a);
     vga_print(0, c, q->vetor < 22 ? EXC_NOMES[q->vetor] : "Reservado", a);

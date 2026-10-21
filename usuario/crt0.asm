@@ -38,6 +38,27 @@ syscall2:
     pop rbx
     ret
 
+; void mem_escreve16(u64 endereco, u16 valor)
+; u16  mem_le16(u64 endereco)
+; Acesso a memória de dispositivo (como a VGA em 0xB8000). Em C isso exigiria
+; "volatile", que o cproc ainda não suporta; numa função em assembly nenhum
+; compilador consegue apagar ou reordenar o acesso.
+global mem_escreve16
+mem_escreve16:
+    mov [rdi], si
+    ret
+
+global mem_le16
+mem_le16:
+    movzx eax, word [rdi]
+    ret
+
+; u32 mem_le32(u64 endereco)
+global mem_le32
+mem_le32:
+    mov eax, [rdi]
+    ret
+
 ; void outb(u16 porta, u8 valor)    - só drivers (IOPL 3)
 global outb
 outb:

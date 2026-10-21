@@ -32,9 +32,11 @@ RAIZ="$TRABALHO/raiz"            # o sistema de arquivos da ISO
 CD="$TRABALHO/cd"                # o conteúdo do CD (kernel + initramfs + GRUB)
 
 NEFS_VERSAO="$(sed -n 's/^NEFS_VERSAO="\(.*\)"/\1/p' "$REPO/nefs/nefs")"
-QBE_VERSAO="1.2"
+# Versões testadas juntas: o NovaEra compila e roda com elas.
+QBE_VERSAO="1.3"
 QBE_URL="https://c9x.me/compile/release/qbe-$QBE_VERSAO.tar.xz"
 CPROC_URL="https://git.sr.ht/~mcf/cproc"
+CPROC_COMMIT="d1c53ddf56571573a7025324c8dd5c6d547a4d1f"   # 2026-04-27, usa QBE 1.3
 
 SEM_COMPILADOR=0
 [ "${1:-}" = "--sem-compilador" ] && SEM_COMPILADOR=1
@@ -77,6 +79,9 @@ if [ "$SEM_COMPILADOR" = 0 ]; then
         git clone -q "$CPROC_URL" "$FONTES/cproc" \
             || erro "não consegui baixar $CPROC_URL (a rede bloqueia git.sr.ht?)"
     fi
+    git -C "$FONTES/cproc" checkout -q "$CPROC_COMMIT" \
+        || { git -C "$FONTES/cproc" fetch -q origin && git -C "$FONTES/cproc" checkout -q "$CPROC_COMMIT"; } \
+        || erro "não achei o commit $CPROC_COMMIT do cproc"
     rm -rf "$TRABALHO/cproc"
     cp -r "$FONTES/cproc" "$TRABALHO/cproc"
     (cd "$TRABALHO/cproc" && ./configure --prefix=/usr >/dev/null && make -s)
@@ -112,9 +117,10 @@ for applet in $("$RAIZ/usr/bin/busybox" --list-full); do
     [ -e "$RAIZ/$applet" ] || ln -s /usr/bin/busybox "$RAIZ/$applet"
 done
 
-# Montador e ligador (binutils), nasm
+# Montador, ligador e objcopy (binutils), nasm
 copiar_com_libs "$(readlink -f "$(command -v as)")" /usr/bin/as
 copiar_com_libs "$(readlink -f "$(command -v ld)")" /usr/bin/ld
+copiar_com_libs "$(readlink -f "$(command -v objcopy)")" /usr/bin/objcopy
 copiar_com_libs "$(command -v nasm)" /usr/bin/nasm
 
 # O compilador do NEFS
@@ -125,7 +131,8 @@ if [ "$SEM_COMPILADOR" = 0 ]; then
     [ -d "$COMPILADOR/usr/lib" ] && cp -a "$COMPILADOR/usr/lib/." "$RAIZ/usr/lib/"
     mkdir -p "$RAIZ/usr/share/nefs"
     cp "$COMPILADOR/versoes.txt" "$RAIZ/usr/share/nefs/compilador.txt"
-    # O cproc usa o pré-processador do sistema (cpp).
+    # O pré-processador do cproc ainda não está completo: ele usa o cpp do
+    # GCC (só o pré-processador, cpp + cc1; o compilador continua o cproc).
     copiar_com_libs "$(readlink -f "$(command -v cpp)")" /usr/bin/cpp
     cc1="$(gcc -print-prog-name=cc1)"
     copiar_com_libs "$cc1" "$cc1"

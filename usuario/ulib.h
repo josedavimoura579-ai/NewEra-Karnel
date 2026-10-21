@@ -33,6 +33,12 @@ static inline void sys_sair(void)                      { syscall2(SYS_SAIR, 0, 0
 void outb(u16 porta, u8 valor);       /* crt0.asm */
 u8   inb(u16 porta);
 
+/* Memória de dispositivo (crt0.asm). O cproc ainda não suporta "volatile":
+ * estas funções garantem que o acesso acontece de verdade. */
+void mem_escreve16(u64 endereco, u16 valor);
+u16  mem_le16(u64 endereco);
+u32  mem_le32(u64 endereco);
+
 /* ------------------------------ Utilitários ------------------------------ */
 
 static inline u32 str_tam(const char *s)

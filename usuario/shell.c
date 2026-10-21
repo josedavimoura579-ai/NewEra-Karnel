@@ -126,8 +126,7 @@ static void cmd_sobre(void)
 static void cmd_invadir(void)
 {
     escreve("Lendo 0x00100000, onde mora o codigo do nucleo...\n", COR(COR_AMARELO));
-    volatile u32 *nucleo = (volatile u32 *)0x00100000;
-    u32 valor = *nucleo;                   /* a paginação proíbe: falha de página */
+    u32 valor = mem_le32(0x00100000);      /* a paginação proíbe: falha de página */
     escreve("Consegui ler?! Isso nao deveria acontecer: ", COR(COR_VERMELHO_CLARO));
     escreve_num(valor, COR(COR_VERMELHO_CLARO));
     escreve("\n", COR(COR_VERMELHO_CLARO));

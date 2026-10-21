@@ -10,7 +10,8 @@
 #define COLUNAS 80u
 #define LINHAS  25u
 
-static volatile u16 *const tela = (volatile u16 *)USUARIO_VGA;
+/* A tela: 80x25 células de 2 bytes (caractere + cor) em USUARIO_VGA. */
+static void celula(u32 i, u16 valor) { mem_escreve16(USUARIO_VGA + 2 * i, valor); }
 static u32 lin, col;
 
 static void cursor_mover(void)
@@ -32,16 +33,16 @@ static void cursor_ler(void)
 static void limpar(void)
 {
     for (u32 i = 0; i < COLUNAS * LINHAS; i++)
-        tela[i] = (u16)(COR(COR_BRANCO) << 8 | ' ');
+        celula(i, (u16)(COR(COR_BRANCO) << 8 | ' '));
     lin = col = 0;
 }
 
 static void rolar(void)
 {
     for (u32 i = 0; i < COLUNAS * (LINHAS - 1); i++)
-        tela[i] = tela[i + COLUNAS];
+        celula(i, mem_le16(USUARIO_VGA + 2 * (i + COLUNAS)));
     for (u32 i = 0; i < COLUNAS; i++)
-        tela[(LINHAS - 1) * COLUNAS + i] = (u16)(COR(COR_BRANCO) << 8 | ' ');
+        celula((LINHAS - 1) * COLUNAS + i, (u16)(COR(COR_BRANCO) << 8 | ' '));
 }
 
 static void putc(char c, u8 cor)
@@ -52,9 +53,9 @@ static void putc(char c, u8 cor)
     } else if (c == '\b') {
         if (col > 0)      col--;
         else if (lin > 0) { lin--; col = COLUNAS - 1; }
-        tela[lin * COLUNAS + col] = (u16)(cor << 8 | ' ');
+        celula(lin * COLUNAS + col, (u16)(cor << 8 | ' '));
     } else {
-        tela[lin * COLUNAS + col] = (u16)(cor << 8 | (u8)c);
+        celula(lin * COLUNAS + col, (u16)(cor << 8 | (u8)c));
         if (++col >= COLUNAS) { col = 0; lin++; }
     }
     if (lin >= LINHAS) {

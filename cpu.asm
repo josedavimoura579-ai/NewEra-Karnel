@@ -29,6 +29,21 @@ inb:
     in al, dx
     ret
 
+; void mem_escreve16(u64 endereco, u16 valor)
+; u16  mem_le16(u64 endereco)
+; Acesso a memória de dispositivo (como a VGA em 0xB8000). Em C isso exigiria
+; "volatile", que o cproc ainda não suporta; numa função em assembly nenhum
+; compilador consegue apagar ou reordenar o acesso.
+global mem_escreve16
+mem_escreve16:
+    mov [rdi], si
+    ret
+
+global mem_le16
+mem_le16:
+    movzx eax, word [rdi]
+    ret
+
 ; void cpu_carregar_cr3(u64 pml4)   - troca o espaço de endereçamento
 global cpu_carregar_cr3
 cpu_carregar_cr3:

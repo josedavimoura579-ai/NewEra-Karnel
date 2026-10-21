@@ -12,7 +12,7 @@ SECTIONS
         *(.text .text.*)
     }
     .rodata : { *(.rodata .rodata.*) }
-    .data   : { *(.data .data.*) }
+    .data   : { *(.data .data.*) *(.got .got.*) }   /* .got: ver linker.ld */
     .bss    : { *(COMMON) *(.bss .bss.*) }   /* o núcleo entrega a memória zerada */
 
     _fim = .;

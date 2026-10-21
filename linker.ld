@@ -19,6 +19,10 @@ SECTIONS
 
     .data ALIGN(4K) : {
         *(.data .data.*)
+        /* O QBE (compilador do NEFS) acessa símbolos externos pela GOT, uma
+         * tabela de endereços. O ligador a preenche ou a dispensa; se ela
+         * existir, precisa ficar DENTRO do binário. */
+        *(.got .got.*)
     }
 
     _carga_fim = .;

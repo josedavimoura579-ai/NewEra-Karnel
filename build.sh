@@ -11,7 +11,8 @@
 #  Compiladores aceitos (variável CC):
 #    CC=clang  (padrão)                    -> Linux, Termux
 #    CC=cproc  (cproc + QBE, o do NEFS)    -> a ISO do NEFS
-#  Dependências: nasm, um ligador (ld.lld ou o ld do binutils) e o CC.
+#  Dependências: nasm, um ligador (ld.lld ou o ld do binutils), objcopy
+#  (do binutils ou llvm-objcopy) e o CC.
 #  Escrito em sh puro (sem bash): roda também no BusyBox da ISO do NEFS.
 # ===========================================================================
 set -eu
@@ -22,6 +23,26 @@ CC="${CC:-clang}"
 if [ -z "${LD:-}" ]; then
     if command -v ld.lld >/dev/null; then LD=ld.lld; else LD=ld; fi
 fi
+if [ -z "${OBJCOPY:-}" ]; then
+    if command -v objcopy >/dev/null; then OBJCOPY=objcopy; else OBJCOPY=llvm-objcopy; fi
+fi
+
+# Liga um ELF e o converte em binário puro. Por que não "ld --oformat binary"
+# direto? Porque assim o ld do binutils não resolve os acessos pela GOT que
+# o QBE gera, e o código acabaria lendo endereços zerados.
+# Os programas do NovaEra não têm cabeçalhos de segmento com permissões
+# separadas (o núcleo mapeia tudo); o aviso "RWX" do ld do binutils é esperado.
+LDFLAGS=""
+if "$LD" --help 2>/dev/null | grep -q -- --no-warn-rwx-segments; then
+    LDFLAGS="--no-warn-rwx-segments"
+fi
+
+ligar() {
+    script="$1"; saida="$2"; shift 2
+    # shellcheck disable=SC2086
+    "$LD" -m elf_x86_64 -nostdlib $LDFLAGS -T "$script" -o "$saida.elf" "$@"
+    "$OBJCOPY" -O binary "$saida.elf" "$saida"
+}
 
 case "$(basename "$CC")" in
     clang*)
@@ -105,6 +126,7 @@ done < programas.lista
     printf '%s' "$TABELA"
     echo "};"
 } >> build/programas.h
+echo "section .note.GNU-stack noalloc noexec nowrite progbits" >> build/programas.asm
 
 # --- 2. Programas do usuário -------------------------------------------------
 
@@ -112,8 +134,7 @@ nasm -f elf64 usuario/crt0.asm -o build/crt0.o
 for prog in $PROGRAMAS; do
     # shellcheck disable=SC2086
     "$CC" $CFLAGS -c "usuario/$prog.c" -o "build/$prog.o"
-    "$LD" -m elf_x86_64 -nostdlib -T usuario/usuario.ld --oformat binary \
-          -o "build/$prog.bin" build/crt0.o "build/$prog.o"
+    ligar usuario/usuario.ld "build/$prog.bin" build/crt0.o "build/$prog.o"
     echo "  usuario/$prog.c -> build/$prog.bin ($(wc -c < "build/$prog.bin") bytes)"
 done
 
@@ -125,7 +146,7 @@ nasm -f elf64 build/programas.asm -o build/programas.o
 # shellcheck disable=SC2086
 "$CC" $CFLAGS -c kernel.c -o build/kernel.o
 # Binário puro: o cabeçalho Multiboot (boot.asm) diz onde carregar.
-"$LD" -m elf_x86_64 -nostdlib -T linker.ld --oformat binary \
-      -o kernel.bin build/boot.o build/cpu.o build/kernel.o build/programas.o
+ligar linker.ld build/kernel.bin build/boot.o build/cpu.o build/kernel.o build/programas.o
+cp build/kernel.bin kernel.bin
 
 echo "OK: kernel.bin gerado ($(wc -c < kernel.bin) bytes) com $CC"

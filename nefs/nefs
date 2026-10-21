@@ -94,7 +94,7 @@ compilador() {
 cmd_ferramentas() {
     cc="$(compilador)"
     echo "Compilador C:  ${cc:-NENHUM (instale cproc+qbe ou clang)}"
-    for f in cproc qbe nasm ld ld.lld as qemu-system-x86_64 grub-mkrescue xorriso; do
+    for f in cproc qbe cpp nasm as ld ld.lld objcopy qemu-system-x86_64 grub-mkrescue xorriso; do
         if tem "$f"; then printf '  %-20s %s\n' "$f" "$(command -v "$f")"
         else              printf '  %-20s %s\n' "$f" "(não encontrado)"
         fi
