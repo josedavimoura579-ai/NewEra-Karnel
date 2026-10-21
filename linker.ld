@@ -1,4 +1,4 @@
-/* NovaEra Kernel - linker.ld (reconstruído a partir da especificação do README)
+/* NovaEra Microkernel - linker.ld
  * Carrega o kernel em 1 MiB; .multiboot precisa ficar nos primeiros 8 KiB. */
 ENTRY(_start)
 
@@ -23,6 +23,9 @@ SECTIONS
         *(COMMON)
         *(.bss .bss.*)
     }
+
+    /* Daqui para cima, a RAM é do gerenciador de memória física. */
+    _kernel_fim = .;
 
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
 }

@@ -1,12 +1,12 @@
 <div align="center">
 
-# NovaEra Kernel
+# NovaEra Microkernel
 
 ### A Nova Era Começou
 
-**Um núcleo x86 escrito do zero — nascido num smartphone, livre para o mundo inteiro.**
+**Um microkernel x86 escrito do zero — nascido num smartphone, livre para o mundo inteiro.**
 
-![Versão](https://img.shields.io/badge/vers%C3%A3o-1.0-blue)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-2.0-blue)
 ![Arquitetura](https://img.shields.io/badge/arquitetura-x86%2032--bit-informational)
 ![Boot](https://img.shields.io/badge/boot-Multiboot-success)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-green)
@@ -28,7 +28,7 @@ Tudo começou sem um computador. Sem notebook, sem estação de trabalho, sem se
 
 A resposta é este repositório.
 
-O **NovaEra Kernel** é um núcleo para processadores **x86** escrito do começo ao fim em **Assembly (NASM)** e **C puro**, sem biblioteca padrão, sem copiar código de Linux, de Unix ou de Android. Quando você liga a máquina virtual, quem assume o processador é o nosso código: ele configura o modo protegido de 32 bits, constrói as próprias tabelas de interrupção, acorda o teclado, escreve diretamente na memória de vídeo e conversa com você através de um mini shell.
+O **NovaEra** é um **microkernel** para processadores **x86** escrito do começo ao fim em **Assembly (NASM)** e **C puro**, sem biblioteca padrão, sem copiar código de Linux, de Unix ou de Android. Quando você liga a máquina virtual, quem assume o processador é o nosso código: ele configura o modo protegido de 32 bits, liga a paginação, cria processos isolados no anel 3 e passa a dividir a CPU entre eles. O vídeo, o teclado e o shell **não moram no núcleo**: são programas separados, cada um na sua própria memória, que conversam trocando mensagens.
 
 É pequeno. É honesto. É nosso — e agora é **seu**.
 
@@ -68,30 +68,32 @@ A ideia central é simples: *você só domina o que construiu desde o começo.*
 
 ### Ordem de leitura do código
 
-1. **`linker.ld`** — onde cada pedaço do kernel mora na memória (a partir de 1 MiB).
-2. **`boot.asm`** — a porta de entrada: cabeçalho Multiboot, GDT, pilha, e os 48 *stubs* de interrupção.
-3. **`kernel.c`** — o coração: driver VGA, terminal, IDT, PIC, teclado e o mini shell.
-4. **`build.sh`** e **`run.sh`** — como tudo vira `kernel.bin` e como rodar.
+1. **`novaera.h`** — o contrato entre o núcleo e os programas: chamadas de sistema, formato das mensagens, PIDs e o mapa de memória.
+2. **`linker.ld`** — onde cada pedaço do núcleo mora na memória (a partir de 1 MiB).
+3. **`boot.asm`** — a porta de entrada: Multiboot, GDT com anéis 0 e 3, os *stubs* de interrupção, a `int 0x80` e a troca de contexto.
+4. **`kernel.c`** — o microkernel: memória física, paginação, processos, escalonador, IPC e supervisão.
+5. **`usuario/`** — o que roda fora do núcleo: `ulib.h` (biblioteca), `video.c`, `teclado.c` e `shell.c`.
+6. **`build.sh`** e **`run.sh`** — como tudo vira `kernel.bin` e como rodar.
 
 ### Como usar o NovaEra como "motor" do seu sistema
 
-O NovaEra é a **base**: boot, memória de vídeo, interrupções e entrada de teclado. Sobre ele, cada pessoa constrói camadas:
+O NovaEra é a **base**: um núcleo que só isola, escalona e entrega mensagens. Sobre ele, cada pessoa constrói camadas, **sempre fora do núcleo**:
 
 ```
 ┌──────────────────────────────────────────────┐
 │  5. Distribuição   (o SEU sistema operacional) │  ← sua identidade, seus pacotes
 ├──────────────────────────────────────────────┤
-│  4. Userland       (shell, ferramentas, apps)  │  ← futuro: modo usuário
+│  4. Userland       (shell ✔, ferramentas)      │  ← anel 3
 ├──────────────────────────────────────────────┤
-│  3. Serviços       (arquivos, rede, gráficos)  │  ← futuro
+│  3. Serviços       (arquivos, rede, gráficos)  │  ← anel 3 (futuro)
 ├──────────────────────────────────────────────┤
-│  2. Drivers        (teclado ✔, vídeo ✔, ...)   │  ← você adiciona
+│  2. Drivers        (teclado ✔, vídeo ✔, ...)   │  ← anel 3, por mensagens
 ├──────────────────────────────────────────────┤
-│  1. NovaEra Core   (boot, GDT, IDT, PIC)  ✔    │  ← este repositório
+│  1. Microkernel    (memória, processos, IPC) ✔ │  ← anel 0, este repositório
 └──────────────────────────────────────────────┘
 ```
 
-**Hoje**, o caminho é: faça um *fork* deste repositório, adicione arquivos `.c`/`.asm` para os seus drivers e comandos e ajuste o `build.sh` para compilá-los. **No futuro**, o NEFS definirá uma API estável do núcleo (ver [Roteiro](#roteiro)) para que o seu sistema possa atualizar o núcleo sem reescrever tudo.
+**Hoje**, o caminho é: faça um *fork*, crie um programa em `usuario/` usando a `ulib.h`, acrescente-o ao `build.sh`, ao `boot.asm` (`PROGRAMA`) e a `kernel_main()` (`processo_criar`). O núcleo não precisa saber o que o seu programa faz: ele só entrega as mensagens. A interface entre os dois lados é o `novaera.h`, o embrião da **API estável do NovaEra Core** (ver [Roteiro](#roteiro)).
 
 ### Dois estilos de sistema construídos sobre o NEFS
 
@@ -107,20 +109,19 @@ O NEFS propõe duas filosofias de distribuição — inspiradas no que a comunid
 
 ### Primeira modificação (5 minutos)
 
-Quer sentir o NEFS na prática? Abra o `kernel.c`, encontre a função `shell_executar()` e adicione um comando **antes** do último `else`:
+Quer sentir o NEFS na prática? Abra o `usuario/shell.c`, encontre a função `executar()` e adicione um comando **antes** do último `else`:
 
 ```c
-    } else if (str_igual(cmd, "ola")) {
-        term_escreve("Ola, mundo NEFS!\n", ATTR(VGA_VERDE_CLARO, FUNDO));
+    else if (str_igual(cmd, "ola"))     escreve("Ola, mundo NEFS!\n", COR(COR_VERDE_CLARO));
 ```
 
-Compile com `bash build.sh`, rode no QEMU, digite `ola` e aperte Enter. Você acabou de estender um sistema operacional que você entende por inteiro.
+Compile com `bash build.sh`, rode no QEMU, digite `ola` e aperte Enter. Repare que você mudou o sistema **sem tocar no núcleo**: o shell é só um programa que pede ao servidor de vídeo para escrever. É assim que um microkernel cresce.
 
 ---
 
 ## Especificação técnica
 
-Estado atual: **NovaEra Kernel v1.0** (alfa).
+Estado atual: **NovaEra Microkernel v2.0** (alfa).
 
 | Componente | Detalhes |
 |---|---|
@@ -129,29 +130,59 @@ Estado atual: **NovaEra Kernel v1.0** (alfa).
 | **Boot** | **Multiboot 1** — assinatura `0x1BADB002`, flags `0x3`; compatível com `qemu -kernel` e com o formato esperado por bootloaders como o GRUB |
 | **Endereço de carga** | `0x100000` (1 MiB) |
 | **Seções** | `.text` (com `.multiboot` no início), `.rodata`, `.data`, `.bss` — alinhadas em 4 KiB (`linker.ld`) |
-| **Segmentação (GDT)** | 3 descritores *flat* de 4 GiB em anel 0: nulo, código (`0x08`) e dados (`0x10`) |
-| **Pilha** | 16 KiB na seção `.bss` |
-| **Interrupções (IDT)** | 256 entradas; vetores 0–31 = exceções da CPU, 32–47 = IRQs; *interrupt gates* (`0x8E`) |
-| **PIC (8259)** | Remapeado: IRQ 0–7 → vetores 32–39, IRQ 8–15 → vetores 40–47. Apenas a **IRQ 1** (teclado) fica desmascarada |
-| **Teclado** | PS/2 (i8042) via **IRQ 1**; dados na porta `0x60`, status/comando na `0x64`; *scancodes* set 1, layout US; Shift e Caps Lock; fila circular de 256 teclas |
-| **Vídeo** | Modo texto VGA 80×25 com escrita **direta na memória física `0xB8000`** (16 bits por célula: caractere CP437 + atributo de cor), cursor de hardware via portas `0x3D4`/`0x3D5`, rolagem por software |
-| **Mini shell** | `limpar` (limpa a tela) · `reboot` (envia `0xFE` à porta `0x64`; plano B: *triple fault*) · qualquer outra coisa → "Comando desconhecido" |
-| **Diagnóstico** | Exceções da CPU mostram um painel vermelho com vetor, código de erro, EIP, CS e EFLAGS |
+| **Segmentação (GDT)** | *Flat* de 4 GiB: código/dados do núcleo (`0x08`/`0x10`, anel 0), código/dados do usuário (`0x1B`/`0x23`, anel 3) e a TSS (`0x28`) |
+| **Memória física** | Lê `mem_upper` do Multiboot; quadros de 4 KiB acima do núcleo numa lista livre encadeada (alocar e liberar em O(1)); até 16 MiB |
+| **Paginação** | Um diretório de páginas por processo. Os 16 MiB do núcleo são mapeados em todos, mas só para o anel 0. Programa em `0x40000000` (64 KiB), pilha em `0x40100000` (16 KiB) |
+| **Processos** | Até 8. PID 0 = núcleo (ocioso, `hlt`), 1 = vídeo, 2 = teclado, 3 = shell. Cada um tem pilha de núcleo própria; a TSS aponta para ela |
+| **Escalonador** | Preemptivo, *round-robin*, com o timer PIT a **100 Hz** (IRQ 0) |
+| **Chamadas de sistema** | `int 0x80` (única porta da IDT com DPL 3): `ENVIAR`, `RECEBER`, `CHAMAR`, `RESPONDER`, `CEDER`, `IRQ_ASSINAR`, `TEMPO`, `TAREFA_INFO`, `MEMORIA`, `SAIR` |
+| **IPC** | Síncrono, por mensagens de 80 bytes copiadas pelo núcleo entre espaços de endereçamento (estilo L4/MINIX). `RESPONDER` nunca bloqueia, para que um servidor não fique refém de um cliente |
+| **Interrupções** | IRQ 0 é do núcleo. As outras viram **mensagens `MSG_IRQ`** para o driver que as assinou; o PIC só libera uma IRQ quando alguém a assina |
+| **Drivers** | No anel 3 com IOPL 3 (podem usar `in`/`out`). **Vídeo**: o único processo com `0xB8000` mapeado. **Teclado**: PS/2 *set 1*, layout US, Shift e Caps Lock, também faz o `reboot` pela porta `0x64` |
+| **Supervisão** | Uma exceção no anel 3 encerra só o processo culpado, devolve a memória dele e o recarrega (até 5 vezes), avisando-o do motivo. Uma exceção no anel 0 mostra o painel vermelho de pânico |
+| **Shell (anel 3)** | `ajuda` · `limpar` · `ps` · `mem` · `tempo` · `sobre` · `invadir` (demonstra a proteção de memória) · `reboot` |
 | **Linguagens** | Assembly NASM + C *freestanding* (`clang --target=i386-none-elf`), ligado com `ld.lld` |
-| **Dependências em tempo de execução** | Nenhuma. Sem libc, sem `#include` |
+| **Dependências em tempo de execução** | Nenhuma. Sem libc; o único `#include` é a própria ABI (`novaera.h`) |
 
-### O que o NovaEra **ainda não** é
+### Por que agora é um microkernel
 
-Transparência importa. Hoje o NovaEra é um núcleo mínimo de aprendizado, **ainda monolítico e sem**: gerenciador de memória, paginação, multitarefa, modo usuário/chamadas de sistema, driver de disco ou sistema de arquivos. A meta de longo prazo é evoluir para um **microkernel**, com serviços fora do núcleo. Veja o [Roteiro](#roteiro).
+Num núcleo **monolítico** (como era o NovaEra 1.0, e como é o Linux), drivers e serviços rodam dentro do núcleo, com poder total: um bug no driver de teclado derruba tudo. Num **microkernel**, o núcleo faz só o indispensável, e todo o resto vira processo comum:
+
+```
+   anel 3 │  ┌────────┐  mensagens  ┌─────────┐  mensagens  ┌─────────┐
+(usuário) │  │ shell  │ ──────────► │  vídeo  │             │ teclado │
+          │  │ PID 3  │ ◄────────────────────────────────── │  PID 2  │
+          │  └────────┘                                     └─────────┘
+          │        │ int 0x80                                    ▲ MSG_IRQ
+   ───────┼────────┼─────────────────────────────────────────────┼──────
+   anel 0 │        ▼          NovaEra Microkernel                │
+ (núcleo) │   memória · paginação · processos · escalonador · IPC · IRQ 1
+```
+
+Experimente no shell:
+
+- **`ps`** mostra os processos e em que anel cada um roda.
+- **`invadir`** faz o shell tentar ler a memória do núcleo. A paginação proíbe, a CPU gera uma falha de página, e o núcleo encerra **só o shell**, libera a memória dele e o reinicia. Vídeo e teclado nem percebem. Rode `ps` em seguida e veja o contador de reinícios.
+
+### O que o NovaEra **ainda não** tem
+
+Transparência importa. Ainda faltam: servidor de nomes (os PIDs dos servidores são fixos), carregar programas do disco (hoje eles vão embutidos no `kernel.bin`), mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, driver de disco e sistema de arquivos. Veja o [Roteiro](#roteiro).
 
 ### Estrutura do repositório
 
 ```
 novaera-kernel/
-├── boot.asm          # Multiboot, GDT, pilha, stubs de interrupção (NASM)
-├── kernel.c          # VGA, terminal, IDT, PIC, teclado, mini shell (C puro)
-├── linker.ld         # Mapa de memória a partir de 1 MiB
-├── build.sh          # Compila e liga: boot.asm + kernel.c -> kernel.bin
+├── novaera.h         # A ABI: syscalls, mensagens, PIDs, mapa de memória
+├── boot.asm          # Multiboot, GDT/TSS, stubs, int 0x80, troca de contexto (NASM)
+├── kernel.c          # O microkernel: memória, paginação, processos, IPC (C puro)
+├── linker.ld         # Mapa de memória do núcleo a partir de 1 MiB
+├── usuario/          # Tudo o que roda no anel 3
+│   ├── ulib.h        #   biblioteca: syscalls, E/S de portas, _start
+│   ├── usuario.ld    #   todo programa mora em 0x40000000
+│   ├── video.c       #   servidor de vídeo (PID 1)
+│   ├── teclado.c     #   driver de teclado PS/2 (PID 2)
+│   └── shell.c       #   o shell (PID 3)
+├── build.sh          # Compila os programas, embute-os e liga o kernel.bin
 ├── run.sh            # Atalho para rodar no QEMU (pensado para o Termux)
 ├── kernel.bin        # Binário pronto para rodar
 └── README.md
@@ -237,12 +268,12 @@ qemu-system-i386 -kernel kernel.bin -m 64M
 Uma janela abre com um PC virtual. Em menos de um segundo você verá a tela azul com a mensagem:
 
 ```
-╔════════════════════════════════════════════╗
-║  NovaEra Kernel v1.0 - A Nova Era Começou  ║
-╚════════════════════════════════════════════╝
+╔═════════════════════════════════════════════════╗
+║  NovaEra Microkernel v2.0 - A Nova Era Começou  ║
+╚═════════════════════════════════════════════════╝
 ```
 
-seguida dos testes de inicialização (`[ OK ]`) e do prompt `NovaEra>`.
+seguida dos testes de inicialização (`[ OK ]`), da entrega da CPU aos processos do usuário e do prompt `NovaEra>`.
 
 ### Passo 4 — Converse com o kernel
 
@@ -250,9 +281,14 @@ Clique dentro da janela do QEMU para dar foco ao teclado e digite:
 
 | Comando | O que acontece |
 |---|---|
+| `ajuda` | Lista os comandos. |
 | `limpar` | Limpa a tela. |
-| `reboot` | Reinicia a máquina virtual (o kernel sobe de novo). |
-| *qualquer outra coisa* | Mostra "Comando desconhecido" e a lista de comandos. |
+| `ps` | Lista os processos, o anel, o estado e quantas vezes foram reiniciados. |
+| `mem` | Mostra a memória física livre. |
+| `tempo` | Mostra há quanto tempo o sistema está ligado. |
+| `sobre` | Explica, em quatro linhas, o que é um microkernel. |
+| `invadir` | O shell tenta ler a memória do núcleo, é encerrado e reiniciado. |
+| `reboot` | Reinicia a máquina virtual (quem faz isso é o driver de teclado, fora do núcleo). |
 
 Para sair, feche a janela do QEMU.
 
@@ -293,16 +329,21 @@ bash run.sh            # tela de texto dentro do Termux; use "bash run.sh vnc" p
 - [x] IDT, tratamento de exceções e PIC remapeado
 - [x] Driver de teclado PS/2 (IRQ 1)
 - [x] Mini shell do kernel (`limpar`, `reboot`)
-- [ ] Temporizador (PIT, IRQ 0): relógio do sistema e `sleep`
-- [ ] Leitura do mapa de memória entregue pelo bootloader
-- [ ] Gerenciador de memória física
-- [ ] Paginação e *heap* do kernel (`kmalloc`)
-- [ ] Multitarefa cooperativa e depois preemptiva
-- [ ] Modo usuário e chamadas de sistema
+- [x] Temporizador (PIT, IRQ 0) a 100 Hz
+- [x] Leitura da memória disponível entregue pelo bootloader
+- [x] Gerenciador de memória física
+- [x] Paginação com um espaço de endereçamento por processo
+- [x] Multitarefa preemptiva (*round-robin*)
+- [x] Modo usuário (anel 3) e chamadas de sistema (`int 0x80`)
+- [x] **Microkernel**: IPC por mensagens, IRQs como mensagens, drivers e shell fora do núcleo
+- [x] Supervisão: processo que falha é isolado e reiniciado
+- [ ] Servidor de nomes (sem PIDs fixos)
+- [ ] Mapa de portas de E/S por driver (TSS *I/O bitmap*)
+- [ ] Memória compartilhada entre processos
+- [ ] Carregar programas como módulos Multiboot / do disco
 - [ ] **API estável do NovaEra Core** para sistemas derivados (NEFS)
-- [ ] Driver de disco e sistema de arquivos
+- [ ] Driver de disco e sistema de arquivos (como servidores)
 - [ ] Imagem ISO inicializável
-- [ ] Evolução para **microkernel** (serviços fora do núcleo)
 - [ ] Versão x86_64
 
 ---
@@ -342,7 +383,7 @@ Distribuído sob a licença **MIT**: use, estude, modifique e redistribua livrem
 
 ## English summary
 
-**NovaEra Kernel** is a from-scratch **x86 (32-bit protected mode)** kernel written in NASM Assembly and freestanding C, started and built entirely on an Android phone using Termux. It boots via **Multiboot**, sets up its own GDT, IDT and remapped 8259 PIC, handles the **PS/2 keyboard on IRQ 1**, writes directly to **VGA text memory at `0xB8000`**, and offers a tiny kernel shell (`limpar` clears the screen, `reboot` resets the machine through the keyboard controller port `0x64`).
+**NovaEra** is a from-scratch **x86 (32-bit protected mode) microkernel** written in NASM Assembly and freestanding C, started and built entirely on an Android phone using Termux. The kernel (ring 0) only does physical memory management, per-process paging, preemptive round-robin scheduling (PIT at 100 Hz), synchronous message-passing IPC over `int 0x80`, and delivers hardware IRQs as messages. The **VGA video server, the PS/2 keyboard driver and the shell all run in ring 3** as isolated processes that talk through messages. If a user process faults, the kernel kills only that process, frees its memory and restarts it: try the `invadir` command, which makes the shell read kernel memory.
 
 **NEFS (NovaEra From Scratch)** is our methodology: read the code, run it, modify it, extend it and ship your own operating system on top of a minimal, fully readable core, whether in an Arch-like (minimal, build-it-yourself) or Debian-like (curated, stable) spirit.
 

@@ -1,9 +1,12 @@
 ; ===========================================================================
-;  NovaEra Kernel v1.1 - boot.asm  (Passo 2: interrupções)
+;  NovaEra Microkernel v2.0 - boot.asm
 ;  - Cabeçalho Multiboot 1 (GRUB / QEMU -kernel)
-;  - GDT própria, pilha e salto para kernel_main() em C
-;  - NOVO: 48 "stubs" de interrupção (32 exceções da CPU + 16 IRQs do PIC),
-;          todos convergindo para isr_comum -> interrupt_dispatch() em C
+;  - GDT com segmentos do núcleo (anel 0), do usuário (anel 3) e a TSS
+;  - Pilha e salto para kernel_main() em C
+;  - 48 "stubs" de interrupção (32 exceções da CPU + 16 IRQs do PIC) e a
+;    porta das chamadas de sistema (int 0x80), todos convergindo para
+;    isr_comum -> interrupt_dispatch() em C, que pode TROCAR de processo
+;  - Os programas do usuário (servidores), embutidos com incbin
 ;
 ;  Montar com:  nasm -f elf32 boot.asm -o boot.o
 ; ===========================================================================
@@ -31,13 +34,20 @@ stack_bottom:
     resb STACK_SIZE
 stack_top:
 
-; --- GDT mínima: modelo "flat" de 4 GiB, anel 0 ----------------------------
+; --- GDT: modelo "flat" de 4 GiB -------------------------------------------
+; A proteção de memória de verdade vem da paginação (kernel.c); os segmentos
+; servem para dizer à CPU em que ANEL de privilégio o código está rodando.
 section .data
 align 8
+global gdt_tss
 gdt_start:
     dq 0x0000000000000000            ; 0x00: nulo
-    dq 0x00CF9A000000FFFF            ; 0x08: código (exec/leitura)
-    dq 0x00CF92000000FFFF            ; 0x10: dados  (leitura/escrita)
+    dq 0x00CF9A000000FFFF            ; 0x08: código do núcleo  (anel 0)
+    dq 0x00CF92000000FFFF            ; 0x10: dados do núcleo   (anel 0)
+    dq 0x00CFFA000000FFFF            ; 0x18: código do usuário (anel 3) -> seletor 0x1B
+    dq 0x00CFF2000000FFFF            ; 0x20: dados do usuário  (anel 3) -> seletor 0x23
+gdt_tss:
+    dq 0                             ; 0x28: TSS (preenchida por tss_iniciar() em C)
 gdt_end:
 
 gdt_descriptor:
@@ -168,16 +178,60 @@ ISR_SEM_ERRO 45     ; IRQ 13
 ISR_SEM_ERRO 46     ; IRQ 14
 ISR_SEM_ERRO 47     ; IRQ 15
 
-; --- Corpo comum: salva registradores, chama o C, restaura e retorna -------
+; --- Chamadas de sistema: int 0x80 (a única porta aberta ao anel 3) ---
+section .text
+global isr_syscall
+isr_syscall:
+    push dword 0
+    push dword 0x80
+    jmp isr_comum
+
+; --- Corpo comum: salva o processo, chama o C, retoma (talvez OUTRO) processo
+;
+; Quadro completo na pilha do núcleo (struct quadro_t em kernel.c):
+;   [GS FS ES DS][PUSHAD][vetor][erro][EIP CS EFLAGS][ESP SS]
+; ESP e SS do usuário só existem quando a interrupção veio do anel 3.
+;
+; interrupt_dispatch() devolve o endereço do quadro a ser retomado. Se for
+; o de outro processo, a troca de contexto acontece aqui: basta mudar ESP.
 section .text
 isr_comum:
     pushad                           ; EAX ECX EDX EBX ESP EBP ESI EDI
+    push ds
+    push es
+    push fs
+    push gs
+    mov ax, DATA_SEG                 ; segmentos do núcleo
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
     cld                              ; ABI C exige DF=0
     push esp                         ; argumento: ponteiro para o quadro
     call interrupt_dispatch
-    add esp, 4
+    mov esp, eax                     ; <- TROCA DE CONTEXTO
+    pop gs
+    pop fs
+    pop es
+    pop ds
     popad
     add esp, 8                       ; descarta vetor + código de erro
-    iretd                            ; restaura EIP, CS, EFLAGS (reabilita IF)
+    iretd                            ; volta ao anel do processo escolhido
+
+; --- Programas do usuário embutidos no kernel.bin --------------------------
+; Cada um foi compilado à parte (build.sh) como binário puro para 0x40000000.
+section .rodata
+%macro PROGRAMA 2
+global prog_%1_ini
+global prog_%1_fim
+align 4
+prog_%1_ini:
+    incbin %2
+prog_%1_fim:
+%endmacro
+
+PROGRAMA video,   "build/video.bin"
+PROGRAMA teclado, "build/teclado.bin"
+PROGRAMA shell,   "build/shell.bin"
 
 section .note.GNU-stack noalloc noexec nowrite progbits
