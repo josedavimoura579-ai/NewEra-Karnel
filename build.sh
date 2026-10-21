@@ -158,9 +158,11 @@ for fonte in usuario/bin/*.c; do
     "$CC" $CFLAGS -Iusuario -c "$fonte" -o "build/bin-$nome.o"
     ligar_programa "build/initrd/bin/$nome" "build/bin-$nome.o"
 done
-# Formato ustar: o que o núcleo sabe ler. O tar do BusyBox já usa ustar e
-# não conhece a opção --format.
-if ! tar --format=ustar -C build/initrd -cf build/initrd.tar bin 2>/dev/null; then
+# Formato ustar: o que o núcleo sabe ler. Data, dono e ordem fixos: o mesmo
+# código gera sempre o mesmo initrd.tar. O tar do BusyBox já usa ustar e
+# não conhece essas opções.
+if ! tar --format=ustar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
+         -C build/initrd -cf build/initrd.tar bin 2>/dev/null; then
     tar -C build/initrd -cf build/initrd.tar bin
 fi
 cp build/initrd.tar initrd.tar
