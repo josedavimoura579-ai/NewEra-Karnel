@@ -4,10 +4,10 @@
 
 ### A Nova Era Começou
 
-**Um microkernel x86 escrito do zero — nascido num smartphone, livre para o mundo inteiro.**
+**Um microkernel x86_64 escrito do zero — nascido num smartphone, livre para o mundo inteiro.**
 
-![Versão](https://img.shields.io/badge/vers%C3%A3o-2.0-blue)
-![Arquitetura](https://img.shields.io/badge/arquitetura-x86%2032--bit-informational)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-3.0-blue)
+![Arquitetura](https://img.shields.io/badge/arquitetura-x86__64-informational)
 ![Boot](https://img.shields.io/badge/boot-Multiboot-success)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-green)
 ![Status](https://img.shields.io/badge/status-alfa-orange)
@@ -28,7 +28,7 @@ Tudo começou sem um computador. Sem notebook, sem estação de trabalho, sem se
 
 A resposta é este repositório.
 
-O **NovaEra** é um **microkernel** para processadores **x86** escrito do começo ao fim em **Assembly (NASM)** e **C puro**, sem biblioteca padrão, sem copiar código de Linux, de Unix ou de Android. Quando você liga a máquina virtual, quem assume o processador é o nosso código: ele configura o modo protegido de 32 bits, liga a paginação, cria processos isolados no anel 3 e passa a dividir a CPU entre eles. O vídeo, o teclado e o shell **não moram no núcleo**: são programas separados, cada um na sua própria memória, que conversam trocando mensagens.
+O **NovaEra** é um **microkernel** de **64 bits** para processadores **x86_64** escrito do começo ao fim em **Assembly (NASM)** e **C puro**, sem biblioteca padrão, sem copiar código de Linux, de Unix ou de Android. Quando você liga a máquina virtual, quem assume o processador é o nosso código: ele sai do modo de 32 bits em que o bootloader o entrega, entra no modo longo de 64 bits, liga a paginação de 4 níveis, cria processos isolados no anel 3 e passa a dividir a CPU entre eles. O vídeo, o teclado e o shell **não moram no núcleo**: são programas separados, cada um na sua própria memória, que conversam trocando mensagens.
 
 É pequeno. É honesto. É nosso — e agora é **seu**.
 
@@ -70,7 +70,7 @@ A ideia central é simples: *você só domina o que construiu desde o começo.*
 
 1. **`novaera.h`** — o contrato entre o núcleo e os programas: chamadas de sistema, formato das mensagens, PIDs e o mapa de memória.
 2. **`linker.ld`** — onde cada pedaço do núcleo mora na memória (a partir de 1 MiB).
-3. **`boot.asm`** — a porta de entrada: Multiboot, GDT com anéis 0 e 3, os *stubs* de interrupção, a `int 0x80` e a troca de contexto.
+3. **`boot.asm`** — a porta de entrada: Multiboot, a ponte de 32 para 64 bits, GDT com anéis 0 e 3, os *stubs* de interrupção, a `int 0x80` e a troca de contexto.
 4. **`kernel.c`** — o microkernel: memória física, paginação, processos, escalonador, IPC e supervisão.
 5. **`usuario/`** — o que roda fora do núcleo: `ulib.h` (biblioteca), `video.c`, `teclado.c` e `shell.c`.
 6. **`build.sh`** e **`run.sh`** — como tudo vira `kernel.bin` e como rodar.
@@ -121,18 +121,18 @@ Compile com `bash build.sh`, rode no QEMU, digite `ola` e aperte Enter. Repare q
 
 ## Especificação técnica
 
-Estado atual: **NovaEra Microkernel v2.0** (alfa).
+Estado atual: **NovaEra Microkernel v3.0** (alfa).
 
 | Componente | Detalhes |
 |---|---|
-| **Arquitetura** | x86 (i386), modo protegido de 32 bits |
-| **Formato do `kernel.bin`** | Executável ELF 32 bits com cabeçalho Multiboot |
-| **Boot** | **Multiboot 1** — assinatura `0x1BADB002`, flags `0x3`; compatível com `qemu -kernel` e com o formato esperado por bootloaders como o GRUB |
+| **Arquitetura** | **x86_64**, modo longo de 64 bits. Na inicialização, `boot.asm` confere a CPU (CPUID), monta tabelas de página para o 1º GiB, liga PAE + `EFER.LME` + paginação e salta para o código de 64 bits |
+| **Formato do `kernel.bin`** | Binário puro com cabeçalho Multiboot e endereços explícitos (bit 16 das flags, o "a.out kludge"): é assim que um kernel de 64 bits carrega por um protocolo que só entende ELF de 32 bits |
+| **Boot** | **Multiboot 1** — assinatura `0x1BADB002`, flags `0x10003`; compatível com `qemu -kernel` e com o GRUB |
 | **Endereço de carga** | `0x100000` (1 MiB) |
 | **Seções** | `.text` (com `.multiboot` no início), `.rodata`, `.data`, `.bss` — alinhadas em 4 KiB (`linker.ld`) |
-| **Segmentação (GDT)** | *Flat* de 4 GiB: código/dados do núcleo (`0x08`/`0x10`, anel 0), código/dados do usuário (`0x1B`/`0x23`, anel 3) e a TSS (`0x28`) |
-| **Memória física** | Lê `mem_upper` do Multiboot; quadros de 4 KiB acima do núcleo numa lista livre encadeada (alocar e liberar em O(1)); até 16 MiB |
-| **Paginação** | Um diretório de páginas por processo. Os 16 MiB do núcleo são mapeados em todos, mas só para o anel 0. Programa em `0x40000000` (64 KiB), pilha em `0x40100000` (16 KiB) |
+| **Segmentação (GDT)** | Código de 64 bits e dados do núcleo (`0x08`/`0x10`, anel 0) e do usuário (`0x1B`/`0x23`, anel 3), mais a TSS de 64 bits (`0x28`, 16 bytes) |
+| **Memória física** | Lê `mem_upper` do Multiboot; quadros de 4 KiB acima do núcleo numa lista livre encadeada (alocar e liberar em O(1)); até 1 GiB |
+| **Paginação** | 4 níveis (PML4 → PDPT → PD → PT), um espaço de endereçamento por processo. O 1º GiB é do núcleo (páginas de 2 MiB), presente em todos os processos mas só para o anel 0. Programa em `0x40000000` (64 KiB), pilha em `0x40100000` (16 KiB) |
 | **Processos** | Até 8. PID 0 = núcleo (ocioso, `hlt`), 1 = vídeo, 2 = teclado, 3 = shell. Cada um tem pilha de núcleo própria; a TSS aponta para ela |
 | **Escalonador** | Preemptivo, *round-robin*, com o timer PIT a **100 Hz** (IRQ 0) |
 | **Chamadas de sistema** | `int 0x80` (única porta da IDT com DPL 3): `ENVIAR`, `RECEBER`, `CHAMAR`, `RESPONDER`, `CEDER`, `IRQ_ASSINAR`, `TEMPO`, `TAREFA_INFO`, `MEMORIA`, `SAIR` |
@@ -141,7 +141,7 @@ Estado atual: **NovaEra Microkernel v2.0** (alfa).
 | **Drivers** | No anel 3 com IOPL 3 (podem usar `in`/`out`). **Vídeo**: o único processo com `0xB8000` mapeado. **Teclado**: PS/2 *set 1*, layout US, Shift e Caps Lock, também faz o `reboot` pela porta `0x64` |
 | **Supervisão** | Uma exceção no anel 3 encerra só o processo culpado, devolve a memória dele e o recarrega (até 5 vezes), avisando-o do motivo. Uma exceção no anel 0 mostra o painel vermelho de pânico |
 | **Shell (anel 3)** | `ajuda` · `limpar` · `ps` · `mem` · `tempo` · `sobre` · `invadir` (demonstra a proteção de memória) · `reboot` |
-| **Linguagens** | Assembly NASM + C *freestanding* (`clang --target=i386-none-elf`), ligado com `ld.lld` |
+| **Linguagens** | Assembly NASM + C *freestanding* (`clang --target=x86_64-none-elf -mno-red-zone`), ligado com `ld.lld` |
 | **Dependências em tempo de execução** | Nenhuma. Sem libc; o único `#include` é a própria ABI (`novaera.h`) |
 
 ### Por que agora é um microkernel
@@ -166,7 +166,7 @@ Experimente no shell:
 
 ### O que o NovaEra **ainda não** tem
 
-Transparência importa. Ainda faltam: servidor de nomes (os PIDs dos servidores são fixos), carregar programas do disco (hoje eles vão embutidos no `kernel.bin`), mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, driver de disco e sistema de arquivos. Veja o [Roteiro](#roteiro).
+Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), carregar programas do disco (hoje eles vão embutidos no `kernel.bin`), mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, driver de disco e sistema de arquivos. Veja o [Roteiro](#roteiro).
 
 ### Estrutura do repositório
 
@@ -219,7 +219,7 @@ Pelo terminal (PowerShell ou Prompt de Comando):
 winget install --id SoftwareFreedomConservancy.QEMU
 ```
 
-Ou baixe o instalador na [página oficial do QEMU](https://www.qemu.org/download/#windows). O QEMU é instalado em `C:\Program Files\qemu`. Se o comando `qemu-system-i386` não for reconhecido, adicione essa pasta ao `PATH` do Windows ou use o caminho completo (veja o Passo 3).
+Ou baixe o instalador na [página oficial do QEMU](https://www.qemu.org/download/#windows). O QEMU é instalado em `C:\Program Files\qemu`. Se o comando `qemu-system-x86_64` não for reconhecido, adicione essa pasta ao `PATH` do Windows ou use o caminho completo (veja o Passo 3).
 
 </details>
 
@@ -255,22 +255,22 @@ sudo dnf install qemu-system-x86
 Na pasta onde está o `kernel.bin`:
 
 ```bash
-qemu-system-i386 -kernel kernel.bin -m 64M
+qemu-system-x86_64 -kernel kernel.bin -m 64M
 ```
 
-> Se o seu QEMU não tiver `qemu-system-i386`, use `qemu-system-x86_64` com os mesmos parâmetros.
+> O NovaEra é 64 bits: use `qemu-system-x86_64`. Com `qemu-system-i386`, a tela mostra um aviso vermelho e o sistema para.
 >
 > **Windows sem `PATH` configurado:**
 > ```powershell
-> & "C:\Program Files\qemu\qemu-system-i386.exe" -kernel kernel.bin -m 64M
+> & "C:\Program Files\qemu\qemu-system-x86_64.exe" -kernel kernel.bin -m 64M
 > ```
 
 Uma janela abre com um PC virtual. Em menos de um segundo você verá a tela azul com a mensagem:
 
 ```
-╔═════════════════════════════════════════════════╗
-║  NovaEra Microkernel v2.0 - A Nova Era Começou  ║
-╚═════════════════════════════════════════════════╝
+╔════════════════════════════════════════════════════════╗
+║  NovaEra Microkernel v3.0 x86_64 - A Nova Era Começou  ║
+╚════════════════════════════════════════════════════════╝
 ```
 
 seguida dos testes de inicialização (`[ OK ]`), da entrega da CPU aos processos do usuário e do prompt `NovaEra>`.
@@ -301,7 +301,7 @@ sudo apt install nasm clang lld qemu-system-x86
 git clone https://github.com/josedavimoura579-ai/NewEra-Karnel.git
 cd novaera-kernel
 bash build.sh
-qemu-system-i386 -kernel kernel.bin -m 64M
+qemu-system-x86_64 -kernel kernel.bin -m 64M
 ```
 
 **No Android (Termux)** — o caminho em que o NovaEra nasceu:
@@ -337,6 +337,7 @@ bash run.sh            # tela de texto dentro do Termux; use "bash run.sh vnc" p
 - [x] Modo usuário (anel 3) e chamadas de sistema (`int 0x80`)
 - [x] **Microkernel**: IPC por mensagens, IRQs como mensagens, drivers e shell fora do núcleo
 - [x] Supervisão: processo que falha é isolado e reiniciado
+- [x] **Versão x86_64** (modo longo, paginação de 4 níveis)
 - [ ] Servidor de nomes (sem PIDs fixos)
 - [ ] Mapa de portas de E/S por driver (TSS *I/O bitmap*)
 - [ ] Memória compartilhada entre processos
@@ -344,7 +345,20 @@ bash run.sh            # tela de texto dentro do Termux; use "bash run.sh vnc" p
 - [ ] **API estável do NovaEra Core** para sistemas derivados (NEFS)
 - [ ] Driver de disco e sistema de arquivos (como servidores)
 - [ ] Imagem ISO inicializável
-- [ ] Versão x86_64
+
+### Roteiro do NEFS: o compilador
+
+O objetivo do NEFS é uma ISO com um compilador que roda **dentro** do NovaEra e tem comandos para cada pessoa construir o próprio sistema. A base escolhida é o **[QBE](https://c9x.me/compile/)**, um *backend* de compilador pequeno o bastante para ser lido por uma só pessoa, junto com o **[cproc](https://sr.ht/~mcf/cproc/)**, que entende C e gera código para o QBE:
+
+```
+arquivo .c → cproc → QBE → assembler → linker → programa do NovaEra
+```
+
+O QBE gera código para x86_64, e foi por isso que o NovaEra passou para 64 bits.
+
+- [ ] **Fase 1** — ferramenta `nefs` (no Linux/Termux) para criar, compilar, rodar e empacotar sistemas baseados no NovaEra; ISO inicializável; primeiro livro do NEFS
+- [ ] **Fase 2** — preparar o núcleo: programas ELF, sistema de arquivos, criação de processos e uma libc mínima
+- [ ] **Fase 3** — portar cproc + QBE + assembler + linker para o NovaEra e gerar a **ISO do compilador NEFS**
 
 ---
 
@@ -383,14 +397,14 @@ Distribuído sob a licença **MIT**: use, estude, modifique e redistribua livrem
 
 ## English summary
 
-**NovaEra** is a from-scratch **x86 (32-bit protected mode) microkernel** written in NASM Assembly and freestanding C, started and built entirely on an Android phone using Termux. The kernel (ring 0) only does physical memory management, per-process paging, preemptive round-robin scheduling (PIT at 100 Hz), synchronous message-passing IPC over `int 0x80`, and delivers hardware IRQs as messages. The **VGA video server, the PS/2 keyboard driver and the shell all run in ring 3** as isolated processes that talk through messages. If a user process faults, the kernel kills only that process, frees its memory and restarts it: try the `invadir` command, which makes the shell read kernel memory.
+**NovaEra** is a from-scratch **x86_64 (64-bit long mode) microkernel** written in NASM Assembly and freestanding C, started and built entirely on an Android phone using Termux. The kernel (ring 0) only does physical memory management, per-process paging, preemptive round-robin scheduling (PIT at 100 Hz), synchronous message-passing IPC over `int 0x80`, and delivers hardware IRQs as messages. The NEFS toolchain will be built on **QBE** + **cproc**. The **VGA video server, the PS/2 keyboard driver and the shell all run in ring 3** as isolated processes that talk through messages. If a user process faults, the kernel kills only that process, frees its memory and restarts it: try the `invadir` command, which makes the shell read kernel memory.
 
 **NEFS (NovaEra From Scratch)** is our methodology: read the code, run it, modify it, extend it and ship your own operating system on top of a minimal, fully readable core, whether in an Arch-like (minimal, build-it-yourself) or Debian-like (curated, stable) spirit.
 
 To try it: download `kernel.bin`, install [QEMU](https://www.qemu.org), and run:
 
 ```bash
-qemu-system-i386 -kernel kernel.bin -m 64M
+qemu-system-x86_64 -kernel kernel.bin -m 64M
 ```
 
 The project is free, open source (MIT) and independent. Contributions are welcome.

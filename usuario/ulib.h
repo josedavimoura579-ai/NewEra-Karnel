@@ -13,9 +13,9 @@
 
 /* ---------------------------- Chamadas de sistema ------------------------ */
 
-static inline int syscall2(u32 numero, u32 a, u32 b)
+static inline long syscall2(u64 numero, u64 a, u64 b)
 {
-    int r;
+    long r;
     __asm__ volatile ("int $0x80"
                       : "=a"(r)
                       : "a"(numero), "b"(a), "c"(b)
@@ -23,15 +23,15 @@ static inline int syscall2(u32 numero, u32 a, u32 b)
     return r;
 }
 
-static inline int sys_enviar(u32 destino, msg_t *m)    { return syscall2(SYS_ENVIAR, destino, (u32)m); }
-static inline int sys_receber(u32 origem, msg_t *m)    { return syscall2(SYS_RECEBER, origem, (u32)m); }
-static inline int sys_chamar(u32 destino, msg_t *m)    { return syscall2(SYS_CHAMAR, destino, (u32)m); }
-static inline int sys_responder(u32 destino, msg_t *m) { return syscall2(SYS_RESPONDER, destino, (u32)m); }
-static inline int sys_ceder(void)                      { return syscall2(SYS_CEDER, 0, 0); }
-static inline int sys_irq_assinar(u32 irq)             { return syscall2(SYS_IRQ_ASSINAR, irq, 0); }
-static inline u32 sys_tempo(void)                      { return (u32)syscall2(SYS_TEMPO, 0, 0); }
-static inline int sys_tarefa_info(u32 pid, msg_t *m)   { return syscall2(SYS_TAREFA_INFO, pid, (u32)m); }
-static inline u32 sys_memoria(void)                    { return (u32)syscall2(SYS_MEMORIA, 0, 0); }
+static inline long sys_enviar(u32 destino, msg_t *m)    { return syscall2(SYS_ENVIAR, destino, (u64)m); }
+static inline long sys_receber(u32 origem, msg_t *m)    { return syscall2(SYS_RECEBER, origem, (u64)m); }
+static inline long sys_chamar(u32 destino, msg_t *m)    { return syscall2(SYS_CHAMAR, destino, (u64)m); }
+static inline long sys_responder(u32 destino, msg_t *m) { return syscall2(SYS_RESPONDER, destino, (u64)m); }
+static inline long sys_ceder(void)                      { return syscall2(SYS_CEDER, 0, 0); }
+static inline long sys_irq_assinar(u32 irq)             { return syscall2(SYS_IRQ_ASSINAR, irq, 0); }
+static inline u32  sys_tempo(void)                      { return (u32)syscall2(SYS_TEMPO, 0, 0); }
+static inline long sys_tarefa_info(u32 pid, msg_t *m)   { return syscall2(SYS_TAREFA_INFO, pid, (u64)m); }
+static inline u64  sys_memoria(void)                    { return (u64)syscall2(SYS_MEMORIA, 0, 0); }
 static inline void sys_sair(void)                      { syscall2(SYS_SAIR, 0, 0); for (;;) ; }
 
 /* ----------------- Portas de E/S (só para drivers, IOPL 3) --------------- */
@@ -92,17 +92,17 @@ enum {
 
 /* ------------------------------ Ponto de entrada -------------------------
  * O núcleo começa a executar no primeiro byte do programa (0x40000000),
- * que é este _start, com EBX e ECX como argumentos. Se main() voltar,
- * o processo termina.                                                     */
+ * que é este _start, com RBX e RCX como argumentos. Se main() voltar,
+ * o processo termina. A pilha já chega alinhada em 16 bytes.             */
 
-void main(u32 arg1, u32 arg2);
+void main(u64 arg1, u64 arg2);
 
 __attribute__((naked, section(".text.entrada"), used))
 void _start(void)
 {
     __asm__ volatile (
-        "push %ecx\n"
-        "push %ebx\n"
+        "mov %rbx, %rdi\n"       /* 1º argumento (ABI System V) */
+        "mov %rcx, %rsi\n"       /* 2º argumento */
         "call main\n"
         "mov $7, %eax\n"          /* SYS_SAIR */
         "int $0x80\n"

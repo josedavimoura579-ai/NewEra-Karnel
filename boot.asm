@@ -1,91 +1,180 @@
 ; ===========================================================================
-;  NovaEra Microkernel v2.0 - boot.asm
-;  - Cabeçalho Multiboot 1 (GRUB / QEMU -kernel)
-;  - GDT com segmentos do núcleo (anel 0), do usuário (anel 3) e a TSS
-;  - Pilha e salto para kernel_main() em C
-;  - 48 "stubs" de interrupção (32 exceções da CPU + 16 IRQs do PIC) e a
-;    porta das chamadas de sistema (int 0x80), todos convergindo para
-;    isr_comum -> interrupt_dispatch() em C, que pode TROCAR de processo
-;  - Os programas do usuário (servidores), embutidos com incbin
+;  NovaEra Microkernel v3.0 (x86_64) - boot.asm
 ;
-;  Montar com:  nasm -f elf32 boot.asm -o boot.o
+;  O bootloader Multiboot sempre entrega a CPU em modo protegido de 32 bits.
+;  Este arquivo é a ponte até os 64 bits ("modo longo"):
+;    1. confere se a CPU suporta 64 bits (CPUID)
+;    2. monta tabelas de página que mapeiam o 1º GiB (páginas de 2 MiB)
+;    3. liga PAE, o modo longo (EFER.LME) e a paginação
+;    4. salta para o código de 64 bits e chama kernel_main() em C
+;
+;  Também ficam aqui: a GDT (anéis 0 e 3 + TSS), os stubs de interrupção,
+;  a porta das chamadas de sistema (int 0x80), a troca de contexto e os
+;  programas do usuário embutidos com incbin.
+;
+;  Montar com:  nasm -f elf64 boot.asm -o boot.o
 ; ===========================================================================
 
-bits 32
-
-; --- Cabeçalho Multiboot (especificação 0.6.96) ----------------------------
+; --- Cabeçalho Multiboot 1 com endereços explícitos ------------------------
+; O bit 16 das flags diz ao carregador: "não leia o ELF, copie o arquivo
+; para estes endereços". Assim um kernel de 64 bits carrega pelo Multiboot
+; (que só entende ELF de 32 bits), tanto no QEMU quanto no GRUB.
 MB_MAGIC     equ 0x1BADB002
-MB_FLAGS     equ 0x00000003
+MB_FLAGS     equ 0x00010003
 MB_CHECKSUM  equ -(MB_MAGIC + MB_FLAGS)
 
 CODE_SEG     equ 0x08
 DATA_SEG     equ 0x10
 STACK_SIZE   equ 16384
 
+extern _carga_fim                    ; linker.ld: fim de .text/.rodata/.data
+extern _kernel_fim                   ; linker.ld: fim do .bss
+
 section .multiboot progbits alloc noexec nowrite align=4
+bits 32
 align 4
+mb_cabecalho:
     dd MB_MAGIC
     dd MB_FLAGS
     dd MB_CHECKSUM
+    dd mb_cabecalho                  ; header_addr
+    dd mb_cabecalho                  ; load_addr  (o arquivo começa aqui)
+    dd _carga_fim                    ; load_end_addr
+    dd _kernel_fim                   ; bss_end_addr (o carregador zera o .bss)
+    dd _start                        ; entry_addr
 
-; --- Pilha do kernel -------------------------------------------------------
-section .bss align=16
+; --- Pilha do núcleo e tabelas de página do boot ---------------------------
+section .bss nobits alloc noexec write align=4096
+global pml4_boot
+global pd_boot
+pml4_boot:  resb 4096                ; nível 4: cada entrada cobre 512 GiB
+pdpt_boot:  resb 4096                ; nível 3: cada entrada cobre 1 GiB
+pd_boot:    resb 4096                ; nível 2: 512 páginas de 2 MiB = 1 GiB
 stack_bottom:
     resb STACK_SIZE
 stack_top:
 
-; --- GDT: modelo "flat" de 4 GiB -------------------------------------------
-; A proteção de memória de verdade vem da paginação (kernel.c); os segmentos
-; servem para dizer à CPU em que ANEL de privilégio o código está rodando.
+; --- GDT de 64 bits --------------------------------------------------------
+; No modo longo a segmentação quase some: base e limite são ignorados.
+; Os descritores servem para dizer o ANEL (0 ou 3) e que o código é 64 bits
+; (bit L). A proteção de memória de verdade vem da paginação.
 section .data
-align 8
+align 16
 global gdt_tss
 gdt_start:
     dq 0x0000000000000000            ; 0x00: nulo
-    dq 0x00CF9A000000FFFF            ; 0x08: código do núcleo  (anel 0)
+    dq 0x00AF9A000000FFFF            ; 0x08: código do núcleo  (anel 0, 64 bits)
     dq 0x00CF92000000FFFF            ; 0x10: dados do núcleo   (anel 0)
-    dq 0x00CFFA000000FFFF            ; 0x18: código do usuário (anel 3) -> seletor 0x1B
-    dq 0x00CFF2000000FFFF            ; 0x20: dados do usuário  (anel 3) -> seletor 0x23
+    dq 0x00AFFA000000FFFF            ; 0x18: código do usuário (anel 3, 64 bits) -> 0x1B
+    dq 0x00CFF2000000FFFF            ; 0x20: dados do usuário  (anel 3) -> 0x23
 gdt_tss:
-    dq 0                             ; 0x28: TSS (preenchida por tss_iniciar() em C)
+    dq 0, 0                          ; 0x28: TSS de 64 bits ocupa 16 bytes (tss_iniciar)
 gdt_end:
 
 gdt_descriptor:
     dw gdt_end - gdt_start - 1
-    dd gdt_start
+    dq gdt_start
 
-; --- Ponto de entrada ------------------------------------------------------
+; --- Ponto de entrada (ainda em 32 bits) -----------------------------------
 section .text
+bits 32
 global _start
 extern kernel_main
 extern interrupt_dispatch
 
 _start:
-    cli                              ; sem interrupções até a IDT existir
+    cli
     cld
     mov esp, stack_top
-
     mov edi, eax                     ; magic Multiboot
     mov esi, ebx                     ; ponteiro para a info Multiboot
 
-    lgdt [gdt_descriptor]
-    jmp CODE_SEG:.recarrega_cs
+    ; A CPU fala 64 bits? CPUID 0x80000001, EDX bit 29 = "Long Mode".
+    mov eax, 0x80000000
+    cpuid
+    cmp eax, 0x80000001
+    jb .sem_64_bits
+    mov eax, 0x80000001
+    cpuid
+    test edx, 1 << 29
+    jz .sem_64_bits
 
-.recarrega_cs:
+    ; Tabelas de página: PML4[0] -> PDPT[0] -> PD com 512 páginas de 2 MiB.
+    ; Endereço virtual = físico no 1º GiB. Só o anel 0 enxerga (bit U=0).
+    mov eax, pdpt_boot
+    or eax, 0x3                      ; presente + escrita
+    mov [pml4_boot], eax
+    mov eax, pd_boot
+    or eax, 0x3
+    mov [pdpt_boot], eax
+
+    xor ecx, ecx
+.mapeia_2mb:
+    mov eax, ecx
+    shl eax, 21                      ; ecx * 2 MiB
+    or eax, 0x83                     ; presente + escrita + página grande (PS)
+    mov [pd_boot + ecx * 8], eax
+    inc ecx
+    cmp ecx, 512
+    jne .mapeia_2mb
+
+    mov eax, pml4_boot
+    mov cr3, eax
+
+    mov eax, cr4
+    or eax, 1 << 5                   ; PAE: obrigatório no modo longo
+    mov cr4, eax
+
+    mov ecx, 0xC0000080              ; MSR EFER
+    rdmsr
+    or eax, 1 << 8                   ; LME: Long Mode Enable
+    wrmsr
+
+    mov eax, cr0
+    or eax, 1 << 31                  ; PG: liga a paginação -> modo longo ativo
+    mov cr0, eax
+
+    lgdt [gdt_descriptor]
+    jmp CODE_SEG:inicio_64           ; recarrega CS com um segmento de 64 bits
+
+.sem_64_bits:
+    ; Escreve direto na VGA (ainda não existe nada mais) e para.
+    mov esi, msg_sem_64
+    mov edi, 0xB8000
+.escreve:
+    lodsb
+    test al, al
+    jz .parar
+    mov ah, 0x4F                     ; branco sobre vermelho
+    stosw
+    jmp .escreve
+.parar:
+    cli
+    hlt
+    jmp .parar
+
+section .rodata
+msg_sem_64: db "NovaEra: esta CPU nao suporta 64 bits. Use qemu-system-x86_64.", 0
+
+; --- Agora em 64 bits ------------------------------------------------------
+section .text
+bits 64
+inicio_64:
     mov ax, DATA_SEG
     mov ds, ax
     mov es, ax
+    mov ss, ax
+    xor ax, ax
     mov fs, ax
     mov gs, ax
-    mov ss, ax
 
-    push dword 0                     ; zera EFLAGS (IF=0)
-    popfd
+    push qword 0                     ; zera RFLAGS (IF=0)
+    popfq
 
-    sub esp, 8                       ; alinha a pilha em 16 bytes na chamada
-    push esi                         ; 2º argumento: info Multiboot
-    push edi                         ; 1º argumento: magic
-    call kernel_main
+    mov edi, edi                     ; a metade de cima dos registradores fica
+    mov esi, esi                     ; indefinida na troca de modo: zera
+    mov rsp, stack_top               ; pilha alinhada em 16 bytes
+    call kernel_main                 ; kernel_main(magic, mbi) - RDI, RSI
 
 .parar:
     cli
@@ -95,35 +184,34 @@ _start:
 ; ===========================================================================
 ;  Stubs de interrupção
 ;
-;  Layout da pilha quando isr_comum roda (do topo para baixo):
-;      [vetor][código de erro][EIP][CS][EFLAGS]
-;  Exceções SEM código de erro da CPU empilham um 0 falso, para que o quadro
-;  seja idêntico para todos os vetores (struct quadro_t em kernel.c).
+;  No modo longo a CPU SEMPRE empilha SS, RSP, RFLAGS, CS e RIP (mesmo sem
+;  troca de anel). Exceções SEM código de erro empilham um 0 falso, para
+;  que o quadro seja idêntico para todos os vetores (quadro_t em kernel.c).
 ; ===========================================================================
 
 ; Tabela com o endereço de cada stub (lida pelo C para montar a IDT).
-; Cada stub acrescenta uma entrada aqui, em ordem: vetor 0, 1, 2 ... 47.
 section .rodata
+align 8
 global isr_tabela
 isr_tabela:
 
 %macro ISR_SEM_ERRO 1
 section .text
 isr%1:
-    push dword 0                     ; código de erro falso
-    push dword %1                    ; número do vetor
+    push qword 0                     ; código de erro falso
+    push qword %1                    ; número do vetor
     jmp isr_comum
 section .rodata
-    dd isr%1
+    dq isr%1
 %endmacro
 
 %macro ISR_COM_ERRO 1
 section .text
 isr%1:
-    push dword %1                    ; a CPU já empilhou o código de erro
+    push qword %1                    ; a CPU já empilhou o código de erro
     jmp isr_comum
 section .rodata
-    dd isr%1
+    dq isr%1
 %endmacro
 
 ; --- Exceções da CPU (vetores 0-31) ---
@@ -182,41 +270,56 @@ ISR_SEM_ERRO 47     ; IRQ 15
 section .text
 global isr_syscall
 isr_syscall:
-    push dword 0
-    push dword 0x80
+    push qword 0
+    push qword 0x80
     jmp isr_comum
 
 ; --- Corpo comum: salva o processo, chama o C, retoma (talvez OUTRO) processo
 ;
 ; Quadro completo na pilha do núcleo (struct quadro_t em kernel.c):
-;   [GS FS ES DS][PUSHAD][vetor][erro][EIP CS EFLAGS][ESP SS]
-; ESP e SS do usuário só existem quando a interrupção veio do anel 3.
+;   [R15 ... RAX][vetor][erro][RIP CS RFLAGS RSP SS]
+; São 22 palavras de 8 bytes: como a CPU alinha a pilha em 16 antes de
+; empilhar, a chamada ao C também fica alinhada.
 ;
 ; interrupt_dispatch() devolve o endereço do quadro a ser retomado. Se for
-; o de outro processo, a troca de contexto acontece aqui: basta mudar ESP.
-section .text
+; o de outro processo, a troca de contexto acontece aqui: basta mudar RSP.
 isr_comum:
-    pushad                           ; EAX ECX EDX EBX ESP EBP ESI EDI
-    push ds
-    push es
-    push fs
-    push gs
-    mov ax, DATA_SEG                 ; segmentos do núcleo
-    mov ds, ax
-    mov es, ax
-    mov fs, ax
-    mov gs, ax
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push rbp
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
     cld                              ; ABI C exige DF=0
-    push esp                         ; argumento: ponteiro para o quadro
+    mov rdi, rsp                     ; argumento: ponteiro para o quadro
     call interrupt_dispatch
-    mov esp, eax                     ; <- TROCA DE CONTEXTO
-    pop gs
-    pop fs
-    pop es
-    pop ds
-    popad
-    add esp, 8                       ; descarta vetor + código de erro
-    iretd                            ; volta ao anel do processo escolhido
+    mov rsp, rax                     ; <- TROCA DE CONTEXTO
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rbp
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+    add rsp, 16                      ; descarta vetor + código de erro
+    iretq                            ; volta ao anel do processo escolhido
 
 ; --- Programas do usuário embutidos no kernel.bin --------------------------
 ; Cada um foi compilado à parte (build.sh) como binário puro para 0x40000000.
@@ -224,7 +327,7 @@ section .rodata
 %macro PROGRAMA 2
 global prog_%1_ini
 global prog_%1_fim
-align 4
+align 8
 prog_%1_ini:
     incbin %2
 prog_%1_fim:

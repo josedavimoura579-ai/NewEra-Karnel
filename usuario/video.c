@@ -63,7 +63,7 @@ static void putc(char c, u8 cor)
     }
 }
 
-void main(u32 reinicios, u32 falha)
+void main(u64 reinicios, u64 falha)
 {
     (void)reinicios; (void)falha;
     cursor_ler();

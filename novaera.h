@@ -18,10 +18,11 @@
 typedef unsigned char  u8;
 typedef unsigned short u16;
 typedef unsigned int   u32;
+typedef unsigned long long u64;
 
 /* ---------------------- Chamadas de sistema (int 0x80) -------------------
- * Registradores: EAX = número, EBX = 1º argumento, ECX = 2º argumento.
- * O resultado volta em EAX (negativo = erro).                              */
+ * Registradores: RAX = número, RBX = 1º argumento, RCX = 2º argumento.
+ * O resultado volta em RAX (negativo = erro).                              */
 #define SYS_ENVIAR       0   /* (destino, msg*)  bloqueia até ser recebida  */
 #define SYS_RECEBER      1   /* (origem,  msg*)  bloqueia até chegar algo   */
 #define SYS_CHAMAR       2   /* (destino, msg*)  envia e espera a resposta  */
@@ -31,7 +32,7 @@ typedef unsigned int   u32;
 #define SYS_TAREFA_INFO  6   /* (pid, msg*)      nome/estado de um processo  */
 #define SYS_SAIR         7   /* ()               encerra o processo          */
 #define SYS_RESPONDER    8   /* (destino, msg*)  responde a um CHAMAR; nunca bloqueia */
-#define SYS_MEMORIA      9   /* ()               (quadros livres << 16) | total */
+#define SYS_MEMORIA      9   /* ()               (KiB livres << 32) | KiB total */
 
 #define ERRO_INVALIDO   (-1) /* argumento ou ponteiro inválido */
 #define ERRO_SEM_PERMISSAO (-2)
@@ -74,7 +75,7 @@ typedef struct {
 #define ESTADO_MORTO      4
 
 /* ------------------------- Mapa de memória virtual ----------------------
- * 0x00000000 - 0x00FFFFFF  núcleo (16 MiB, mapeado igual à memória física,
+ * 0x00000000 - 0x3FFFFFFF  núcleo (1 GiB, mapeado igual à memória física,
  *                          visível SOMENTE no anel 0)
  * 0x40000000 - 0x4000FFFF  programa do usuário (código + dados, 64 KiB)
  * 0x40100000 - 0x40103FFF  pilha do usuário (16 KiB)

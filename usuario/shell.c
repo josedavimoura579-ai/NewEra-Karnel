@@ -96,11 +96,10 @@ static void cmd_ps(void)
 
 static void cmd_mem(void)
 {
-    u32 r = sys_memoria();
-    u32 livres = r >> 16, total = r & 0xFFFF;
-    escreve_num(livres * 4, COR(COR_BRANCO));
+    u64 r = sys_memoria();
+    escreve_num((u32)(r >> 32), COR(COR_BRANCO));
     escreve(" KiB livres de ", COR(COR_CINZA_CLARO));
-    escreve_num(total * 4, COR(COR_BRANCO));
+    escreve_num((u32)r, COR(COR_BRANCO));
     escreve(" KiB gerenciados pelo nucleo\n", COR(COR_CINZA_CLARO));
 }
 
@@ -191,7 +190,7 @@ static void executar(void)
     }
 }
 
-void main(u32 reinicios, u32 falha)
+void main(u64 reinicios, u64 falha)
 {
     if (reinicios) {
         escreve("\n[nucleo] O shell anterior foi encerrado: ", COR(COR_VERMELHO_CLARO));
@@ -199,10 +198,10 @@ void main(u32 reinicios, u32 falha)
                 COR(COR_BRANCO));
         escreve(".\n[nucleo] O resto do sistema continua de pe. Shell reiniciado (",
                 COR(COR_VERMELHO_CLARO));
-        escreve_num(reinicios, COR(COR_BRANCO));
+        escreve_num((u32)reinicios, COR(COR_BRANCO));
         escreve(").\n\n", COR(COR_VERMELHO_CLARO));
     } else {
-        escreve("Shell do NovaEra (processo 3, anel 3). Digite 'ajuda'.\n\n",
+        escreve("Shell do NovaEra (processo 3, anel 3, 64 bits). Digite 'ajuda'.\n\n",
                 COR(COR_CINZA_CLARO));
     }
 
