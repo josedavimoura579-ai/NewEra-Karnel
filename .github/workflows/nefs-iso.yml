@@ -1,6 +1,7 @@
 # NEFS - constrói a ISO e a publica como Release do GitHub.
 #
-# Dispara quando uma tag "nefs-v*" é enviada (ex.: nefs-v0.1). A ISO é
+# Dispara quando uma tag "nefs-v*" é criada (ex.: nefs-v0.1), por git push
+# ou pela página "Draft a new release" do GitHub. A ISO é
 # construída do zero pelo nefs/iso/construir.sh, a partir do código da tag,
 # e anexada à Release junto com o seu SHA-256.
 name: ISO do NEFS
@@ -62,6 +63,15 @@ jobs:
 
           O arquivo \`.sha256\` serve para conferir que o download chegou inteiro.
           EOF
-          gh release create "$GITHUB_REF_NAME" \
-              nefs/iso/nefs-*-x86_64.iso nefs/iso/nefs-*-x86_64.iso.sha256 \
-              --title "NEFS $VERSAO" --notes-file notas.md --prerelease
+          ARQUIVOS="$(ls nefs/iso/nefs-*-x86_64.iso nefs/iso/nefs-*-x86_64.iso.sha256)"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+              # A Release já existe (criada pela página do GitHub): anexa a
+              # ISO e, se a descrição estiver vazia, preenche com estas notas.
+              gh release upload "$GITHUB_REF_NAME" $ARQUIVOS --clobber
+              if [ -z "$(gh release view "$GITHUB_REF_NAME" --json body -q .body)" ]; then
+                  gh release edit "$GITHUB_REF_NAME" --notes-file notas.md
+              fi
+          else
+              gh release create "$GITHUB_REF_NAME" $ARQUIVOS \
+                  --title "NEFS $VERSAO" --notes-file notas.md --prerelease
+          fi
