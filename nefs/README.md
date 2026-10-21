@@ -21,15 +21,17 @@ modelo.
 ## O compilador: cproc + QBE
 
 ```
-arquivo .c → cproc → QBE → as → ld → programa do NovaEra
+arquivo .c → cproc → QBE → nefs-as → nefs-ld → programa do NovaEra
 ```
 
 - **[cproc](https://sr.ht/~mcf/cproc/)** entende C11 e gera o código
   intermediário do QBE.
 - **[QBE](https://c9x.me/compile/)** transforma esse código em assembly
   x86_64. São cerca de 10 mil linhas de C: dá para ler inteiro.
-- **as** e **ld** (binutils) montam e ligam; **nasm** monta as partes do
-  NovaEra escritas em assembly.
+- **nefs-as**, **nefs-ld** e **nefs-ar** (pasta `ferramentas/`) montam,
+  ligam e juntam bibliotecas. São do NEFS, pequenos e legíveis, e rodam
+  também dentro do NovaEra. O `nefs-as` gera os mesmos bytes que o GNU as,
+  e isso é testado.
 
 Versões testadas juntas: **QBE 1.3** e **cproc** no commit `d1c53dd`
 (fixado em `iso/construir.sh`). O pré-processador do cproc ainda não está
@@ -38,7 +40,7 @@ completo, então a ISO leva também o `cpp` do GCC (só o pré-processador).
 Para compilar com o cproc, o NovaEra respeita os limites dele:
 
 - **sem assembly embutido** (`__asm__`): as instruções especiais ficam
-  em `cpu.asm` e `usuario/crt0.asm`;
+  em `cpu.s`, `usuario/sys.s` e nos `crt0.s`;
 - **sem `volatile`**: a memória de vídeo é acessada por
   `mem_escreve16()` e `mem_le16()`, também em assembly;
 - **sem structs `packed`**: a TSS é um vetor de `u32`.
@@ -87,7 +89,7 @@ qemu-system-x86_64 -cdrom nefs/iso/nefs-0.1-x86_64.iso -m 1G
 ```
 
 O script baixa e compila o QBE (de `c9x.me`) e o cproc (de `git.sr.ht`),
-junta o kernel Linux do Ubuntu, o BusyBox, binutils, nasm, QEMU e GRUB,
+junta o kernel Linux do Ubuntu, o BusyBox, as ferramentas do NEFS, QEMU e GRUB,
 e gera a ISO. Os fontes ficam guardados em `nefs/iso/fontes/`.
 
 | Arquivo | O que é |
@@ -104,6 +106,8 @@ e gera a ISO. Os fontes ficam guardados em `nefs/iso/fontes/`.
 - [x] ISO: boot, terminal, `nefs`, livro, QEMU dentro da ISO e geração de ISOs com GRUB, testados
 - [x] **cproc + QBE dentro da ISO**: `nefs compilar` e `nefs iso`
       testados na própria ISO; o NovaEra compilado pelo cproc roda no QEMU
+- [x] **Montador e ligador do NEFS** (`nefs-as`, `nefs-ld`, `nefs-ar`): o
+      NovaEra não depende mais do NASM nem do binutils
 - [ ] Disco persistente para guardar os projetos
 - [ ] Site do NEFS
 - [ ] Livro 2: sistema de arquivos, memória compartilhada, drivers de disco

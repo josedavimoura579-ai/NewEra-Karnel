@@ -17,8 +17,8 @@ A ISO liga direto num terminal com tudo o que você precisa:
 | `nefs` | o comando principal: cria, compila, roda e empacota o seu sistema |
 | `cproc` | o compilador de C |
 | `qbe` | o "backend": transforma o código intermediário do cproc em assembly x86_64 |
-| `as` e `ld` | o montador e o ligador (binutils) |
-| `nasm` | o montador das partes do NovaEra escritas em assembly |
+| `nefs-as` e `nefs-ld` | o montador e o ligador do NEFS (feitos aqui, também rodam no NovaEra) |
+| `nefs-ar` | junta objetos numa biblioteca (`.a`), como a `libc.a` |
 | `qemu-system-x86_64` | uma máquina virtual, para testar o seu sistema |
 | `grub-mkrescue` | gera uma ISO inicializável do seu sistema |
 | `vi`, `less`... | o BusyBox: editor e comandos básicos |

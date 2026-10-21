@@ -32,7 +32,7 @@ static void preparar(FILE *f, int fd, int ler, int escrever)
     f->modo_buffer = isatty(fd) ? _IOLBF : _IOFBF;
 }
 
-/* Chamado por _start (libc/crt0.asm) antes de main(). */
+/* Chamado por _start (libc/crt0.s) antes de main(). */
 void __libc_iniciar(void)
 {
     __fds_iniciar();

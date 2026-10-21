@@ -159,4 +159,17 @@ Ele lê a linguagem intermediária do QBE (SSA) e escreve o assembly x86_64,
 igual ao que o QBE escreve no Linux. O QBE não foi reescrito: é o código
 original compilado com a libc do NovaEra (veja a pasta `portes/`).
 
+O montador e o ligador do NEFS também rodam lá dentro. Do SSA até um
+programa que roda, sem sair do NovaEra:
+
+```
+qbe -o /tmp/ola.s /usr/share/qbe/ola.ssa     # SSA -> assembly
+nefs-as -o /tmp/ola.o /tmp/ola.s             # assembly -> objeto
+nefs-ld -o /tmp/ola /tmp/ola.o -lc           # objeto + libc -> programa
+/tmp/ola
+```
+
+O `-lc` é a libc do NovaEra (`/usr/lib/nefs/libc.a`): o `nefs-ld` pega
+dela só o que o programa usa, inclusive o começo (`_start`, em `crt0.s`).
+
 Próximo capítulo: `nefs livro 5`.

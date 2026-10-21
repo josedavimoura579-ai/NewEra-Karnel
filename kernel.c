@@ -3,10 +3,10 @@
  *  NovaEra Microkernel v3.0 (x86_64) - kernel.c
  *  C puro "freestanding": sem libc. Os #include são a ABI do sistema e
  *  os arquivos que o build.sh gera de sistema.conf e programas.lista.
- *  Quando kernel_main() começa, boot.asm já colocou a CPU em 64 bits.
+ *  Quando kernel_main() começa, boot.s já colocou a CPU em 64 bits.
  *
  *  Este arquivo não tem nenhum assembly embutido (__asm__) nem atributos
- *  de compilador: as instruções especiais ficam em cpu.asm. Assim ele
+ *  de compilador: as instruções especiais ficam em cpu.s. Assim ele
  *  compila com o clang e também com o compilador do NEFS (cproc + QBE).
  *
  *  O que mora AQUI (anel 0, o mínimo possível):
@@ -35,7 +35,7 @@
 #include "novaera.h"
 #include "sistema.h"      /* gerado de sistema.conf pelo build.sh */
 
-#define VGA_MEMORIA 0xB8000ull   /* acessada por mem_escreve16 (cpu.asm) */
+#define VGA_MEMORIA 0xB8000ull   /* acessada por mem_escreve16 (cpu.s) */
 #define VGA_COLUNAS 80u
 #define VGA_LINHAS  25u
 
@@ -52,14 +52,14 @@ enum vga_cor {
 #define FUNDO       VGA_AZUL
 #define ATTR_FUNDO  ATTR(VGA_BRANCO, FUNDO)
 
-/* Seletores da GDT (boot.asm). O "| 3" pede o anel 3. */
+/* Seletores da GDT (boot.s). O "| 3" pede o anel 3. */
 #define SEL_CODIGO_NUCLEO  0x08
 #define SEL_DADOS_NUCLEO   0x10
 #define SEL_CODIGO_USUARIO (0x18 | 3)
 #define SEL_DADOS_USUARIO  (0x20 | 3)
 #define SEL_TSS            0x28
 
-/* --------------------- Instruções especiais (cpu.asm) -------------------- */
+/* --------------------- Instruções especiais (cpu.s) -------------------- */
 
 void outb(u16 porta, u8 valor);
 u8   inb(u16 porta);
@@ -218,7 +218,7 @@ static void term_status(int ok, const char *texto)
  *  A RAM é dividida em "quadros" de 4 KiB. Os livres formam uma lista
  *  encadeada guardada DENTRO deles mesmos: os 4 primeiros bytes de cada
  *  quadro livre apontam para o próximo. Alocar e liberar custam O(1).
- *  O núcleo enxerga o 1º GiB (boot.asm), então só gerencia quadros ali.
+ *  O núcleo enxerga o 1º GiB (boot.s), então só gerencia quadros ali.
  * =========================================================================== */
 
 #define QUADRO          4096u
@@ -290,7 +290,7 @@ static void memoria_iniciar(u64 mbi_endereco)
  *  Endereço virtual = [9 PML4][9 PDPT][9 PD][9 PT][12 offset] = 48 bits.
  *  Cada nível é uma tabela de 512 entradas de 8 bytes (um quadro).
  *
- *  O 1º GiB é do núcleo: boot.asm já montou PML4 -> PDPT -> PD com páginas
+ *  O 1º GiB é do núcleo: boot.s já montou PML4 -> PDPT -> PD com páginas
  *  de 2 MiB. Todo processo reaproveita esse MESMO PD na entrada 0 do seu
  *  PDPT, marcado como "supervisor": o anel 3 não consegue nem ler.
  *  Os programas moram a partir de 0x40000000 (entrada 1 do PDPT).
@@ -301,7 +301,7 @@ static void memoria_iniciar(u64 mbi_endereco)
 #define PG_USUARIO   0x4ull
 #define PG_ENDERECO  0x000FFFFFFFFFF000ull
 
-extern u64 pml4_boot[512];             /* boot.asm */
+extern u64 pml4_boot[512];             /* boot.s */
 extern u64 pd_boot[512];
 
 static u64 *tabela_de(u64 entrada)
@@ -398,7 +398,7 @@ static void espaco_destruir(u64 *pml4)
  *   [9..22] ist1..7  [23..24] reservado  [25] iomap nos 16 bits de cima */
 #define TSS_TAM 104u
 static u32 tss[TSS_TAM / 4];
-extern u8 gdt_tss[16];                 /* entrada reservada em boot.asm */
+extern u8 gdt_tss[16];                 /* entrada reservada em boot.s */
 
 static void tss_definir_rsp0(u64 rsp0)
 {
@@ -441,7 +441,7 @@ typedef struct {
     u32 reservado;
 } idt_entrada_t;
 
-/* Quadro empilhado por isr_comum (boot.asm). É ELE que representa um
+/* Quadro empilhado por isr_comum (boot.s). É ELE que representa um
  * processo parado: para retomá-lo, basta apontar RSP para cá e dar IRETQ. */
 typedef struct {
     u64 r15, r14, r13, r12, r11, r10, r9, r8;            /* isr_comum   */
@@ -450,7 +450,7 @@ typedef struct {
     u64 rip, cs, rflags, rsp, ss;                        /* empilhado pela CPU */
 } quadro_t;
 
-extern const u64 isr_tabela[];     /* definida em boot.asm: 48 endereços */
+extern const u64 isr_tabela[];     /* definida em boot.s: 48 endereços */
 extern void isr_syscall(void);
 
 static idt_entrada_t idt[256];
@@ -1347,7 +1347,7 @@ static _Noreturn void kernel_panico(const quadro_t *q)
 }
 
 /* ===========================================================================
- *  Despacho de interrupções (chamado por isr_comum em boot.asm)
+ *  Despacho de interrupções (chamado por isr_comum em boot.s)
  *
  *  Recebe o quadro de quem foi interrompido e DEVOLVE o quadro de quem
  *  deve rodar agora. É aqui que mora a troca de contexto.

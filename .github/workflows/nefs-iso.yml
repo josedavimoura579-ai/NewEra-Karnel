@@ -56,7 +56,7 @@ jobs:
               nefs iso                         # gera a ISO do seu sistema
 
           **Dentro da ISO:** Linux mínimo (kernel do Ubuntu + BusyBox), cproc + QBE 1.3,
-          binutils, nasm, QEMU, GRUB, o comando \`nefs\`, o código do NovaEra e o Livro 1.
+          nefs-as, nefs-ld e nefs-ar, QEMU, GRUB, o comando \`nefs\`, o código do NovaEra e o Livro 1.
 
           Tudo roda na memória RAM: copie o seu trabalho antes de desligar
           (capítulo 2 do livro).

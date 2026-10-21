@@ -31,7 +31,7 @@ Leia nesta ordem. Os arquivos são comentados em português.
 
 1. `novaera.h` — chamadas de sistema, formato das mensagens, PIDs.
 2. `linker.ld` — onde o núcleo mora na memória (a partir de 1 MiB).
-3. `boot.asm` — do boot em 32 bits até o modo de 64 bits.
+3. `boot.s` — do boot em 32 bits até o modo de 64 bits.
 4. `kernel.c` — memória, paginação, processos, escalonador e IPC.
 5. `usuario/` — os servidores: `video.c`, `teclado.c`, `shell.c`,
    `arquivos.c`, `terminal.c` e `tubos.c`; e `usuario/bin/`, os comandos.
@@ -41,8 +41,8 @@ Use `less kernel.c` para ler e `/palavra` para procurar.
 ## A vida de um boot
 
 1. O GRUB (ou o QEMU) carrega o `kernel.bin` em 1 MiB e pula para
-   `_start`, em `boot.asm`, com a CPU em 32 bits.
-2. `boot.asm` monta as primeiras tabelas de página, liga o modo de
+   `_start`, em `boot.s`, com a CPU em 32 bits.
+2. `boot.s` monta as primeiras tabelas de página, liga o modo de
    64 bits e chama `kernel_main()`.
 3. `kernel_main()` prepara a memória, a IDT, o PIC e o timer, e cria um
    processo para cada linha de `programas.lista`.

@@ -28,11 +28,11 @@ Tudo começou sem um computador. Sem notebook, sem estação de trabalho, sem se
 
 A resposta é este repositório.
 
-O **NovaEra** é um **microkernel** de **64 bits** para processadores **x86_64** escrito do começo ao fim em **Assembly (NASM)** e **C puro**, sem biblioteca padrão, sem copiar código de Linux, de Unix ou de Android. Quando você liga a máquina virtual, quem assume o processador é o nosso código: ele sai do modo de 32 bits em que o bootloader o entrega, entra no modo longo de 64 bits, liga a paginação de 4 níveis, cria processos isolados no anel 3 e passa a dividir a CPU entre eles. O vídeo, o teclado e o shell **não moram no núcleo**: são programas separados, cada um na sua própria memória, que conversam trocando mensagens.
+O **NovaEra** é um **microkernel** de **64 bits** para processadores **x86_64** escrito do começo ao fim em **Assembly** e **C puro**, sem biblioteca padrão, sem copiar código de Linux, de Unix ou de Android. Quando você liga a máquina virtual, quem assume o processador é o nosso código: ele sai do modo de 32 bits em que o bootloader o entrega, entra no modo longo de 64 bits, liga a paginação de 4 níveis, cria processos isolados no anel 3 e passa a dividir a CPU entre eles. O vídeo, o teclado e o shell **não moram no núcleo**: são programas separados, cada um na sua própria memória, que conversam trocando mensagens.
 
 É pequeno. É honesto. É nosso — e agora é **seu**.
 
-> Ferramentas como NASM, Clang, LLD e QEMU são software livre e rodam num celular. O que antes pedia uma bancada inteira agora cabe no bolso.
+> Ferramentas como Clang e QEMU são software livre e rodam num celular. E o montador e o ligador do NovaEra são nossos: estão neste repositório. O que antes pedia uma bancada inteira agora cabe no bolso.
 
 ## Filosofia
 
@@ -71,10 +71,10 @@ A ideia central é simples: *você só domina o que construiu desde o começo.*
 1. **`novaera.h`** — o contrato entre o núcleo e os programas: chamadas de sistema, formato das mensagens, PIDs e o mapa de memória.
 2. **`sistema.conf`** e **`programas.lista`** — a identidade do sistema e os processos que o núcleo inicia no boot.
 3. **`linker.ld`** — onde cada pedaço do núcleo mora na memória (a partir de 1 MiB).
-4. **`boot.asm`** — a porta de entrada: Multiboot, a ponte de 32 para 64 bits, GDT com anéis 0 e 3, os *stubs* de interrupção, a `int 0x80` e a troca de contexto.
-5. **`cpu.asm`** — as instruções especiais da CPU (portas, CR3, IDT, TSS), chamadas pelo C como funções comuns.
+4. **`boot.s`** — a porta de entrada: Multiboot, a ponte de 32 para 64 bits, GDT com anéis 0 e 3, os *stubs* de interrupção, a `int 0x80` e a troca de contexto.
+5. **`cpu.s`** — as instruções especiais da CPU (portas, CR3, IDT, TSS), chamadas pelo C como funções comuns.
 6. **`kernel.c`** — o microkernel: memória física, paginação, processos, escalonador, IPC e supervisão.
-7. **`usuario/`** — o que roda fora do núcleo: `crt0.asm` e `ulib.h` (biblioteca), `video.c`, `teclado.c` e `shell.c`.
+7. **`usuario/`** — o que roda fora do núcleo: `crt0.s`, `sys.s` e `ulib.h` (biblioteca), `video.c`, `teclado.c` e `shell.c`.
 8. **`build.sh`** e **`run.sh`** — como tudo vira `kernel.bin` e como rodar.
 
 ### Como usar o NovaEra como "motor" do seu sistema
@@ -127,7 +127,7 @@ Estado atual: **NovaEra Microkernel v3.1** (alfa).
 
 | Componente | Detalhes |
 |---|---|
-| **Arquitetura** | **x86_64**, modo longo de 64 bits. Na inicialização, `boot.asm` confere a CPU (CPUID), monta tabelas de página para o 1º GiB, liga PAE + `EFER.LME` + paginação e salta para o código de 64 bits |
+| **Arquitetura** | **x86_64**, modo longo de 64 bits. Na inicialização, `boot.s` confere a CPU (CPUID), monta tabelas de página para o 1º GiB, liga PAE + `EFER.LME` + paginação e salta para o código de 64 bits |
 | **Formato do `kernel.bin`** | Binário puro com cabeçalho Multiboot e endereços explícitos (bit 16 das flags, o "a.out kludge"): é assim que um kernel de 64 bits carrega por um protocolo que só entende ELF de 32 bits |
 | **Boot** | **Multiboot 1** — assinatura `0x1BADB002`, flags `0x10003`; compatível com `qemu -kernel` e com o GRUB |
 | **Endereço de carga** | `0x100000` (1 MiB) |
@@ -150,9 +150,10 @@ Estado atual: **NovaEra Microkernel v3.1** (alfa).
 | **Comandos** (`/bin`, de `usuario/bin/`) | `ls` · `cat` · `echo` · `mkdir` · `rm` · **`novafetch`** (o neofetch do NovaEra) · `ola` · `codigo N` · `memoria [MiB]` · `falha` · `filho` · **`testelibc`** (47 testes da libc) |
 | **libc** (`libc/`, a "nlibc") | C padrão para os programas do NovaEra: `stdio` (`printf` com `%.17g` exato, `scanf`, `fopen`, buffers), `stdlib` (`malloc`, `qsort` estável, `strtod` com arredondamento correto), `string`, `ctype`, `errno`, `getopt` e o POSIX que o cproc usa (`pipe`, `posix_spawnp`, `waitpid`, `mkstemp`, `unlink`). Por baixo, tudo vira mensagem para os servidores. Os comandos de `/bin` são ligados com ela |
 | **Ponto flutuante** | O núcleo liga o SSE e salva/restaura os registradores de ponto flutuante (FXSAVE/FXRSTOR) de cada processo na troca de contexto; o próprio núcleo não usa SSE |
-| **Linguagens** | Assembly NASM + C11 *freestanding*, sem assembly embutido nem atributos de compilador: compila com o clang (`CC=clang`, padrão) ou com o cproc + QBE do NEFS (`CC=cproc`). Liga com `ld.lld` ou com o `ld` do binutils |
+| **Linguagens** | Assembly x86-64 (sintaxe AT&T, a mesma que o QBE escreve) + C11 *freestanding*, sem assembly embutido nem atributos de compilador: compila com o clang (`CC=clang`, padrão) ou com o cproc + QBE do NEFS (`CC=cproc`) |
+| **Montador e ligador** | Os do NEFS, em `ferramentas/`: **`nefs-as`** (assembly AT&T → objeto ELF, com os mesmos bytes que o GNU as), **`nefs-ld`** (objetos → programa ELF ou o `kernel.bin`) e **`nefs-ar`** (bibliotecas `.a`). Também rodam dentro do NovaEra. O `as`/`ld` do binutils continuam como alternativa (`FERRAMENTAS=sistema`) |
 | **Versões** | O **núcleo** tem a sua (`NOVAERA_VERSAO` em `novaera.h`, hoje 3.1); a **distribuição** tem a dela em `sistema.conf`. No NovaEra puro (`PURO="sim"`) não há distribuição, e o banner e o `novafetch` mostram a versão do núcleo |
-| **Configuração** | `sistema.conf` (nome, versão, lema, prompt, puro) e `logo.txt` (a identidade, como o `/etc/os-release` do Linux) e `programas.lista` (servidores e permissões); o `build.sh` gera `build/sistema.h`, `build/programas.h`, `build/programas.asm` e, no initrd, `/etc/sistema` e `/etc/logo.txt` |
+| **Configuração** | `sistema.conf` (nome, versão, lema, prompt, puro) e `logo.txt` (a identidade, como o `/etc/os-release` do Linux) e `programas.lista` (servidores e permissões); o `build.sh` gera `build/sistema.h`, `build/programas.h`, `build/programas.s` e, no initrd, `/etc/sistema` e `/etc/logo.txt` |
 | **Dependências em tempo de execução** | Nenhuma. O núcleo não usa libc; os `#include` dele são a ABI (`novaera.h`) e os arquivos gerados pelo build. Os programas usam a libc do próprio NovaEra, nunca a do Linux (`-nostdinc`) |
 
 ### Por que agora é um microkernel
@@ -190,13 +191,13 @@ novaera-kernel/
 ├── sistema.conf      # Nome, versão, lema e prompt do sistema
 ├── programas.lista   # Os servidores que o núcleo inicia no boot
 ├── logo.txt          # O logo do sistema (o novafetch mostra)
-├── boot.asm          # Multiboot, GDT/TSS, stubs, int 0x80, troca de contexto (NASM)
-├── cpu.asm           # Instruções especiais da CPU como funções (NASM)
+├── boot.s            # Multiboot, GDT/TSS, stubs, int 0x80, troca de contexto
+├── cpu.s             # Instruções especiais da CPU como funções
 ├── kernel.c          # O microkernel: memória, paginação, processos, ELF, IPC (C puro)
 ├── linker.ld         # Mapa de memória do núcleo a partir de 1 MiB
 ├── usuario/          # Tudo o que roda no anel 3
-│   ├── crt0.asm      #   _start dos servidores
-│   ├── sys.asm       #   int 0x80, E/S de portas, memória de dispositivo
+│   ├── crt0.s        #   _start dos servidores
+│   ├── sys.s         #   int 0x80, E/S de portas, memória de dispositivo
 │   ├── ulib.h        #   biblioteca: syscalls, mensagens, utilitários
 │   ├── usuario.ld    #   todo programa mora em 0x40000000
 │   ├── video.c       #   servidor de vídeo (PID 1)
@@ -207,7 +208,8 @@ novaera-kernel/
 │   ├── tubos.c       #   os pipes (PID 6)
 │   └── bin/          #   os comandos: ls, cat, echo, mkdir, rm, novafetch...
 ├── build.sh          # Compila os programas, embute-os e liga o kernel.bin
-├── libc/             # A libc do NovaEra: include/ (cabeçalhos), src/, crt0.asm
+├── libc/             # A libc do NovaEra: include/ (cabeçalhos), src/, crt0.s
+├── ferramentas/      # nefs-as, nefs-ld e nefs-ar: montador, ligador e bibliotecas
 ├── portes/           # Programas de fora compilados para o NovaEra (o QBE)
 ├── nefs/             # O NEFS: comando nefs, Livro do NEFS e a ISO (separado do núcleo)
 ├── run.sh            # Atalho para rodar no QEMU (pensado para o Termux)
@@ -335,10 +337,10 @@ Para sair, feche a janela do QEMU.
 
 ### Compilando a partir do código-fonte
 
-**No Linux** (Debian/Ubuntu; em outras distros, instale os equivalentes de `nasm`, `clang`, `lld` e `qemu`):
+**No Linux** (Debian/Ubuntu; em outras distros, instale os equivalentes de `clang` e `qemu`):
 
 ```bash
-sudo apt install nasm clang lld qemu-system-x86
+sudo apt install clang qemu-system-x86
 git clone https://github.com/josedavimoura579-ai/NewEra-Karnel.git
 cd novaera-kernel
 bash build.sh
@@ -348,7 +350,7 @@ qemu-system-x86_64 -kernel kernel.bin -initrd initrd.tar -m 64M
 **No Android (Termux)** — o caminho em que o NovaEra nasceu:
 
 ```bash
-pkg update && pkg install nasm clang lld git
+pkg update && pkg install clang git
 pkg install qemu-system-x86-64     # o nome do pacote pode variar entre versões do Termux
 git clone https://github.com/josedavimoura579-ai/NewEra-Karnel.git
 cd novaera-kernel
@@ -405,7 +407,8 @@ O QBE gera código para x86_64, e foi por isso que o NovaEra passou para 64 bits
   - [x] Etapa 2 — servidores de arquivos, terminal e pipes; `ls`, `cat`, `echo`, `mkdir`, `rm`, `novafetch`
   - [x] Etapa 3 — a libc do NovaEra (nlibc) e ponto flutuante no núcleo
   - [x] Etapa 4 — o QBE rodando dentro do NovaEra (`qbe /usr/share/qbe/ola.ssa`)
-  - [ ] Etapas 5 a 8 — assembler/ligador, cproc, autossuficiência, ISO
+  - [x] Etapa 5 — `nefs-as`, `nefs-ld` e `nefs-ar`: o núcleo montado e ligado por eles dá boot
+  - [ ] Etapas 6 a 8 — cproc, autossuficiência, ISO
 
 ### Fases futuras (depois da Fase 3)
 
@@ -457,7 +460,7 @@ Distribuído sob a licença **MIT**: use, estude, modifique e redistribua livrem
 
 ## English summary
 
-**NovaEra** is a from-scratch **x86_64 (64-bit long mode) microkernel** written in NASM Assembly and freestanding C, started and built entirely on an Android phone using Termux. The kernel (ring 0) only does physical memory management, per-process paging, preemptive round-robin scheduling (PIT at 100 Hz), synchronous message-passing IPC over `int 0x80`, and delivers hardware IRQs as messages. The NEFS toolchain will be built on **QBE** + **cproc**. The **VGA video server, the PS/2 keyboard driver and the shell all run in ring 3** as isolated processes that talk through messages. If a user process faults, the kernel kills only that process, frees its memory and restarts it: try the `invadir` command, which makes the shell read kernel memory.
+**NovaEra** is a from-scratch **x86_64 (64-bit long mode) microkernel** written in x86-64 assembly and freestanding C, started and built entirely on an Android phone using Termux. The kernel (ring 0) only does physical memory management, per-process paging, preemptive round-robin scheduling (PIT at 100 Hz), synchronous message-passing IPC over `int 0x80`, and delivers hardware IRQs as messages. The NEFS toolchain is **cproc** + **QBE** plus our own assembler, linker and archiver (`nefs-as`, `nefs-ld`, `nefs-ar`), all of which also run inside NovaEra. The **VGA video server, the PS/2 keyboard driver and the shell all run in ring 3** as isolated processes that talk through messages. If a user process faults, the kernel kills only that process, frees its memory and restarts it: try the `invadir` command, which makes the shell read kernel memory.
 
 **NEFS (NovaEra From Scratch)** is our methodology: read the code, run it, modify it, extend it and ship your own operating system on top of a minimal, fully readable core, whether in an Arch-like (minimal, build-it-yourself) or Debian-like (curated, stable) spirit.
 

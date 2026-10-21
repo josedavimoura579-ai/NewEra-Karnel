@@ -75,10 +75,28 @@ Cada etapa termina com algo testável no QEMU e vira um pull request.
   - *Teste: os 76 arquivos de teste do QBE e o `kernel.c` em SSA (70 KB),
     compilados dentro do NovaEra, dão o mesmo assembly, byte a byte, que o
     QBE no Linux. O QBE compilado com clang e com cproc + QBE.*
-- [ ] **Etapa 5 — `nefs-as` e `nefs-ld`**
-  - assembler para o subconjunto que o QBE gera; ligador ELF simples
-  - os `.asm` do NovaEra reescritos na sintaxe AT&T, para um único assembler bastar
-  - *Teste: o kernel montado e ligado por eles dá boot.*
+- [x] **Etapa 5 — `nefs-as` e `nefs-ld`**
+  - **`nefs-as`** (`ferramentas/nefs-as.c`): assembly AT&T → objeto ELF64;
+    as instruções que o QBE gera e as do boot (modo de 32 bits, registradores
+    de controle, E/S); escolhe as mesmas codificações, os mesmos NOPs e o
+    mesmo tamanho de salto que o GNU as
+  - **`nefs-ld`** (`ferramentas/nefs-ld.c`): objetos e bibliotecas → programa
+    ELF do NovaEra ou o `kernel.bin` (`-binario`); GOT, COMMON, e das
+    bibliotecas só os objetos necessários
+  - **`nefs-ar`** (`ferramentas/nefs-ar.c`): bibliotecas `.a` (a `libc.a`),
+    com índice de símbolos (o ld do binutils também as aceita)
+  - os `.asm` do NovaEra reescritos na sintaxe AT&T (`boot.s`, `cpu.s`,
+    `crt0.s`, `sys.s`): o NASM saiu do projeto
+  - `build.sh`: `FERRAMENTAS=nefs` (padrão) ou `sistema` (binutils); com
+    `CC=cproc`, cada `.c` passa por `cproc -S` e `nefs-as`
+  - as três ferramentas, a `libc.a` e o comando `cmp` também no NovaEra
+  - *Teste: o `nefs-as` gera os mesmos bytes, relocações e símbolos que o
+    GNU as em 71 arquivos: todo o C do NovaEra e do QBE compilado pelo
+    cproc, os `.s` do NovaEra e `ferramentas/testes/instrucoes.s` (todas as
+    instruções que o QBE pode gerar). Repita com `ferramentas/testes/testa.sh`. O núcleo montado e ligado por eles dá boot,
+    com clang e com cproc + QBE (`testelibc` 47/47, QBE 77/77). Dentro do
+    NovaEra: `qbe` → `nefs-as` → `nefs-ld` → o programa roda; e o próprio
+    `kernel.bin`, montado e ligado lá dentro, é idêntico ao do Linux.*
 - [ ] **Etapa 6 — cproc rodando no NovaEra**
   - pré-processador próprio do NEFS
   - *Teste: `cproc -c ola.c` dentro do NovaEra.*

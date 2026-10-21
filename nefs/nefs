@@ -95,7 +95,7 @@ compilador() {
 cmd_ferramentas() {
     cc="$(compilador)"
     echo "Compilador C:  ${cc:-NENHUM (instale cproc+qbe ou clang)}"
-    for f in cproc qbe cpp nasm as ld ld.lld objcopy qemu-system-x86_64 grub-mkrescue xorriso; do
+    for f in cproc qbe cpp cc qemu-system-x86_64 grub-mkrescue xorriso; do
         if tem "$f"; then printf '  %-20s %s\n' "$f" "$(command -v "$f")"
         else              printf '  %-20s %s\n' "$f" "(não encontrado)"
         fi
@@ -111,12 +111,13 @@ cmd_novo() {
     [ -f "$NEFS_MODELO/kernel.c" ] || erro "modelo do NovaEra não encontrado em $NEFS_MODELO"
 
     mkdir -p "$pasta/usuario"
-    for f in kernel.c boot.asm cpu.asm novaera.h linker.ld build.sh \
+    for f in kernel.c boot.s cpu.s novaera.h linker.ld build.sh \
              sistema.conf programas.lista LICENSE; do
         cp "$NEFS_MODELO/$f" "$pasta/"
     done
     cp "$NEFS_MODELO"/usuario/*.c "$NEFS_MODELO"/usuario/*.h \
-       "$NEFS_MODELO"/usuario/*.asm "$NEFS_MODELO"/usuario/*.ld "$pasta/usuario/"
+       "$NEFS_MODELO"/usuario/*.s "$NEFS_MODELO"/usuario/*.ld "$pasta/usuario/"
+    cp -r "$NEFS_MODELO/ferramentas" "$pasta/ferramentas"   # nefs-as, nefs-ld, nefs-ar
     mkdir -p "$pasta/usuario/bin"
     cp "$NEFS_MODELO"/usuario/bin/*.c "$pasta/usuario/bin/"
     cp -r "$NEFS_MODELO/libc" "$pasta/libc"           # a libc do NovaEra (nlibc)
@@ -241,7 +242,6 @@ cmd_compilar() {
     achar_projeto
     cc="$(compilador)"
     [ -n "$cc" ] || erro "nenhum compilador C encontrado (cproc + qbe, ou clang)"
-    tem nasm || erro "nasm não encontrado"
     echo "Compilando $(basename "$PROJETO") com $cc..."
     CC="$cc" sh "$PROJETO/build.sh" || erro "a compilação falhou"
     ok "kernel.bin pronto em $PROJETO/kernel.bin"

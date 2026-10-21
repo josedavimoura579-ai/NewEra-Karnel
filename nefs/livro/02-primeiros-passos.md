@@ -30,7 +30,8 @@ ls
 |---|---|
 | `sistema.conf` e `logo.txt` | a identidade do seu sistema: nome, versão, lema, prompt e logo |
 | `programas.lista` | os processos que o núcleo inicia no boot |
-| `kernel.c`, `boot.asm`, `cpu.asm` | o microkernel NovaEra |
+| `kernel.c`, `boot.s`, `cpu.s` | o microkernel NovaEra |
+| `ferramentas/` | `nefs-as`, `nefs-ld` e `nefs-ar`: o montador, o ligador e as bibliotecas |
 | `novaera.h` | o contrato entre o núcleo e os programas |
 | `usuario/` | os servidores do anel 3: vídeo, teclado, shell, arquivos, terminal, pipes |
 | `usuario/bin/` | os comandos do shell: `ls`, `cat`, `echo`, `novafetch`... |

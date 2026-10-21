@@ -6,8 +6,9 @@
 #
 #  Dentro da ISO:
 #    - kernel Linux + BusyBox (o terminal, os comandos básicos, o vi)
-#    - o compilador do NEFS: cproc (C) + QBE (backend) + as/ld (binutils)
-#    - nasm, QEMU (para testar o sistema criado) e GRUB (para gerar ISOs)
+#    - o compilador do NEFS: cproc (C) + QBE (backend) + nefs-as, nefs-ld e
+#      nefs-ar (montador, ligador e bibliotecas, deste repositório)
+#    - QEMU (para testar o sistema criado) e GRUB (para gerar ISOs)
 #    - o comando nefs, o código do NovaEra (modelo) e o Livro do NEFS
 #
 #  Precisa de: Debian ou Ubuntu x86_64, root (para o apt-get) e internet
@@ -49,7 +50,7 @@ command -v apt-get >/dev/null || erro "este script precisa de Debian ou Ubuntu (
 
 # --- 1. Ferramentas da máquina que constrói --------------------------------
 passo "Instalando as ferramentas de construção (apt-get)"
-PACOTES="busybox-static binutils nasm gcc make git curl xz-utils cpio gzip
+PACOTES="busybox-static binutils gcc make git curl xz-utils cpio gzip
          qemu-system-x86 grub-pc-bin grub-efi-amd64-bin grub-common xorriso mtools"
 # shellcheck disable=SC2086
 if ! dpkg -s $PACOTES >/dev/null 2>&1; then
@@ -117,11 +118,16 @@ for applet in $("$RAIZ/usr/bin/busybox" --list-full); do
     [ -e "$RAIZ/$applet" ] || ln -s /usr/bin/busybox "$RAIZ/$applet"
 done
 
-# Montador, ligador e objcopy (binutils), nasm
+# As ferramentas do NEFS: montador, ligador e bibliotecas. O build.sh do
+# NovaEra as usa direto (dentro da ISO não há compilador para o Linux).
+for f in nefs-as nefs-ld nefs-ar; do
+    gcc -O2 -o "$TRABALHO/$f" "$REPO/ferramentas/$f.c"
+    copiar_com_libs "$TRABALHO/$f" "/usr/bin/$f"
+done
+# O as/ld/objcopy do binutils ficam como alternativa (FERRAMENTAS=sistema).
 copiar_com_libs "$(readlink -f "$(command -v as)")" /usr/bin/as
 copiar_com_libs "$(readlink -f "$(command -v ld)")" /usr/bin/ld
 copiar_com_libs "$(readlink -f "$(command -v objcopy)")" /usr/bin/objcopy
-copiar_com_libs "$(command -v nasm)" /usr/bin/nasm
 
 # O compilador do NEFS
 if [ "$SEM_COMPILADOR" = 0 ]; then
@@ -167,15 +173,16 @@ passo "Instalando o NEFS $NEFS_VERSAO"
 install -m 755 "$REPO/nefs/nefs" "$RAIZ/usr/bin/nefs"
 MODELO="$RAIZ/usr/share/nefs/novaera"
 mkdir -p "$MODELO/usuario"
-for f in kernel.c boot.asm cpu.asm novaera.h linker.ld build.sh sistema.conf \
+for f in kernel.c boot.s cpu.s novaera.h linker.ld build.sh sistema.conf \
          programas.lista logo.txt LICENSE README.md; do
     cp "$REPO/$f" "$MODELO/"
 done
-cp "$REPO"/usuario/*.c "$REPO"/usuario/*.h "$REPO"/usuario/*.asm "$REPO"/usuario/*.ld \
+cp "$REPO"/usuario/*.c "$REPO"/usuario/*.h "$REPO"/usuario/*.s "$REPO"/usuario/*.ld \
    "$MODELO/usuario/"
 mkdir -p "$MODELO/usuario/bin"
 cp "$REPO"/usuario/bin/*.c "$MODELO/usuario/bin/"
 cp -r "$REPO/libc" "$MODELO/libc"
+cp -r "$REPO/ferramentas" "$MODELO/ferramentas"
 # Os portes (o QBE que roda dentro do NovaEra), já com as fontes: a ISO
 # não precisa de internet para compilá-los.
 mkdir -p "$REPO/portes/fontes"

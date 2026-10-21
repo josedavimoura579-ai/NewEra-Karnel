@@ -5,7 +5,7 @@
  *  Um programa NÃO pode tocar no hardware nem na memória do núcleo:
  *  tudo o que ele faz além de calcular passa por int 0x80, quase sempre
  *  como uma mensagem para um servidor (terminal, arquivos, pipes...).
- *  Sem assembly embutido: o que precisa de assembly está em crt0.asm.
+ *  Sem assembly embutido: o que precisa de assembly está em sys.s e crt0.s.
  * ===========================================================================
  */
 #ifndef ULIB_H
@@ -15,7 +15,7 @@
 
 /* ---------------------------- Chamadas de sistema ------------------------ */
 
-/* Em crt0.asm: executa int 0x80 com RAX = numero, RBX = a, RCX = b. */
+/* Em sys.s: executa int 0x80 com RAX = numero, RBX = a, RCX = b. */
 long syscall2(u64 numero, u64 a, u64 b);
 
 static inline long sys_enviar(u32 destino, msg_t *m)    { return syscall2(SYS_ENVIAR, destino, (u64)m); }
@@ -53,10 +53,10 @@ static inline long sys_copiar_de(u32 pid, void *meu, u64 dele, u64 bytes)
 
 /* ----------------- Portas de E/S (só para drivers, IOPL 3) --------------- */
 
-void outb(u16 porta, u8 valor);       /* crt0.asm */
+void outb(u16 porta, u8 valor);       /* sys.s */
 u8   inb(u16 porta);
 
-/* Memória de dispositivo (crt0.asm). O cproc ainda não suporta "volatile":
+/* Memória de dispositivo (sys.s). O cproc ainda não suporta "volatile":
  * estas funções garantem que o acesso acontece de verdade. */
 void mem_escreve16(u64 endereco, u16 valor);
 u16  mem_le16(u64 endereco);
@@ -424,7 +424,7 @@ static inline long executar(const char *caminho, char **argv,
 
 /* ------------------------------ Ponto de entrada -------------------------
  * Todo programa define main(argc, argv), como em qualquer C. Quem a chama
- * é _start, em crt0.asm; o valor devolvido vira o código de saída.        */
+ * é _start, em crt0.s; o valor devolvido vira o código de saída.        */
 
 int main(int argc, char **argv);
 
