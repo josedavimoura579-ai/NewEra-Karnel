@@ -40,8 +40,9 @@ pipes). O `testelibc`, em `usuario/bin/`, testa todas elas.
 o **código de saída**: se não for 0, o shell mostra. Os comandos têm heap
 (`sys_sbrk`) e uma pilha de até 1 MiB que cresce sozinha. Veja exemplos
 em `usuario/bin/`: `ola`, `codigo`, `memoria`, `falha` e `filho`. Este
-último cria outro processo com `sys_criar()` e espera por ele com
-`sys_esperar()`.
+último cria outro processo com `executar()` e espera por ele com
+`sys_esperar()`. Em C padrão, o mesmo se faz com `posix_spawnp()` e
+`waitpid()`.
 
 ## Um servidor
 
@@ -125,7 +126,7 @@ sys_chamar(4, &m);          /* 4 = o PID do programa relogio */
 | `sys_receber(pid, &m)` | espera uma mensagem (`PID_QUALQUER` aceita de todos) |
 | `sys_chamar(pid, &m)` | envia e espera a resposta |
 | `sys_responder(pid, &m)` | responde a quem fez `sys_chamar`; nunca bloqueia |
-| `sys_criar(caminho, argv)` | executa um programa do initrd; devolve o PID |
+| `executar(caminho, argv, 0, 0, 0, 0)` | lê o programa do servidor de arquivos e cria o processo; devolve o PID |
 | `sys_esperar(pid)` | espera o filho terminar; devolve o código de saída |
 | `sys_sbrk(bytes)` | aumenta o heap; devolve o início da área nova |
 | `sys_pid()` | o próprio PID |
