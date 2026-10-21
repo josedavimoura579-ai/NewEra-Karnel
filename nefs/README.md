@@ -31,9 +31,17 @@ arquivo .c → cproc → QBE → as → ld → programa do NovaEra
 - **as** e **ld** (binutils) montam e ligam; **nasm** monta as partes do
   NovaEra escritas em assembly.
 
-Para compilar com o cproc, o NovaEra não usa assembly embutido no C
-(`__asm__`): as instruções especiais ficam em `cpu.asm` e
-`usuario/crt0.asm`.
+Versões testadas juntas: **QBE 1.3** e **cproc** no commit `d1c53dd`
+(fixado em `iso/construir.sh`). O pré-processador do cproc ainda não está
+completo, então a ISO leva também o `cpp` do GCC (só o pré-processador).
+
+Para compilar com o cproc, o NovaEra respeita os limites dele:
+
+- **sem assembly embutido** (`__asm__`): as instruções especiais ficam
+  em `cpu.asm` e `usuario/crt0.asm`;
+- **sem `volatile`**: a memória de vídeo é acessada por
+  `mem_escreve16()` e `mem_le16()`, também em assembly;
+- **sem structs `packed`**: a TSS é um vetor de `u32`.
 
 ## O comando `nefs`
 
@@ -93,10 +101,8 @@ e gera a ISO. Os fontes ficam guardados em `nefs/iso/fontes/`.
 - [x] NovaEra configurável (`sistema.conf`, `programas.lista`) e sem `__asm__` no C
 - [x] Livro 1 (5 capítulos)
 - [x] ISO: boot, terminal, `nefs`, livro, QEMU dentro da ISO e geração de ISOs com GRUB, testados
-- [ ] **cproc + QBE dentro da ISO**: o script já baixa e compila os dois,
-      mas isso ainda não foi testado, porque a máquina onde o NEFS foi
-      desenvolvido não tinha acesso a `c9x.me` e `git.sr.ht`. A
-      compilação do NovaEra com o cproc também falta testar.
+- [x] **cproc + QBE dentro da ISO**: `nefs compilar` e `nefs iso`
+      testados na própria ISO; o NovaEra compilado pelo cproc roda no QEMU
 - [ ] Disco persistente para guardar os projetos
 - [ ] Site do NEFS
 - [ ] Livro 2: sistema de arquivos, memória compartilhada, drivers de disco

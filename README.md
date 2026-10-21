@@ -364,7 +364,7 @@ arquivo .c → cproc → QBE → assembler → linker → programa do NovaEra
 
 O QBE gera código para x86_64, e foi por isso que o NovaEra passou para 64 bits.
 
-- [ ] **Fase 1** — a ISO do NEFS: um Linux mínimo com cproc + QBE, o comando `nefs` e o Livro 1. Já prontos e testados: o comando `nefs`, o Livro 1, o NovaEra compilável sem `__asm__` e a ISO (boot, QEMU e GRUB dentro dela). Falta testar o cproc + QBE na ISO. Veja [`nefs/README.md`](nefs/README.md)
+- [x] **Fase 1** — a ISO do NEFS: um Linux mínimo com cproc + QBE, o comando `nefs` e o Livro 1. Veja [`nefs/README.md`](nefs/README.md)
 - [ ] **Fase 2** — preparar o núcleo: programas ELF, sistema de arquivos, criação de processos e uma libc mínima
 - [ ] **Fase 3** — portar cproc + QBE + assembler + linker para o NovaEra e gerar a **ISO do compilador NEFS**
 
