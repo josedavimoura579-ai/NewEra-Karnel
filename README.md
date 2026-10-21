@@ -147,11 +147,13 @@ Estado atual: **NovaEra Microkernel v3.1** (alfa).
 | **Drivers** | No anel 3 com IOPL 3 (podem usar `in`/`out`). **Vídeo**: o único processo com `0xB8000` mapeado. Converte UTF-8 para CP437 (os acentos do português aparecem). **Teclado**: PS/2 *set 1*, layout US, Shift, Ctrl e Caps Lock; entrega as teclas ao terminal e faz o `reboot` pela porta `0x64` |
 | **Supervisão** | Uma exceção no anel 3 encerra só o processo culpado, devolve a memória dele e o recarrega (até 5 vezes), avisando-o do motivo. Uma exceção no anel 0 mostra o painel vermelho de pânico |
 | **Shell (anel 3)** | Internos: `ajuda` · `cd` · `pwd` · `limpar` · `ps` · `mem` · `tempo` · `sobre` · `invadir` (demonstra a proteção de memória) · `reboot`. Qualquer outro nome executa `/bin/<nome>`, com argumentos, **pipes** (`a \| b`, até 4) e **redirecionamentos** (`>`, `>>`, `<`). O prompt mostra a pasta atual |
-| **Comandos** (`/bin`, de `usuario/bin/`) | `ls` · `cat` · `echo` · `mkdir` · `rm` · **`novafetch`** (o neofetch do NovaEra) · `ola` · `codigo N` · `memoria [MiB]` · `falha` · `filho` |
+| **Comandos** (`/bin`, de `usuario/bin/`) | `ls` · `cat` · `echo` · `mkdir` · `rm` · **`novafetch`** (o neofetch do NovaEra) · `ola` · `codigo N` · `memoria [MiB]` · `falha` · `filho` · **`testelibc`** (47 testes da libc) |
+| **libc** (`libc/`, a "nlibc") | C padrão para os programas do NovaEra: `stdio` (`printf` com `%.17g` exato, `scanf`, `fopen`, buffers), `stdlib` (`malloc`, `qsort` estável, `strtod` com arredondamento correto), `string`, `ctype`, `errno`, `getopt` e o POSIX que o cproc usa (`pipe`, `posix_spawnp`, `waitpid`, `mkstemp`, `unlink`). Por baixo, tudo vira mensagem para os servidores. Os comandos de `/bin` são ligados com ela |
+| **Ponto flutuante** | O núcleo liga o SSE e salva/restaura os registradores de ponto flutuante (FXSAVE/FXRSTOR) de cada processo na troca de contexto; o próprio núcleo não usa SSE |
 | **Linguagens** | Assembly NASM + C11 *freestanding*, sem assembly embutido nem atributos de compilador: compila com o clang (`CC=clang`, padrão) ou com o cproc + QBE do NEFS (`CC=cproc`). Liga com `ld.lld` ou com o `ld` do binutils |
 | **Versões** | O **núcleo** tem a sua (`NOVAERA_VERSAO` em `novaera.h`, hoje 3.1); a **distribuição** tem a dela em `sistema.conf`. No NovaEra puro (`PURO="sim"`) não há distribuição, e o banner e o `novafetch` mostram a versão do núcleo |
 | **Configuração** | `sistema.conf` (nome, versão, lema, prompt, puro) e `logo.txt` (a identidade, como o `/etc/os-release` do Linux) e `programas.lista` (servidores e permissões); o `build.sh` gera `build/sistema.h`, `build/programas.h`, `build/programas.asm` e, no initrd, `/etc/sistema` e `/etc/logo.txt` |
-| **Dependências em tempo de execução** | Nenhuma. Sem libc; os `#include` são a ABI (`novaera.h`) e os arquivos gerados pelo build |
+| **Dependências em tempo de execução** | Nenhuma. O núcleo não usa libc; os `#include` dele são a ABI (`novaera.h`) e os arquivos gerados pelo build. Os programas usam a libc do próprio NovaEra, nunca a do Linux (`-nostdinc`) |
 
 ### Por que agora é um microkernel
 
@@ -178,7 +180,7 @@ Experimente no shell:
 
 ### O que o NovaEra **ainda não** tem
 
-Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), uma libc (Etapa 3 da [Fase 3](nefs/FASE3.md)), mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, driver de disco (hoje os arquivos somem ao desligar), usuários e permissões. Veja o [Roteiro](#roteiro).
+Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), sinais (`kill`), mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, driver de disco (hoje os arquivos somem ao desligar), usuários e permissões. Veja o [Roteiro](#roteiro).
 
 ### Estrutura do repositório
 
@@ -193,7 +195,8 @@ novaera-kernel/
 ├── kernel.c          # O microkernel: memória, paginação, processos, ELF, IPC (C puro)
 ├── linker.ld         # Mapa de memória do núcleo a partir de 1 MiB
 ├── usuario/          # Tudo o que roda no anel 3
-│   ├── crt0.asm      #   _start, int 0x80 e E/S de portas
+│   ├── crt0.asm      #   _start dos servidores
+│   ├── sys.asm       #   int 0x80, E/S de portas, memória de dispositivo
 │   ├── ulib.h        #   biblioteca: syscalls, mensagens, utilitários
 │   ├── usuario.ld    #   todo programa mora em 0x40000000
 │   ├── video.c       #   servidor de vídeo (PID 1)
@@ -204,6 +207,7 @@ novaera-kernel/
 │   ├── tubos.c       #   os pipes (PID 6)
 │   └── bin/          #   os comandos: ls, cat, echo, mkdir, rm, novafetch...
 ├── build.sh          # Compila os programas, embute-os e liga o kernel.bin
+├── libc/             # A libc do NovaEra: include/ (cabeçalhos), src/, crt0.asm
 ├── nefs/             # O NEFS: comando nefs, Livro do NEFS e a ISO (separado do núcleo)
 ├── run.sh            # Atalho para rodar no QEMU (pensado para o Termux)
 ├── kernel.bin        # Binário pronto para rodar
@@ -398,7 +402,8 @@ O QBE gera código para x86_64, e foi por isso que o NovaEra passou para 64 bits
 - [ ] **Fase 3** — o NEFS rodando 100% sobre o NovaEra, sem Linux. Plano em 8 etapas: [`nefs/FASE3.md`](nefs/FASE3.md)
   - [x] Etapa 1 — programas ELF, initrd, heap, pilha sob demanda, criar/esperar processos
   - [x] Etapa 2 — servidores de arquivos, terminal e pipes; `ls`, `cat`, `echo`, `mkdir`, `rm`, `novafetch`
-  - [ ] Etapas 3 a 8 — libc, QBE, assembler/ligador, cproc, autossuficiência, ISO
+  - [x] Etapa 3 — a libc do NovaEra (nlibc) e ponto flutuante no núcleo
+  - [ ] Etapas 4 a 8 — QBE, assembler/ligador, cproc, autossuficiência, ISO
 
 ### Fases futuras (depois da Fase 3)
 

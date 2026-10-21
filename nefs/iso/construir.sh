@@ -175,6 +175,7 @@ cp "$REPO"/usuario/*.c "$REPO"/usuario/*.h "$REPO"/usuario/*.asm "$REPO"/usuario
    "$MODELO/usuario/"
 mkdir -p "$MODELO/usuario/bin"
 cp "$REPO"/usuario/bin/*.c "$MODELO/usuario/bin/"
+cp -r "$REPO/libc" "$MODELO/libc"
 # O NovaEra original já compilado, para comparar com o seu sistema:
 #   qemu-system-x86_64 -kernel /usr/share/nefs/novaera/kernel.bin \
 #       -initrd /usr/share/nefs/novaera/initrd.tar -display curses

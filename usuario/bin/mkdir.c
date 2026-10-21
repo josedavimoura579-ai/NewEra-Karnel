@@ -8,9 +8,9 @@ int main(int argc, char **argv)
     int erro = 0;
     for (int i = 1; i < argc; i++) {
         if (arq_pasta(argv[i]) < 0) {
-            escreve("mkdir: nao consegui criar: ", COR(COR_VERMELHO_CLARO));
-            escreve(argv[i], COR(COR_BRANCO));
-            escreve("\n", 0);
+            escreve_erro("mkdir: nao consegui criar: ");
+            escreve_erro(argv[i]);
+            escreve_erro("\n");
             erro = 1;
         }
     }

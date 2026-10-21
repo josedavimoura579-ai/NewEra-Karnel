@@ -16,16 +16,25 @@ nefs rodar
 ```
 
 No shell do seu sistema, digite `saudacao oi tudo bem`. O arquivo
-`usuario/bin/saudacao.c` é um programa C como qualquer outro:
+`usuario/bin/saudacao.c` é um programa em C padrão, como em qualquer
+sistema:
 
 ```c
+#include <stdio.h>
+
 int main(int argc, char **argv)
 {
-    escreve("Ola do comando saudacao!\n", COR(COR_VERDE_CLARO));
-    for (int i = 1; i < argc; i++) { ... }
+    printf("Ola do comando saudacao!\n");
+    for (int i = 1; i < argc; i++)
+        printf("  argumento %d: %s\n", i, argv[i]);
     return 0;
 }
 ```
+
+Os comandos usam a **libc do NovaEra** (pasta `libc/`): `printf`,
+`fopen`, `malloc`, `qsort`, `strtod`, `getopt`... Por baixo, cada uma
+dessas funções vira mensagens para os servidores (terminal, arquivos,
+pipes). O `testelibc`, em `usuario/bin/`, testa todas elas.
 
 `argc` e `argv` são as palavras que você digitou, e o valor devolvido é
 o **código de saída**: se não for 0, o shell mostra. Os comandos têm heap

@@ -26,9 +26,9 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         long canal = arq_abrir(argv[i], ARQ_MODO_LER);
         if (canal < 0) {
-            escreve("cat: nao encontrado: ", COR(COR_VERMELHO_CLARO));
-            escreve(argv[i], COR(COR_BRANCO));
-            escreve("\n", 0);
+            escreve_erro("cat: nao encontrado: ");
+            escreve_erro(argv[i]);
+            escreve_erro("\n");
             erro = 1;
             continue;
         }

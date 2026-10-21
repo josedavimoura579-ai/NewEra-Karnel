@@ -6,8 +6,9 @@
 #      build/programas.h e build/programas.asm
 #   2. compila os servidores do boot (usuario/<nome>.c + crt0.asm) como
 #      programas ELF, que o núcleo embute
-#   3. compila os programas de usuario/bin/ e junta todos no initrd.tar,
-#      que o GRUB/QEMU entregam ao núcleo junto com o kernel.bin
+#   3. compila a libc do NovaEra (libc/) e os programas de usuario/bin/,
+#      ligados com ela, e junta tudo no initrd.tar, que o GRUB/QEMU
+#      entregam ao núcleo junto com o kernel.bin
 #   4. compila o núcleo e liga o kernel.bin
 #
 #  Compiladores aceitos (variável CC):
@@ -37,10 +38,12 @@ if "$LD" --help 2>/dev/null | grep -q -- --no-warn-rwx-segments; then
 fi
 
 # Liga um programa do usuário: um ELF, que o núcleo sabe carregar.
+# Liga um servidor (só a ulib) ou um programa da libc: um ELF, que o
+# núcleo sabe carregar. O 1º argumento é o começo do programa (o _start).
 ligar_programa() {
     saida="$1"; shift
     # shellcheck disable=SC2086
-    "$LD" -m elf_x86_64 -nostdlib $LDFLAGS -T usuario/usuario.ld -o "$saida" build/crt0.o "$@"
+    "$LD" -m elf_x86_64 -nostdlib $LDFLAGS -T usuario/usuario.ld -o "$saida" "$@"
 }
 
 # Liga um ELF e o converte em binário puro (o kernel.bin). Por que não
@@ -53,20 +56,27 @@ ligar() {
     "$OBJCOPY" -O binary "$saida.elf" "$saida"
 }
 
+# CFLAGS_NUCLEO: o núcleo. CFLAGS: os programas do usuário, que podem usar
+# ponto flutuante (o núcleo salva a FPU/SSE de cada processo) e só enxergam
+# os cabeçalhos da libc do NovaEra (-nostdinc), nunca os do Linux.
 case "$(basename "$CC")" in
     clang*)
+        COMUNS="--target=x86_64-none-elf -ffreestanding -fno-builtin -fno-stack-protector
+                -fno-pic -O2 -Wall -Wextra"
         # -mno-red-zone: uma interrupção no anel 0 escreveria em cima da
-        #  "zona vermelha" da pilha; -mgeneral-regs-only: o núcleo não salva
-        #  os registradores SSE/FPU na troca de processo.
-        CFLAGS="--target=x86_64-none-elf -ffreestanding -fno-builtin -fno-stack-protector
-                -fno-pic -mno-red-zone -mgeneral-regs-only -O2 -Wall -Wextra" ;;
+        #  "zona vermelha" da pilha; -mgeneral-regs-only: o núcleo não usa SSE.
+        CFLAGS_NUCLEO="$COMUNS -mno-red-zone -mgeneral-regs-only"
+        CFLAGS="$COMUNS" ;;
     *)
-        # cproc + QBE: o QBE só usa SSE para números de ponto flutuante (não
-        # usamos nenhum) e o núcleo nunca é interrompido no meio do código C
-        # (as interrupções ficam desligadas no anel 0, menos em cpu_ocioso).
+        # cproc + QBE: o QBE só usa SSE para números de ponto flutuante (o
+        # núcleo não tem nenhum) e o núcleo nunca é interrompido no meio do
+        # código C (as interrupções ficam desligadas no anel 0, menos em
+        # cpu_ocioso), então a "zona vermelha" não é problema.
+        CFLAGS_NUCLEO="-std=c11"
         CFLAGS="-std=c11" ;;
 esac
-CFLAGS="$CFLAGS -I. -Ibuild"
+CFLAGS_NUCLEO="$CFLAGS_NUCLEO -I. -Ibuild"
+CFLAGS="$CFLAGS -nostdinc -Ilibc/include -I. -Ibuild -Iusuario"
 
 # --- 1. Arquivos gerados -----------------------------------------------------
 
@@ -142,14 +152,26 @@ echo "section .note.GNU-stack noalloc noexec nowrite progbits" >> build/programa
 # --- 2. Servidores do boot ---------------------------------------------------
 
 nasm -f elf64 usuario/crt0.asm -o build/crt0.o
+nasm -f elf64 usuario/sys.asm -o build/sys.o
 for prog in $PROGRAMAS; do
     # shellcheck disable=SC2086
     "$CC" $CFLAGS -c "usuario/$prog.c" -o "build/$prog.o"
-    ligar_programa "build/$prog.elf" "build/$prog.o"
+    ligar_programa "build/$prog.elf" build/crt0.o build/sys.o "build/$prog.o"
     echo "  usuario/$prog.c -> build/$prog.elf ($(wc -c < "build/$prog.elf") bytes)"
 done
 
-# --- 3. Programas do initrd (usuario/bin/*.c -> bin/<nome>) -----------------
+# --- 3. A libc e os programas do initrd (usuario/bin/*.c -> bin/<nome>) -----
+
+mkdir -p build/libc
+nasm -f elf64 libc/crt0.asm -o build/libc/crt0.o
+LIBC=""
+for fonte in libc/src/*.c; do
+    obj="build/libc/$(basename "$fonte" .c).o"
+    # shellcheck disable=SC2086
+    "$CC" $CFLAGS -c "$fonte" -o "$obj"
+    LIBC="$LIBC $obj"
+done
+echo "  libc/src/*.c -> libc ($(echo $LIBC | wc -w) partes)"
 
 rm -rf build/initrd
 mkdir -p build/initrd/bin build/initrd/etc
@@ -166,8 +188,9 @@ for fonte in usuario/bin/*.c; do
     [ -f "$fonte" ] || continue
     nome="$(basename "$fonte" .c)"
     # shellcheck disable=SC2086
-    "$CC" $CFLAGS -Iusuario -c "$fonte" -o "build/bin-$nome.o"
-    ligar_programa "build/initrd/bin/$nome" "build/bin-$nome.o"
+    "$CC" $CFLAGS -c "$fonte" -o "build/bin-$nome.o"
+    # shellcheck disable=SC2086
+    ligar_programa "build/initrd/bin/$nome" build/libc/crt0.o build/sys.o "build/bin-$nome.o" $LIBC
 done
 # Formato ustar: o que o núcleo sabe ler. Data, dono e ordem fixos: o mesmo
 # código gera sempre o mesmo initrd.tar. O tar do BusyBox já usa ustar e
@@ -185,7 +208,7 @@ nasm -f elf64 boot.asm -o build/boot.o
 nasm -f elf64 cpu.asm -o build/cpu.o
 nasm -f elf64 build/programas.asm -o build/programas.o
 # shellcheck disable=SC2086
-"$CC" $CFLAGS -c kernel.c -o build/kernel.o
+"$CC" $CFLAGS_NUCLEO -c kernel.c -o build/kernel.o
 # Binário puro: o cabeçalho Multiboot (boot.asm) diz onde carregar.
 ligar linker.ld build/kernel.bin build/boot.o build/cpu.o build/kernel.o build/programas.o
 cp build/kernel.bin kernel.bin

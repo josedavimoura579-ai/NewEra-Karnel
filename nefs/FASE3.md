@@ -53,10 +53,18 @@ Cada etapa termina com algo testável no QEMU e vira um pull request.
   - versão do núcleo separada da versão da distribuição (`PURO`, `logo.txt`,
     `/etc/sistema`); o vídeo mostra acentos (UTF-8 → CP437)
   - *Teste: `ls /bin | cat`, `echo oi > /tmp/a`, `cat < /tmp/a`, `novafetch`.*
-- [ ] **Etapa 3 — a libc do NovaEra ("nlibc")**
-  - `malloc`, `stdio`, `string`, `ctype`, `stdlib`, `getopt`, `errno`,
-    `posix_spawnp`, `pipe`, `waitpid`, por cima das mensagens
-  - *Teste: programas em C padrão compilados pelo cproc rodando no NovaEra.*
+- [x] **Etapa 3 — a libc do NovaEra ("nlibc")**
+  - `stdio` (com `printf("%.17g")` exato e `fscanf("_%lf")`, que o cproc e o
+    QBE usam), `stdlib` (`malloc` por classes de tamanho, `qsort` estável,
+    `strtod` com arredondamento correto, por bignum), `string`, `ctype`,
+    `errno`, `getopt`, `assert`
+  - POSIX do cproc: descritores, `pipe`, `posix_spawnp` (com dup2 para a
+    entrada e a saída), `waitpid`/`wait`, `mkstemp`, `unlink`
+  - pipes com contagem de referências por ponta; `exit()` devolve as
+    referências; canal com `CANAL_DONO` para os filhos de `posix_spawn`
+  - núcleo: SSE ligado e FPU salva por processo; `SYS_ESPERAR(0)` = qualquer filho
+  - *Teste: `testelibc`, 47 testes conferidos antes com a glibc no Linux,
+    passa no NovaEra compilado com clang e com cproc + QBE.*
 - [ ] **Etapa 4 — QBE rodando no NovaEra** (primeiro marco grande)
   - *Teste: `qbe arquivo.ssa` gera, dentro do NovaEra, o mesmo assembly que no Linux.*
 - [ ] **Etapa 5 — `nefs-as` e `nefs-ld`**

@@ -129,7 +129,7 @@ enum {
 #define COR(texto) ((u8)((texto) | (COR_AZUL << 4)))
 
 /* --------------------------------- Memória ------------------------------
- * malloc/free simples: blocos com um cabeçalho de 16 bytes numa lista de
+ * umalloc/ufree simples: blocos com um cabeçalho de 16 bytes numa lista de
  * livres (o primeiro que couber). O heap cresce com SYS_SBRK.            */
 
 typedef struct bloco {
@@ -139,7 +139,8 @@ typedef struct bloco {
 
 static bloco_t *ulib_livres;
 
-static inline void *malloc(u64 n)
+/* (umalloc/ufree, e não malloc/free: os nomes padrão são da libc.) */
+static inline void *umalloc(u64 n)
 {
     n = (n + 15) & ~15ull;
     if (n == 0) n = 16;
@@ -157,7 +158,7 @@ static inline void *malloc(u64 n)
     return b + 1;
 }
 
-static inline void free(void *p)
+static inline void ufree(void *p)
 {
     if (!p) return;
     bloco_t *b = (bloco_t *)p - 1;
@@ -214,6 +215,13 @@ static inline void escreve(const char *s, u8 cor)
 {
     ambiente_t *a = ambiente();
     escreve_em(a->saida, a->saida_canal, s, str_tam(s), cor);
+}
+
+/* Mensagens de erro vão sempre para o terminal (a "saída de erro"), mesmo
+ * quando a saída padrão foi ligada a um pipe ou a um arquivo. */
+static inline void escreve_erro(const char *s)
+{
+    escreve_em(PID_TERMINAL, 0, s, str_tam(s), COR(COR_VERMELHO_CLARO));
 }
 
 static inline void escreve_num(u32 n, u8 cor)
@@ -353,14 +361,14 @@ static inline long arq_apagar(const char *caminho)
     return arq_pedido(ARQ_APAGAR, caminho, &m);
 }
 
-/* Lê o arquivo inteiro para um bloco novo do heap (libere com free). */
+/* Lê o arquivo inteiro para um bloco novo do heap (libere com ufree). */
 static inline u8 *arq_carregar(const char *caminho, u32 *tamanho)
 {
     u32 tam;
     if (arq_info(caminho, &tam) != ARQ_TIPO_ARQUIVO) return 0;
     long canal = arq_abrir(caminho, ARQ_MODO_LER);
     if (canal < 0) return 0;
-    u8 *buf = malloc(tam ? tam : 1);
+    u8 *buf = umalloc(tam ? tam : 1);
     u32 lidos = 0;
     while (buf && lidos < tam) {
         long n = ler_de(PID_ARQUIVOS, (u32)canal, (char *)buf + lidos, tam - lidos);
@@ -368,27 +376,28 @@ static inline u8 *arq_carregar(const char *caminho, u32 *tamanho)
         lidos += (u32)n;
     }
     arq_fechar((u32)canal);
-    if (!buf || lidos != tam) { free(buf); return 0; }
+    if (!buf || lidos != tam) { ufree(buf); return 0; }
     *tamanho = tam;
     return buf;
 }
 
 /* ---------------------------------- Pipes --------------------------------- */
 
-static inline long tubo_pedido(u32 tipo, u32 canal)
+static inline long tubo_pedido(u32 tipo, u32 canal, u32 ponta)
 {
     msg_t m;
     msg_zera(&m);
     m.tipo   = tipo;
     m.arg[0] = canal;
+    m.arg[1] = ponta;
     if (sys_chamar(PID_TUBOS, &m) < 0) return ERRO_PID;
     if (m.tipo == MSG_ERRO) return -(long)m.arg[0];
     return m.arg[0];
 }
 
-static inline long tubo_criar(void)               { return tubo_pedido(TUBO_CRIAR, 0); }
-static inline void tubo_fechar_escrita(u32 canal) { tubo_pedido(TUBO_FECHAR_ESCRITA, canal); }
-static inline void tubo_liberar(u32 canal)        { tubo_pedido(TUBO_LIBERAR, canal); }
+static inline long tubo_criar(void)                  { return tubo_pedido(TUBO_CRIAR, 0, 0); }
+static inline long tubo_abrir(u32 canal, u32 ponta)  { return tubo_pedido(TUBO_ABRIR, canal, ponta); }
+static inline void tubo_fechar(u32 canal, u32 ponta) { tubo_pedido(TUBO_FECHAR, canal, ponta); }
 
 /* ---------------------------- Executar programas --------------------------
  * Lê o ELF do servidor de arquivos e pede ao núcleo um processo novo com
@@ -409,7 +418,7 @@ static inline long executar(const char *caminho, char **argv,
     c.saida         = saida;
     c.saida_canal   = saida_canal;
     long pid = sys_criar(&c);
-    free(imagem);                        /* o núcleo já copiou o programa */
+    ufree(imagem);                       /* o núcleo já copiou o programa */
     return pid;
 }
 

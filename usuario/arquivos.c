@@ -99,10 +99,10 @@ static int reservar(no_t *n, u32 tam)
     if (tam <= n->cap) return 1;
     u32 cap = n->cap ? n->cap * 2 : 256;
     while (cap < tam) cap *= 2;
-    u8 *novo = malloc(cap);
+    u8 *novo = umalloc(cap);
     if (!novo) return 0;
     mem_copia(novo, n->dados, n->tam);
-    if (n->cap) free(n->dados);
+    if (n->cap) ufree(n->dados);
     n->dados = novo;
     n->cap   = cap;
     return 1;
@@ -315,7 +315,7 @@ static void pedido(msg_t *m)
             if (nos[i].usado && nos[i].pai == (u32)alvo) { erro(quem, ERRO_INVALIDO); return; }
         for (u32 c = 0; c < MAX_CANAIS; c++)
             if (canais[c].usado && canais[c].no == (u32)alvo) canais[c].usado = 0;
-        if (nos[alvo].cap) free(nos[alvo].dados);
+        if (nos[alvo].cap) ufree(nos[alvo].dados);
         nos[alvo].usado = 0;
         ok(quem, 0, 0);
         return;

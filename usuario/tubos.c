@@ -6,7 +6,9 @@
  *
  *  - Escrever num tubo cheio: a resposta só vem quando houver espaço.
  *  - Ler de um tubo vazio: a resposta só vem quando chegar algo, ou com 0
- *    bytes ("acabou") depois que o shell fechar a escrita.
+ *    bytes ("acabou") quando não sobrar nenhum escritor.
+ *  - Cada ponta conta as referências abertas (TUBO_ABRIR / TUBO_FECHAR);
+ *    sem leitores, escrever dá erro; sem ninguém, o tubo é liberado.
  *  O servidor nunca bloqueia: ele simplesmente adia a resposta.
  * ===========================================================================
  */
@@ -17,7 +19,7 @@
 
 typedef struct {
     u32  usado;
-    u32  escrita_aberta;
+    u32  leitores, escritores;              /* referências abertas de cada ponta */
     char buf[TUBO_TAM];
     u32  ini, n;
     u32  leitor, leitor_max, leitor_buffer;      /* leitura pendente (0 = nenhuma) */
@@ -45,7 +47,7 @@ static void por(tubo_t *t, const char *dados, u32 n)
 /* Tenta concluir as operações pendentes depois de qualquer mudança. */
 static void andar(tubo_t *t)
 {
-    if (t->leitor && (t->n || !t->escrita_aberta)) {
+    if (t->leitor && (t->n || !t->escritores)) {
         char tmp[TUBO_TAM];
         u32 qtd = t->n < t->leitor_max ? t->n : t->leitor_max;
         for (u32 i = 0; i < qtd; i++) tmp[i] = t->buf[(t->ini + i) % TUBO_TAM];
@@ -55,6 +57,10 @@ static void andar(tubo_t *t)
             responder(t->leitor, MSG_OK, qtd);       /* 0 = acabou */
         }
         t->leitor = 0;
+    }
+    if (t->escritor && !t->leitores) {          /* ninguém mais vai ler */
+        responder(t->escritor, MSG_ERRO, (u32)(-ERRO_INVALIDO));
+        t->escritor = 0;
     }
     if (t->escritor && TUBO_TAM - t->n >= t->escritor_n) {
         por(t, t->escritor_dados, t->escritor_n);
@@ -78,13 +84,14 @@ int main(int argc, char **argv)
             while (c < MAX_TUBOS && tubos[c].usado) c++;
             if (c == MAX_TUBOS) { responder(quem, MSG_ERRO, (u32)(-ERRO_LOTADO)); continue; }
             mem_zera(&tubos[c], sizeof(tubos[c]));
-            tubos[c].usado = 1;
-            tubos[c].escrita_aberta = 1;
+            tubos[c].usado      = 1;
+            tubos[c].leitores   = 1;
+            tubos[c].escritores = 1;
             responder(quem, MSG_OK, c);
             continue;
         }
 
-        u32 c = m.arg[0];
+        u32 c = m.arg[0] & ~CANAL_DONO;
         if (c >= MAX_TUBOS || !tubos[c].usado) {
             responder(quem, MSG_ERRO, (u32)(-ERRO_INVALIDO));
             continue;
@@ -94,7 +101,7 @@ int main(int argc, char **argv)
         switch (m.tipo) {
         case MSG_ESCREVER: {
             u32 n = m.arg[2] < MSG_TEXTO_MAX ? m.arg[2] : MSG_TEXTO_MAX - 1;
-            if (!t->escrita_aberta || t->escritor) {
+            if (!t->leitores || t->escritor) {
                 responder(quem, MSG_ERRO, (u32)(-ERRO_INVALIDO));
             } else if (TUBO_TAM - t->n >= n) {
                 por(t, m.texto, n);
@@ -112,15 +119,16 @@ int main(int argc, char **argv)
             t->leitor_max    = m.arg[1];
             t->leitor_buffer = m.arg[2];
             break;
-        case TUBO_FECHAR_ESCRITA:
-            t->escrita_aberta = 0;
+        case TUBO_ABRIR:
+            if (m.arg[1] == TUBO_ESCRITA) t->escritores++; else t->leitores++;
             responder(quem, MSG_OK, 0);
             break;
-        case TUBO_LIBERAR:
-            if (t->leitor)   responder(t->leitor, MSG_OK, 0);
-            if (t->escritor) responder(t->escritor, MSG_ERRO, (u32)(-ERRO_INVALIDO));
-            t->usado = 0;
+        case TUBO_FECHAR:
+            if (m.arg[1] == TUBO_ESCRITA) { if (t->escritores) t->escritores--; }
+            else if (t->leitores) t->leitores--;
             responder(quem, MSG_OK, 0);
+            andar(t);
+            if (!t->leitores && !t->escritores) t->usado = 0;   /* ninguém mais usa */
             continue;
         default:
             responder(quem, MSG_ERRO, (u32)(-ERRO_INVALIDO));

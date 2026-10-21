@@ -10,9 +10,9 @@ static int listar(const char *pasta, int com_titulo)
     u32 tam;
     long tipo = arq_info(pasta, &tam);
     if (tipo < 0) {
-        escreve("ls: nao encontrado: ", COR(COR_VERMELHO_CLARO));
-        escreve(pasta, COR(COR_BRANCO));
-        escreve("\n", 0);
+        escreve_erro("ls: nao encontrado: ");
+        escreve_erro(pasta);
+        escreve_erro("\n");
         return 1;
     }
     if (tipo == ARQ_TIPO_ARQUIVO) {                 /* "ls arquivo": só ele */

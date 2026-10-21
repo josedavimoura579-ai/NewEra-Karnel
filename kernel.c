@@ -65,6 +65,9 @@ void outb(u16 porta, u8 valor);
 u8   inb(u16 porta);
 void mem_escreve16(u64 endereco, u16 valor);
 void cpu_carregar_cr3(u64 pml4);
+void cpu_fpu_ligar(void);
+void cpu_fpu_salvar(u64 area);
+void cpu_fpu_restaurar(u64 area);
 u64  cpu_ler_cr2(void);
 void cpu_carregar_idt(u64 base, u16 limite);
 void cpu_carregar_tr(u16 seletor);
@@ -577,6 +580,8 @@ typedef struct {
     quadro_t  *quadro;
     u64        heap_ini, heap_fim;   /* o heap cresce com SYS_SBRK */
     u64        pilha_baixo;    /* página mais baixa da pilha já mapeada */
+    u8        *fpu;            /* registradores de ponto flutuante (FXSAVE) */
+    u32        fpu_limpa;      /* 1 = acabou de carregar: a área tem o estado inicial */
 
     /* IPC */
     u32        alvo;           /* para quem envia / de quem quer receber / filho esperado */
@@ -594,6 +599,10 @@ static u32      atual;                 /* índice (= PID) de quem está rodando 
 static u64      cr3_atual;
 static u32      contador_ordem;
 static u32      ticks;          /* só muda e é lida no núcleo, com IF=0 */
+
+/* O estado inicial da FPU/SSE de todo processo novo: a CPU logo depois
+ * de ligada (FNINIT), guardado uma vez no boot (fpu_iniciar). */
+static u8      *fpu_inicial;
 
 #include "programas.h"     /* gerado de programas.lista pelo build.sh */
 
@@ -773,6 +782,10 @@ static long processo_carregar(u32 pid, const args_t *a)
         t->pilha_nucleo = (u8 *)quadro_alocar();
         if (!t->pilha_nucleo) erro = ERRO_SEM_MEMORIA;
     }
+    if (!erro && !t->fpu) {                  /* um quadro: 4 KiB, alinhado */
+        t->fpu = (u8 *)quadro_alocar();
+        if (!t->fpu) erro = ERRO_SEM_MEMORIA;
+    }
     if (erro) {
         espaco_destruir(t->diretorio);
         t->diretorio = 0;
@@ -789,6 +802,8 @@ static long processo_carregar(u32 pid, const args_t *a)
     q->rsp    = rsp;
     q->ss     = SEL_DADOS_USUARIO;
 
+    mem_copia(t->fpu, fpu_inicial, 512);     /* FPU e SSE zerados, padrão */
+    t->fpu_limpa      = 1;
     t->quadro         = q;
     t->estado         = ESTADO_PRONTO;
     t->chamando       = 0;
@@ -813,6 +828,13 @@ static int processo_criar(u32 pid, const char *nome, const u8 *ini, const u8 *fi
     mem_zera(&args_tmp, sizeof(args_tmp));
     args_por(&args_tmp, nome);
     return processo_carregar(pid, &args_tmp) == 0;
+}
+
+static void fpu_iniciar(void)
+{
+    cpu_fpu_ligar();
+    fpu_inicial = (u8 *)quadro_alocar();
+    cpu_fpu_salvar((u64)fpu_inicial);
 }
 
 /* O PID 0 é o próprio núcleo: depois do boot, kernel_main() vira o
@@ -1039,6 +1061,9 @@ static void processo_encerrar(u32 pid, long codigo, int falhou, u64 vetor)
     if (t->pai != PID_KERNEL && pai->estado == ESTADO_ESPERANDO && pai->alvo == pid) {
         acordar(pai, codigo);
         t->estado = ESTADO_LIVRE;
+    } else if (t->pai != PID_KERNEL && pai->estado == ESTADO_ESPERANDO && pai->alvo == 0) {
+        acordar(pai, ((long)pid << 16) | (codigo & 0xFFFF));   /* "qualquer filho" */
+        t->estado = ESTADO_LIVRE;
     } else if (pid_vivo(t->pai)) {
         t->estado = ESTADO_ZUMBI;
     } else {
@@ -1199,7 +1224,23 @@ static long syscall_executar(quadro_t *q)
         return processo_executar(eu, a);
 
     case SYS_ESPERAR: {
-        if (a == 0 || a >= MAX_TAREFAS || tarefas[a].pai != atual ||
+        if (a == 0) {                                /* qualquer filho (o wait()) */
+            int tem_filho = 0;
+            for (u32 f = 1; f < MAX_TAREFAS; f++) {
+                if (tarefas[f].pai != atual || f == atual || tarefas[f].estado == ESTADO_LIVRE)
+                    continue;
+                if (tarefas[f].estado == ESTADO_ZUMBI) {
+                    tarefas[f].estado = ESTADO_LIVRE;
+                    return ((long)f << 16) | (tarefas[f].codigo_saida & 0xFFFF);
+                }
+                tem_filho = 1;
+            }
+            if (!tem_filho) return ERRO_PID;
+            eu->estado = ESTADO_ESPERANDO;
+            eu->alvo   = 0;
+            return 0;
+        }
+        if (a >= MAX_TAREFAS || tarefas[a].pai != atual ||
             tarefas[a].estado == ESTADO_LIVRE)
             return ERRO_PID;                         /* não é meu filho */
         if (tarefas[a].estado == ESTADO_ZUMBI) {     /* já terminou */
@@ -1314,6 +1355,7 @@ static _Noreturn void kernel_panico(const quadro_t *q)
 
 quadro_t *interrupt_dispatch(quadro_t *q)
 {
+    u32 anterior = atual;
     tarefas[atual].quadro = q;
     int trocar = 0;
 
@@ -1359,6 +1401,17 @@ quadro_t *interrupt_dispatch(quadro_t *q)
     }
     if (t->pilha_nucleo)
         tss_definir_rsp0((u64)t->pilha_nucleo + PILHA_NUCLEO_TAM);
+
+    /* Ponto flutuante: o núcleo não usa a FPU nem o SSE, então os
+     * registradores continuam sendo do processo que rodou por último.
+     * Só na troca é preciso guardar os dele e trazer os do próximo. */
+    tarefa_t *ant = &tarefas[anterior];
+    if (atual != anterior && ant->fpu && !ant->fpu_limpa)
+        cpu_fpu_salvar((u64)ant->fpu);
+    if (t->fpu && (atual != anterior || t->fpu_limpa)) {
+        cpu_fpu_restaurar((u64)t->fpu);
+        t->fpu_limpa = 0;
+    }
 
     if (t->entregar) {                           /* última etapa do IPC */
         mem_copia((void *)t->msg_usuario, &t->caixa, sizeof(msg_t));
@@ -1428,6 +1481,7 @@ void kernel_main(u64 magic, u64 mbi_endereco)
     }
 
     tss_iniciar();
+    fpu_iniciar();
     idt_iniciar();
     term_status(1, "IDT: 32 excecoes + 16 IRQs + int 0x80 (syscalls)");
 

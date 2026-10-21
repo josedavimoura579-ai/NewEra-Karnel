@@ -110,10 +110,18 @@ typedef struct {
 #define ARQ_MODO_ESCREVER  2     /* cria ou apaga o conteúdo */
 #define ARQ_MODO_ANEXAR    3     /* cria ou escreve no fim  */
 
-/* Pipes */
-#define TUBO_CRIAR         50    /* resposta: arg[0] = canal               */
-#define TUBO_FECHAR_ESCRITA 51   /* arg[0] = canal: quem lê recebe o fim    */
-#define TUBO_LIBERAR       52    /* arg[0] = canal                          */
+/* Pipes. Cada ponta (leitura, escrita) conta quantas referências abertas
+ * ela tem. Sem escritores, quem lê recebe o fim; sem leitores, quem escreve
+ * recebe erro; sem nenhum dos dois, o tubo é liberado. */
+#define TUBO_CRIAR         50    /* resposta: arg[0] = canal (1 leitor e 1 escritor) */
+#define TUBO_ABRIR         51    /* arg[0] = canal, arg[1] = TUBO_LEITURA ou TUBO_ESCRITA */
+#define TUBO_FECHAR        52    /* arg[0] = canal, arg[1] = a ponta       */
+#define TUBO_LEITURA       0
+#define TUBO_ESCRITA       1
+/* Num canal de pipe passado a um filho, este bit diz: "a referência é sua,
+ * feche ao terminar" (a libc faz isso no exit). O shell não liga o bit:
+ * ele mesmo fecha as pontas depois que os filhos terminam. */
+#define CANAL_DONO         0x80000000u
 
 #define MSG_OK             99
 #define MSG_ERRO           98    /* arg[0] = -ERRO_* (o código, positivo)   */

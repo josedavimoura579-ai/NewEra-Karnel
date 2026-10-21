@@ -280,19 +280,24 @@ static void rodar(comando_t *cmds, u32 n)
             escreve(pids[i] == ERRO_NAO_ACHADO ? "\nDigite 'ajuda' ou 'ls /bin'.\n" : "\n",
                     COR(COR_CINZA_CLARO));
             if (i > 0 && tubos[i - 1] >= 0) {     /* ninguém vai ler: solta quem escreve */
-                tubo_liberar((u32)tubos[i - 1]);
+                tubo_fechar((u32)tubos[i - 1], TUBO_LEITURA);
+                tubo_fechar((u32)tubos[i - 1], TUBO_ESCRITA);
                 tubos[i - 1] = -1;
             }
         }
     }
 
-    /* Espera na ordem; quando quem escreve num pipe termina, fecha a
-     * escrita para quem lê receber o "acabou". */
+    /* Espera na ordem. O shell guarda as duas pontas de cada pipe: quando
+     * quem escreve termina, ele fecha a escrita (quem lê recebe o "acabou");
+     * quando quem lê termina, fecha a leitura, e o pipe é liberado. Os
+     * avisos só aparecem no fim, para não se misturar com a saída. */
+    long codigos[MAX_COMANDOS];
     for (u32 i = 0; i < n; i++) {
-        if (pids[i] >= 0) avisar_fim(cmds[i].argv[0], sys_esperar((u32)pids[i]));
-        if (tubos[i] >= 0) tubo_fechar_escrita((u32)tubos[i]);
+        codigos[i] = pids[i] >= 0 ? sys_esperar((u32)pids[i]) : 0;
+        if (tubos[i] >= 0) tubo_fechar((u32)tubos[i], TUBO_ESCRITA);
+        if (i > 0 && tubos[i - 1] >= 0) tubo_fechar((u32)tubos[i - 1], TUBO_LEITURA);
     }
-    for (u32 i = 0; i < n; i++) if (tubos[i] >= 0) tubo_liberar((u32)tubos[i]);
+    for (u32 i = 0; i < n; i++) if (pids[i] >= 0) avisar_fim(cmds[i].argv[0], codigos[i]);
     for (u32 i = 0; i < n_abertos; i++) arq_fechar((u32)abertos[i]);
 }
 

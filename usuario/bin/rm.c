@@ -8,10 +8,9 @@ int main(int argc, char **argv)
     int erro = 0;
     for (int i = 1; i < argc; i++) {
         if (arq_apagar(argv[i]) < 0) {
-            escreve("rm: nao consegui apagar (nao existe ou e pasta com arquivos): ",
-                    COR(COR_VERMELHO_CLARO));
-            escreve(argv[i], COR(COR_BRANCO));
-            escreve("\n", 0);
+            escreve_erro("rm: nao consegui apagar (nao existe ou e pasta com arquivos): ");
+            escreve_erro(argv[i]);
+            escreve_erro("\n");
             erro = 1;
         }
     }

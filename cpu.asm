@@ -44,6 +44,34 @@ mem_le16:
     movzx eax, word [rdi]
     ret
 
+; void cpu_fpu_ligar(void)
+; Liga a FPU e o SSE (os registradores de ponto flutuante dos programas):
+; CR0.EM = 0 (sem emulação), CR0.MP = 1, CR0.TS = 0; CR4.OSFXSR e
+; CR4.OSXMMEXCPT = 1 (o sistema sabe salvar o SSE com FXSAVE).
+global cpu_fpu_ligar
+cpu_fpu_ligar:
+    mov rax, cr0
+    and rax, ~((1 << 2) | (1 << 3))
+    or rax, 1 << 1
+    mov cr0, rax
+    mov rax, cr4
+    or rax, (1 << 9) | (1 << 10)
+    mov cr4, rax
+    fninit
+    ret
+
+; void cpu_fpu_salvar(u64 area) / cpu_fpu_restaurar(u64 area)
+; Os 512 bytes de estado da FPU + SSE de um processo (área alinhada em 16).
+global cpu_fpu_salvar
+cpu_fpu_salvar:
+    fxsave [rdi]
+    ret
+
+global cpu_fpu_restaurar
+cpu_fpu_restaurar:
+    fxrstor [rdi]
+    ret
+
 ; void cpu_carregar_cr3(u64 pml4)   - troca o espaço de endereçamento
 global cpu_carregar_cr3
 cpu_carregar_cr3:
