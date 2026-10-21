@@ -123,7 +123,7 @@ Compile com `bash build.sh`, rode no QEMU, digite `ola` e aperte Enter. Repare q
 
 ## Especificação técnica
 
-Estado atual: **NovaEra Microkernel v3.0** (alfa).
+Estado atual: **NovaEra Microkernel v3.1** (alfa).
 
 | Componente | Detalhes |
 |---|---|
@@ -135,18 +135,22 @@ Estado atual: **NovaEra Microkernel v3.0** (alfa).
 | **Segmentação (GDT)** | Código de 64 bits e dados do núcleo (`0x08`/`0x10`, anel 0) e do usuário (`0x1B`/`0x23`, anel 3), mais a TSS de 64 bits (`0x28`, 16 bytes) |
 | **Memória física** | Lê `mem_upper` do Multiboot; quadros de 4 KiB acima do núcleo numa lista livre encadeada (alocar e liberar em O(1)); até 1 GiB |
 | **Paginação** | 4 níveis (PML4 → PDPT → PD → PT), um espaço de endereçamento por processo. O 1º GiB é do núcleo (páginas de 2 MiB), presente em todos os processos mas só para o anel 0. Programa a partir de `0x40000000`, heap logo depois (até `0x60000000`), pilha de até 1 MiB abaixo de `0x7FFFF000`, que cresce sob demanda (falha de página na pilha = página nova) |
-| **Processos** | Até 32. PID 0 = núcleo (ocioso, `hlt`), 1 = vídeo, 2 = teclado, 3 = shell; os outros são criados com `CRIAR`. Cada um tem pilha de núcleo própria (a TSS aponta para ela), pai, código de saída e o estado zumbi até o pai chamar `ESPERAR` |
-| **Programas** | **ELF de 64 bits**: os servidores do boot vêm embutidos no `kernel.bin`; os outros vêm do **initrd** (`initrd.tar`, um módulo Multiboot entregue pelo GRUB ou por `qemu -initrd`). Recebem `main(argc, argv)` e devolvem o código de saída |
+| **Processos** | Até 32. PID 0 = núcleo (ocioso, `hlt`), 1 = vídeo, 2 = teclado, 3 = shell, 4 = arquivos, 5 = terminal, 6 = pipes; os outros são criados com `CRIAR`. Cada um tem pilha de núcleo própria (a TSS aponta para ela), pai, código de saída e o estado zumbi até o pai chamar `ESPERAR` |
+| **Programas** | **ELF de 64 bits**: os servidores do boot vêm embutidos no `kernel.bin`; os comandos ficam em `/bin`, no servidor de arquivos. Para executar um, quem cria lê o ELF do servidor de arquivos e entrega os bytes ao núcleo (`CRIAR`): **o núcleo não sabe o que é um arquivo**. Recebem `main(argc, argv)`, a entrada e a saída padrão e a pasta atual (herdadas do pai) e devolvem o código de saída |
+| **Arquivos** (PID 4) | Servidor no anel 3: pastas e arquivos na memória (ramfs). Monta a árvore a partir do **initrd** (`initrd.tar`, um módulo Multiboot do GRUB ou de `qemu -initrd`), que o núcleo mapeia só para ele, só para leitura. Arquivos do initrd são copiados na primeira escrita. Abrir, ler, escrever, anexar, listar, criar pasta, apagar. `/bin`, `/etc` e `/tmp` |
+| **Terminal** (PID 5) | O TTY, no anel 3: recebe as teclas do driver de teclado, edita a linha (Backspace), mostra o eco e entrega linhas inteiras a quem lê. **Ctrl+D** numa linha vazia = fim da entrada. É a entrada e a saída padrão de todo programa não redirecionado |
+| **Pipes** (PID 6) | Servidor no anel 3: tubos de 4 KiB; escrever num tubo cheio e ler de um vazio só adiam a resposta. O mesmo protocolo (`MSG_LER`/`MSG_ESCREVER`) vale para terminal, pipes e arquivos |
 | **Escalonador** | Preemptivo, *round-robin*, com o timer PIT a **100 Hz** (IRQ 0) |
-| **Chamadas de sistema** | `int 0x80` (única porta da IDT com DPL 3): `ENVIAR`, `RECEBER`, `CHAMAR`, `RESPONDER`, `CEDER`, `IRQ_ASSINAR`, `TEMPO`, `TAREFA_INFO`, `MEMORIA`, `SAIR`, `CRIAR`, `ESPERAR`, `SBRK`, `PID`, `INITRD_INFO`. Todo ponteiro recebido é conferido nas tabelas de página antes de o núcleo tocar nele |
+| **Chamadas de sistema** | `int 0x80` (única porta da IDT com DPL 3): `ENVIAR`, `RECEBER`, `CHAMAR`, `RESPONDER`, `CEDER`, `IRQ_ASSINAR`, `TEMPO`, `TAREFA_INFO`, `MEMORIA`, `SAIR`, `CRIAR`, `ESPERAR`, `SBRK`, `PID`, `INITRD`, `COPIAR_PARA`, `COPIAR_DE` (um servidor copia dados direto da/para a memória de quem o chamou e espera a resposta), `AMBIENTE`, `PASTA`, `NUCLEO` (como o `uname`). Todo ponteiro recebido é conferido nas tabelas de página antes de o núcleo tocar nele |
 | **IPC** | Síncrono, por mensagens de 80 bytes copiadas pelo núcleo entre espaços de endereçamento (estilo L4/MINIX). `RESPONDER` nunca bloqueia, para que um servidor não fique refém de um cliente |
 | **Interrupções** | IRQ 0 é do núcleo. As outras viram **mensagens `MSG_IRQ`** para o driver que as assinou; o PIC só libera uma IRQ quando alguém a assina |
-| **Drivers** | No anel 3 com IOPL 3 (podem usar `in`/`out`). **Vídeo**: o único processo com `0xB8000` mapeado. **Teclado**: PS/2 *set 1*, layout US, Shift e Caps Lock, também faz o `reboot` pela porta `0x64` |
+| **Drivers** | No anel 3 com IOPL 3 (podem usar `in`/`out`). **Vídeo**: o único processo com `0xB8000` mapeado. Converte UTF-8 para CP437 (os acentos do português aparecem). **Teclado**: PS/2 *set 1*, layout US, Shift, Ctrl e Caps Lock; entrega as teclas ao terminal e faz o `reboot` pela porta `0x64` |
 | **Supervisão** | Uma exceção no anel 3 encerra só o processo culpado, devolve a memória dele e o recarrega (até 5 vezes), avisando-o do motivo. Uma exceção no anel 0 mostra o painel vermelho de pânico |
-| **Shell (anel 3)** | `ajuda` · `limpar` · `ps` · `mem` · `tempo` · `sobre` · `programas` · `invadir` (demonstra a proteção de memória) · `reboot`. Qualquer outro nome executa `bin/<nome>` do initrd, com argumentos |
-| **Programas do initrd** (`usuario/bin/`) | `ola` (mostra os argumentos) · `codigo N` (sai com o código N) · `memoria [MiB]` (testa o heap e a pilha) · `falha` (um programa com bug, isolado pelo núcleo) · `filho` (cria outro processo e espera por ele) |
+| **Shell (anel 3)** | Internos: `ajuda` · `cd` · `pwd` · `limpar` · `ps` · `mem` · `tempo` · `sobre` · `invadir` (demonstra a proteção de memória) · `reboot`. Qualquer outro nome executa `/bin/<nome>`, com argumentos, **pipes** (`a \| b`, até 4) e **redirecionamentos** (`>`, `>>`, `<`). O prompt mostra a pasta atual |
+| **Comandos** (`/bin`, de `usuario/bin/`) | `ls` · `cat` · `echo` · `mkdir` · `rm` · **`novafetch`** (o neofetch do NovaEra) · `ola` · `codigo N` · `memoria [MiB]` · `falha` · `filho` |
 | **Linguagens** | Assembly NASM + C11 *freestanding*, sem assembly embutido nem atributos de compilador: compila com o clang (`CC=clang`, padrão) ou com o cproc + QBE do NEFS (`CC=cproc`). Liga com `ld.lld` ou com o `ld` do binutils |
-| **Configuração** | `sistema.conf` (nome, versão, lema, prompt) e `programas.lista` (processos e permissões); o `build.sh` gera `build/sistema.h`, `build/programas.h` e `build/programas.asm` |
+| **Versões** | O **núcleo** tem a sua (`NOVAERA_VERSAO` em `novaera.h`, hoje 3.1); a **distribuição** tem a dela em `sistema.conf`. No NovaEra puro (`PURO="sim"`) não há distribuição, e o banner e o `novafetch` mostram a versão do núcleo |
+| **Configuração** | `sistema.conf` (nome, versão, lema, prompt, puro) e `logo.txt` (a identidade, como o `/etc/os-release` do Linux) e `programas.lista` (servidores e permissões); o `build.sh` gera `build/sistema.h`, `build/programas.h`, `build/programas.asm` e, no initrd, `/etc/sistema` e `/etc/logo.txt` |
 | **Dependências em tempo de execução** | Nenhuma. Sem libc; os `#include` são a ABI (`novaera.h`) e os arquivos gerados pelo build |
 
 ### Por que agora é um microkernel
@@ -154,14 +158,17 @@ Estado atual: **NovaEra Microkernel v3.0** (alfa).
 Num núcleo **monolítico** (como era o NovaEra 1.0, e como é o Linux), drivers e serviços rodam dentro do núcleo, com poder total: um bug no driver de teclado derruba tudo. Num **microkernel**, o núcleo faz só o indispensável, e todo o resto vira processo comum:
 
 ```
-   anel 3 │  ┌────────┐  mensagens  ┌─────────┐  mensagens  ┌─────────┐
-(usuário) │  │ shell  │ ──────────► │  vídeo  │             │ teclado │
-          │  │ PID 3  │ ◄────────────────────────────────── │  PID 2  │
-          │  └────────┘                                     └─────────┘
-          │        │ int 0x80                                    ▲ MSG_IRQ
-   ───────┼────────┼─────────────────────────────────────────────┼──────
-   anel 0 │        ▼          NovaEra Microkernel                │
- (núcleo) │   memória · paginação · processos · escalonador · IPC · IRQ 1
+   anel 3 │  ┌────────┐    ┌──────────┐    ┌───────┐    ┌─────────┐
+(usuário) │  │ shell  │◄──►│ terminal │───►│ vídeo │    │ teclado │
+          │  │ ls cat │    │  (TTY)   │◄───────────────┤         │
+          │  └───┬────┘    └──────────┘    └───────┘    └────▲────┘
+          │      │ mensagens: arquivos, pipes                 │ MSG_IRQ
+          │  ┌───▼──────┐  ┌───────┐                          │
+          │  │ arquivos │  │ pipes │                          │
+          │  └──────────┘  └───────┘                          │
+   ───────┼───────── int 0x80 ────────────────────────────────┼──────
+   anel 0 │               NovaEra Microkernel                 │
+ (núcleo) │   memória · paginação · processos · escalonador · IPC · IRQ
 ```
 
 Experimente no shell:
@@ -171,7 +178,7 @@ Experimente no shell:
 
 ### O que o NovaEra **ainda não** tem
 
-Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), servidor de arquivos e terminal (Etapa 2 da [Fase 3](nefs/FASE3.md)),  mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, driver de disco e sistema de arquivos. Veja o [Roteiro](#roteiro).
+Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), uma libc (Etapa 3 da [Fase 3](nefs/FASE3.md)), mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, driver de disco (hoje os arquivos somem ao desligar), usuários e permissões. Veja o [Roteiro](#roteiro).
 
 ### Estrutura do repositório
 
@@ -179,7 +186,8 @@ Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor d
 novaera-kernel/
 ├── novaera.h         # A ABI: syscalls, mensagens, PIDs, mapa de memória
 ├── sistema.conf      # Nome, versão, lema e prompt do sistema
-├── programas.lista   # Os processos que o núcleo inicia no boot
+├── programas.lista   # Os servidores que o núcleo inicia no boot
+├── logo.txt          # O logo do sistema (o novafetch mostra)
 ├── boot.asm          # Multiboot, GDT/TSS, stubs, int 0x80, troca de contexto (NASM)
 ├── cpu.asm           # Instruções especiais da CPU como funções (NASM)
 ├── kernel.c          # O microkernel: memória, paginação, processos, ELF, IPC (C puro)
@@ -191,7 +199,10 @@ novaera-kernel/
 │   ├── video.c       #   servidor de vídeo (PID 1)
 │   ├── teclado.c     #   driver de teclado PS/2 (PID 2)
 │   ├── shell.c       #   o shell (PID 3)
-│   └── bin/          #   os programas do initrd (ola, codigo, memoria, falha, filho)
+│   ├── arquivos.c    #   servidor de arquivos, ramfs (PID 4)
+│   ├── terminal.c    #   o terminal / TTY (PID 5)
+│   ├── tubos.c       #   os pipes (PID 6)
+│   └── bin/          #   os comandos: ls, cat, echo, mkdir, rm, novafetch...
 ├── build.sh          # Compila os programas, embute-os e liga o kernel.bin
 ├── nefs/             # O NEFS: comando nefs, Livro do NEFS e a ISO (separado do núcleo)
 ├── run.sh            # Atalho para rodar no QEMU (pensado para o Termux)
@@ -285,7 +296,7 @@ Uma janela abre com um PC virtual. Em menos de um segundo você verá a tela azu
 
 ```
 ╔════════════════════════════════════════════════════════╗
-║  NovaEra Microkernel v3.0 x86_64 - A Nova Era Começou  ║
+║  NovaEra Microkernel v3.1 x86_64 - A Nova Era Começou  ║
 ╚════════════════════════════════════════════════════════╝
 ```
 
@@ -303,8 +314,13 @@ Clique dentro da janela do QEMU para dar foco ao teclado e digite:
 | `mem` | Mostra a memória física livre. |
 | `tempo` | Mostra há quanto tempo o sistema está ligado. |
 | `sobre` | Explica, em quatro linhas, o que é um microkernel. |
-| `programas` | Lista os programas do initrd. |
-| `ola um dois` | Executa o programa `bin/ola` do initrd, que mostra os argumentos. Qualquer programa do initrd roda assim, pelo nome. |
+| `ls /bin` | Lista os comandos. `ls`, `cat`, `echo`, `mkdir` e `rm` funcionam como no Linux. |
+| `novafetch` | O logo e as informações do sistema, como o neofetch. |
+| `cd /etc` · `cat sistema` | Muda de pasta (o prompt mostra onde você está) e mostra um arquivo. |
+| `echo oi > /tmp/a` · `cat /tmp/a` | Grava num arquivo e lê de volta (`>>` anexa, `<` lê de um arquivo). |
+| `ls /bin \| cat` | Um pipe: a saída do `ls` vira a entrada do `cat`. |
+| `cat` | Repete o que você digita; **Ctrl+D** termina. |
+| `ola um dois` | Um programa que mostra os argumentos que recebeu. |
 | `filho` | Um programa que cria outro processo e espera ele terminar. |
 | `falha` | Um programa com bug: o núcleo o encerra e o shell segue em frente. |
 | `invadir` | O shell tenta ler a memória do núcleo, é encerrado e reiniciado. |
@@ -361,10 +377,11 @@ bash run.sh            # tela de texto dentro do Termux; use "bash run.sh vnc" p
 - [ ] Servidor de nomes (sem PIDs fixos)
 - [ ] Mapa de portas de E/S por driver (TSS *I/O bitmap*)
 - [ ] Memória compartilhada entre processos
-- [ ] Carregar programas como módulos Multiboot / do disco
+- [x] Programas ELF, initrd (módulo Multiboot), criação de processos com argumentos
+- [x] Servidores de arquivos (ramfs), terminal (TTY) e pipes, no anel 3
+- [x] Imagem ISO inicializável (`nefs iso`, com GRUB)
 - [ ] **API estável do NovaEra Core** para sistemas derivados (NEFS)
-- [ ] Driver de disco e sistema de arquivos (como servidores)
-- [ ] Imagem ISO inicializável
+- [ ] Driver de disco e sistema de arquivos persistente (como servidores)
 
 ### Roteiro do NEFS: o compilador
 
@@ -377,11 +394,18 @@ arquivo .c → cproc → QBE → assembler → linker → programa do NovaEra
 O QBE gera código para x86_64, e foi por isso que o NovaEra passou para 64 bits.
 
 - [x] **Fase 1** — a ISO do NEFS: um Linux mínimo com cproc + QBE, o comando `nefs` e o Livro 1. Veja [`nefs/README.md`](nefs/README.md)
-- [ ] **Fase 2** — preparar o núcleo: programas ELF, sistema de arquivos, criação de processos e uma libc mínima
+- [x] **Fase 2** — preparar o núcleo (ELF, arquivos, processos, libc): virou as Etapas 1 a 3 da Fase 3
 - [ ] **Fase 3** — o NEFS rodando 100% sobre o NovaEra, sem Linux. Plano em 8 etapas: [`nefs/FASE3.md`](nefs/FASE3.md)
   - [x] Etapa 1 — programas ELF, initrd, heap, pilha sob demanda, criar/esperar processos
-  - [ ] Etapa 2 — servidores de arquivos e terminal
+  - [x] Etapa 2 — servidores de arquivos, terminal e pipes; `ls`, `cat`, `echo`, `mkdir`, `rm`, `novafetch`
   - [ ] Etapas 3 a 8 — libc, QBE, assembler/ligador, cproc, autossuficiência, ISO
+
+### Fases futuras (depois da Fase 3)
+
+- [ ] **Usuários e permissões**: dono de arquivo, usuário comum e administrador (o que permitiria um `sudo`)
+- [ ] **Rede**: driver de placa de rede e TCP/IP, como servidores no anel 3
+- [ ] **Pacotes**: um formato de pacote e um gerenciador (o que permitiria um "apt" do NovaEra)
+- [ ] **Interface gráfica**: modo gráfico, mouse, janelas e fontes, como mais um servidor
 
 ---
 

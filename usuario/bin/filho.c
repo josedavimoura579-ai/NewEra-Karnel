@@ -1,6 +1,6 @@
 /*
  * usuario/bin/filho.c - um programa que cria outro: executa "ola" com
- * argumentos e espera ele terminar (SYS_CRIAR + SYS_ESPERAR).
+ * argumentos e espera ele terminar (executar() + SYS_ESPERAR).
  */
 #include "ulib.h"
 
@@ -8,7 +8,7 @@ int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
     char *args[] = { "ola", "vim", "do", "filho", 0 };
-    long pid = sys_criar("bin/ola", args);
+    long pid = executar("/bin/ola", args, 0, 0, 0, 0);
     if (pid < 0) {
         escreve("nao consegui criar o processo\n", COR(COR_VERMELHO_CLARO));
         return 1;

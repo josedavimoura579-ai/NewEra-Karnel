@@ -38,11 +38,21 @@ Cada etapa termina com algo testável no QEMU e vira um pull request.
   - memória maior por processo: **heap** (`SYS_SBRK`) e pilha que cresce sob demanda (até 1 MiB)
   - **criar processo** com argumentos, **terminar** com código de saída e **esperar** o filho
   - *Teste: o shell executa programas do initrd, com argumentos e código de saída.*
-- [ ] **Etapa 2 — servidores de arquivos e terminal** (anel 3)
-  - servidor de arquivos (VFS) com ramfs a partir do initrd; a criação de
-    processos passa a receber o executável dele
-  - servidor de terminal: entrada e saída padrão sobre vídeo e teclado, e pipes
-  - *Teste: `ls`, `cat`, `echo > arquivo`.*
+- [x] **Etapa 2 — servidores de arquivos, terminal e pipes** (anel 3)
+  - servidor de **arquivos** (ramfs) montado a partir do initrd, que o núcleo
+    mapeia só para ele; o núcleo deixou de ler tar: a criação de processos
+    recebe o ELF já lido por quem cria
+  - **terminal** (TTY): edição de linha, eco, Ctrl+D; o teclado entrega as
+    teclas a ele
+  - **pipes**, e o mesmo protocolo de leitura/escrita para terminal, pipes
+    e arquivos; entrada/saída padrão e pasta atual herdadas pelos filhos
+  - `SYS_COPIAR_PARA`/`SYS_COPIAR_DE`: um servidor copia dados direto da/para
+    quem o chamou
+  - shell com `cd`, `pwd`, `|`, `>`, `>>`, `<`; comandos `ls`, `cat`, `echo`,
+    `mkdir`, `rm` e **`novafetch`**
+  - versão do núcleo separada da versão da distribuição (`PURO`, `logo.txt`,
+    `/etc/sistema`); o vídeo mostra acentos (UTF-8 → CP437)
+  - *Teste: `ls /bin | cat`, `echo oi > /tmp/a`, `cat < /tmp/a`, `novafetch`.*
 - [ ] **Etapa 3 — a libc do NovaEra ("nlibc")**
   - `malloc`, `stdio`, `string`, `ctype`, `stdlib`, `getopt`, `errno`,
     `posix_spawnp`, `pipe`, `waitpid`, por cima das mensagens

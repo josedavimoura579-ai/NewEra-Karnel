@@ -7,11 +7,36 @@ NOME="Sistema da Maria"
 VERSAO="0.1"
 LEMA="feito com o NEFS sobre o NovaEra"
 PROMPT="Maria"
+PURO="nao"
 ```
 
 O nome, a versão e o lema aparecem na moldura do boot, e o prompt
-aparece no shell (`Maria>`). Acentos funcionam: a tela VGA usa a
-tabela CP437, e o `build.sh` converte o que for possível.
+aparece no shell (`Maria:/>`). Acentos funcionam: a tela VGA usa a
+tabela CP437, e o NovaEra converte o que for possível.
+
+## O seu sistema é uma distribuição
+
+É como no Linux: o kernel Linux não sabe se ele é um Ubuntu ou um
+Debian; quem diz isso é o arquivo `/etc/os-release` da distribuição. No
+NovaEra, o `sistema.conf` faz esse papel. O núcleo tem a versão dele
+(`NOVAERA_VERSAO`, em `novaera.h`), e o seu sistema tem a dele.
+
+- O `sistema.conf` do NovaEra puro diz `PURO="sim"`: não há distribuição.
+- O de um sistema criado com `nefs novo` diz `PURO="nao"`.
+
+O `build.sh` copia essa identidade para o `/etc/sistema` do seu sistema,
+e o logo (o arquivo `logo.txt`) para `/etc/logo.txt`. Desenhe o seu logo
+em `logo.txt`, compile e digite `novafetch` no shell:
+
+```
+  +-----------------+     Sistema da Maria
+  |   seu logo      |     Sistema:   Sistema da Maria 0.1
+  |   aqui :)       |     Núcleo:    NovaEra 3.1 x86_64
+  +-----------------+     ...
+```
+
+O `novafetch` mostra as duas coisas, cada uma no seu lugar: o seu
+sistema e o núcleo por baixo dele.
 
 Mude, compile e rode de novo:
 

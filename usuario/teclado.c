@@ -4,8 +4,10 @@
  *  Driver de teclado PS/2 fora do núcleo. O núcleo não sabe o que é uma
  *  tecla: ele só transforma a IRQ 1 numa mensagem MSG_IRQ para este driver.
  *
+ *  Cada tecla vira um caractere, que é entregue ao terminal (MSG_TECLA).
+ *  Quem decide o que fazer com ela (eco, edição da linha) é o terminal.
+ *
  *  Protocolo:
- *    MSG_TECLADO_LER  -> responde com arg[0] = caractere (espera se preciso)
  *    MSG_REINICIAR    -> reinicia o computador pela porta 0x64
  * ===========================================================================
  */
@@ -44,7 +46,7 @@ static void fila_empurra(char c)
     fila_fim = prox;
 }
 
-static u8 kb_shift, kb_caps, kb_estendido;
+static u8 kb_shift, kb_ctrl, kb_caps, kb_estendido;
 
 static void scancode(u8 sc)
 {
@@ -54,10 +56,12 @@ static void scancode(u8 sc)
     if (sc & 0x80) {                                       /* tecla SOLTA */
         u8 solta = sc & 0x7F;
         if (solta == 0x2A || solta == 0x36) kb_shift = 0;
+        if (solta == 0x1D) kb_ctrl = 0;
         return;
     }
 
     if (sc == 0x2A || sc == 0x36) { kb_shift = 1; return; }    /* Shift esq/dir */
+    if (sc == 0x1D)               { kb_ctrl = 1;  return; }    /* Ctrl esquerdo */
     if (sc == 0x3A)               { kb_caps ^= 1; return; }    /* Caps Lock */
     if (sc >= sizeof(MAPA_NORMAL)) return;
 
@@ -65,6 +69,9 @@ static void scancode(u8 sc)
     char c = kb_shift ? MAPA_SHIFT[sc] : base;
     if (kb_caps && base >= 'a' && base <= 'z')
         c = kb_shift ? base : MAPA_SHIFT[sc];
+
+    /* Ctrl+letra vira o código de controle ASCII: Ctrl+D = 4 ("fim"). */
+    if (kb_ctrl && base >= 'a' && base <= 'z') c = (char)(base - 'a' + 1);
 
     if (c) fila_empurra(c);
 }
@@ -76,21 +83,18 @@ static void reiniciar(void)
     outb(TECLADO_STATUS, 0xFE);            /* comando 0xFE: pulsa a linha RESET da CPU */
 }
 
-/* Quem está esperando uma tecla (0 = ninguém). */
-static u32 leitor;
-
-static void atender_leitor(void)
+/* Entrega ao terminal as teclas que estão na fila. Se o terminal estiver
+ * reiniciando, a tecla fica na fila para a próxima vez. */
+static void entregar_teclas(void)
 {
-    if (!leitor || fila_ini == fila_fim) return;
-
-    msg_t r;
-    msg_zera(&r);
-    r.tipo   = MSG_OK;
-    r.arg[0] = (u8)fila[fila_ini];
-    /* Se o leitor desistiu (morreu, foi reiniciado), a tecla fica na fila. */
-    if (sys_responder(leitor, &r) == 0)
+    while (fila_ini != fila_fim) {
+        msg_t m;
+        msg_zera(&m);
+        m.tipo   = MSG_TECLA;
+        m.arg[0] = (u8)fila[fila_ini];
+        if (sys_enviar(PID_TERMINAL, &m) < 0) return;
         fila_ini = (fila_ini + 1) & (FILA_TAM - 1);
-    leitor = 0;
+    }
 }
 
 int main(int argc, char **argv)
@@ -108,11 +112,9 @@ int main(int argc, char **argv)
         if (m.origem == PID_KERNEL && m.tipo == MSG_IRQ) {
             while (inb(TECLADO_STATUS) & 0x01)
                 scancode(inb(TECLADO_DADOS));
-        } else if (m.tipo == MSG_TECLADO_LER) {
-            leitor = m.origem;
         } else if (m.tipo == MSG_REINICIAR) {
             reiniciar();
         }
-        atender_leitor();
+        entregar_teclas();
     }
 }

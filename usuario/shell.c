@@ -1,43 +1,24 @@
 /*
  * ===========================================================================
  *  NovaEra - usuario/shell.c   (PID 3, anel 3)
- *  O shell é um programa comum: não enxerga a tela nem o teclado.
- *  Para escrever, manda mensagem ao servidor de vídeo; para ler uma
- *  tecla, faz uma chamada ao driver de teclado. Um comando que ele não
- *  conhece é procurado no initrd (bin/<comando>) e executado como um
- *  processo filho.
+ *  O shell é um programa comum: não enxerga a tela nem o teclado. Ele lê
+ *  linhas do terminal (a entrada padrão), escreve no terminal (a saída
+ *  padrão) e executa os programas que o servidor de arquivos guarda em
+ *  /bin, ligando a entrada e a saída deles a pipes e arquivos:
+ *
+ *      ls /bin | cat         echo oi > /tmp/a         cat < /tmp/a
  * ===========================================================================
  */
 #include "ulib.h"
 #include "sistema.h"      /* gerado de sistema.conf pelo build.sh */
 
-/* ------------------------- Conversa com os servidores -------------------- */
-
-/* Escreve s e completa com espaços até 'largura' colunas. */
 static void escreve_coluna(const char *s, u32 largura, u8 cor)
 {
     escreve(s, cor);
     for (u32 i = str_tam(s); i < largura; i++) escreve(" ", cor);
 }
 
-static void limpar_tela(void)
-{
-    msg_t m;
-    msg_zera(&m);
-    m.tipo = MSG_VIDEO_LIMPAR;
-    sys_enviar(PID_VIDEO, &m);
-}
-
-static char ler_tecla(void)
-{
-    msg_t m;
-    msg_zera(&m);
-    m.tipo = MSG_TECLADO_LER;
-    if (sys_chamar(PID_TECLADO, &m) < 0) return 0;   /* driver reiniciando */
-    return (char)m.arg[0];
-}
-
-/* ------------------------------- Comandos -------------------------------- */
+/* ---------------------------- Comandos internos --------------------------- */
 
 static const char *const ESTADOS[] = {
     "livre", "pronto", "enviando", "recebendo", "morto", "esperando", "zumbi"
@@ -52,17 +33,19 @@ static const char *const EXCECOES[] = {
 static void cmd_ajuda(void)
 {
     const u8 c = COR(COR_AMARELO), d = COR(COR_CINZA_CLARO);
-    escreve("  ajuda    ", c); escreve("esta lista\n", d);
+    escreve("Comandos do shell:\n", COR(COR_CIANO_CLARO));
+    escreve("  cd, pwd  ", c); escreve("muda / mostra a pasta atual\n", d);
     escreve("  limpar   ", c); escreve("limpa a tela\n", d);
     escreve("  ps       ", c); escreve("lista os processos\n", d);
     escreve("  mem      ", c); escreve("memoria fisica livre\n", d);
     escreve("  tempo    ", c); escreve("tempo desde o boot\n", d);
     escreve("  sobre    ", c); escreve("o que e um microkernel\n", d);
-    escreve("  programas", c); escreve(" lista os programas do initrd\n", d);
     escreve("  invadir  ", c); escreve("tenta ler a memoria do nucleo (e o shell morre!)\n", d);
     escreve("  reboot   ", c); escreve("reinicia o computador\n", d);
-    escreve("Outro nome executa bin/<nome> do initrd, com argumentos: ", d);
-    escreve("ola um dois\n", c);
+    escreve("Programas em /bin (veja: ls /bin):\n", COR(COR_CIANO_CLARO));
+    escreve("  ls cat echo mkdir rm novafetch ola codigo memoria falha filho\n", c);
+    escreve("Pipes e arquivos: ", COR(COR_CIANO_CLARO));
+    escreve("ls /bin | cat    echo oi > /tmp/a    cat < /tmp/a\n", c);
 }
 
 static void cmd_ps(void)
@@ -107,9 +90,9 @@ static void cmd_sobre(void)
 {
     const u8 d = COR(COR_CINZA_CLARO);
     escreve("NovaEra e um MICROKERNEL: o nucleo (anel 0) so cuida de memoria,\n", d);
-    escreve("processos, mensagens e interrupcoes. Video, teclado e este shell\n", d);
-    escreve("sao processos separados no anel 3, cada um na sua memoria, e\n", d);
-    escreve("conversam por mensagens. Se um deles falhar, o nucleo o reinicia.\n", d);
+    escreve("processos, mensagens e interrupcoes. Video, teclado, terminal,\n", d);
+    escreve("arquivos, pipes e este shell sao processos separados no anel 3,\n", d);
+    escreve("cada um na sua memoria, conversando por mensagens.\n", d);
 }
 
 static void cmd_invadir(void)
@@ -121,21 +104,6 @@ static void cmd_invadir(void)
     escreve("\n", COR(COR_VERMELHO_CLARO));
 }
 
-static void cmd_programas(void)
-{
-    msg_t m;
-    u32 i = 0;
-    for (; sys_initrd_info(i, &m) == 0; i++) {
-        escreve("  ", COR(COR_BRANCO));
-        escreve_coluna(m.texto, 24, COR(COR_AMARELO));
-        escreve_num(m.arg[0], COR(COR_BRANCO));
-        escreve(" bytes\n", COR(COR_CINZA_CLARO));
-    }
-    if (i == 0)
-        escreve("O initrd esta vazio ou nao foi carregado (qemu -initrd initrd.tar).\n",
-                COR(COR_CINZA_CLARO));
-}
-
 static void cmd_reboot(void)
 {
     escreve("Pedindo ao driver de teclado para reiniciar...\n", COR(COR_AMARELO));
@@ -145,63 +113,97 @@ static void cmd_reboot(void)
     sys_enviar(PID_TECLADO, &m);
 }
 
-/* --------------------------------- Shell --------------------------------- */
-
-#define LINHA_MAX 128u
-static char linha[LINHA_MAX + 1];
-
-static void ler_linha(void)
+static void cmd_limpar(void)
 {
-    u32 n = 0;
-    char eco[2] = { 0, 0 };
-
-    for (;;) {
-        char c = ler_tecla();
-        if (c == '\n') {
-            escreve("\n", COR(COR_BRANCO));
-            break;
-        } else if (c == '\b') {
-            if (n > 0) { n--; escreve("\b", COR(COR_BRANCO)); }
-        } else if (c >= 32 && c < 127 && n < LINHA_MAX) {
-            linha[n++] = c;
-            eco[0] = c;
-            escreve(eco, COR(COR_BRANCO));
-        }
-    }
-    linha[n] = '\0';
+    msg_t m;
+    msg_zera(&m);
+    m.tipo = MSG_VIDEO_LIMPAR;
+    sys_enviar(PID_VIDEO, &m);
 }
 
-/* Executa bin/<comando> do initrd e espera ele terminar. */
-static void programa_rodar(char **argv)
+static void cmd_cd(const char *destino)
 {
-    static char caminho[100];
-    const char *nome = argv[0];
-    u32 i = 0;
-    int tem_barra = 0;
-    for (u32 j = 0; nome[j]; j++) if (nome[j] == '/') tem_barra = 1;
-    if (!tem_barra) {                       /* "ola" -> "bin/ola" */
-        caminho[i++] = 'b'; caminho[i++] = 'i'; caminho[i++] = 'n'; caminho[i++] = '/';
-    }
-    for (u32 j = 0; nome[j] && i < sizeof(caminho) - 1; j++) caminho[i++] = nome[j];
-    caminho[i] = '\0';
-
-    long pid = sys_criar(caminho, argv);
-    if (pid == ERRO_NAO_ACHADO) {
-        escreve("Comando desconhecido: ", COR(COR_VERMELHO_CLARO));
-        escreve(nome, COR(COR_BRANCO));
-        escreve("\nDigite 'ajuda' ou 'programas'.\n", COR(COR_CINZA_CLARO));
+    char abs[CAMINHO_MAX];
+    if (!destino) destino = "/";
+    if (caminho_absoluto(destino, abs) < 0 || arq_info(abs, 0) != ARQ_TIPO_PASTA) {
+        escreve("cd: pasta nao encontrada: ", COR(COR_VERMELHO_CLARO));
+        escreve(destino, COR(COR_BRANCO));
+        escreve("\n", COR(COR_BRANCO));
         return;
     }
-    if (pid < 0) {
-        escreve("Nao consegui executar ", COR(COR_VERMELHO_CLARO));
-        escreve(caminho, COR(COR_BRANCO));
-        escreve(pid == ERRO_FORMATO ? ": nao e um programa ELF valido\n"
-                                    : ": sem memoria ou sem vaga para processos\n",
-                COR(COR_VERMELHO_CLARO));
-        return;
-    }
+    sys_pasta(abs);
+    str_copia(ambiente()->pasta, abs, CAMINHO_MAX);   /* a ulib guarda uma cópia */
+}
 
-    long codigo = sys_esperar((u32)pid);
+/* ------------------------- Interpretando a linha --------------------------
+ * A linha vira até 4 comandos ligados por '|'. Cada comando tem as suas
+ * palavras (argv) e, opcionalmente, '<' arquivo, '>' arquivo, '>>' arquivo. */
+
+#define LINHA_MAX     200u
+#define MAX_COMANDOS  4u
+
+typedef struct {
+    char *argv[ARGV_MAX + 1];
+    u32   argc;
+    char *entrada;              /* < arquivo */
+    char *saida;                /* > ou >> arquivo */
+    u32   anexar;
+} comando_t;
+
+static char linha[LINHA_MAX + 1];
+
+static int interpretar(comando_t *cmds, u32 *n)
+{
+    u32 k = 0;
+    mem_zera(cmds, sizeof(comando_t) * MAX_COMANDOS);
+    char *p = linha;
+    char **proximo_arquivo = 0;
+    for (;;) {
+        while (*p == ' ' || *p == '\n') *p++ = '\0';
+        if (!*p) break;
+        char *palavra = p;
+        while (*p && *p != ' ' && *p != '\n') p++;
+        if (*p) *p++ = '\0';
+
+        comando_t *c = &cmds[k];
+        if (str_igual(palavra, "|")) {
+            if (c->argc == 0 || ++k == MAX_COMANDOS) return 0;
+        } else if (str_igual(palavra, "<")) {
+            proximo_arquivo = &c->entrada;
+        } else if (str_igual(palavra, ">") || str_igual(palavra, ">>")) {
+            proximo_arquivo = &c->saida;
+            c->anexar = palavra[1] == '>';
+        } else if (proximo_arquivo) {
+            *proximo_arquivo = palavra;
+            proximo_arquivo = 0;
+        } else if (c->argc < ARGV_MAX) {
+            c->argv[c->argc++] = palavra;
+        }
+    }
+    if (proximo_arquivo) return 0;                   /* "echo oi >" sem arquivo */
+    *n = cmds[k].argc ? k + 1 : k;
+    return *n > 0 && (*n == 1 || cmds[*n - 1].argc);
+}
+
+static int interno(comando_t *c)
+{
+    const char *cmd = c->argv[0];
+    if      (str_igual(cmd, "ajuda"))   cmd_ajuda();
+    else if (str_igual(cmd, "limpar"))  cmd_limpar();
+    else if (str_igual(cmd, "ps"))      cmd_ps();
+    else if (str_igual(cmd, "mem"))     cmd_mem();
+    else if (str_igual(cmd, "tempo"))   cmd_tempo();
+    else if (str_igual(cmd, "sobre"))   cmd_sobre();
+    else if (str_igual(cmd, "invadir")) cmd_invadir();
+    else if (str_igual(cmd, "reboot"))  cmd_reboot();
+    else if (str_igual(cmd, "cd"))      cmd_cd(c->argv[1]);
+    else if (str_igual(cmd, "pwd"))     { escreve(ambiente()->pasta, COR(COR_BRANCO)); escreve("\n", 0); }
+    else return 0;
+    return 1;
+}
+
+static void avisar_fim(const char *nome, long codigo)
+{
     if (codigo >= SAIDA_FALHA_BASE && codigo < SAIDA_FALHA_BASE + 32) {
         u32 v = (u32)(codigo - SAIDA_FALHA_BASE);
         escreve("[nucleo] ", COR(COR_VERMELHO_CLARO));
@@ -219,32 +221,91 @@ static void programa_rodar(char **argv)
     }
 }
 
-static void executar(void)
+static void erro_arquivo(const char *texto, const char *arquivo)
 {
-    /* Separa a linha em palavras: argv[0] é o comando. */
-    char *argv[ARGV_MAX + 1];
-    u32 argc = 0;
-    char *p = linha;
-    while (*p && argc < ARGV_MAX) {
-        while (*p == ' ') *p++ = '\0';
-        if (!*p) break;
-        argv[argc++] = p;
-        while (*p && *p != ' ') p++;
-    }
-    argv[argc] = 0;
-    if (argc == 0) return;
-    const char *cmd = argv[0];
+    escreve(texto, COR(COR_VERMELHO_CLARO));
+    escreve(arquivo, COR(COR_BRANCO));
+    escreve("\n", COR(COR_BRANCO));
+}
 
-    if      (str_igual(cmd, "ajuda"))   cmd_ajuda();
-    else if (str_igual(cmd, "limpar"))  limpar_tela();
-    else if (str_igual(cmd, "ps"))      cmd_ps();
-    else if (str_igual(cmd, "mem"))     cmd_mem();
-    else if (str_igual(cmd, "tempo"))   cmd_tempo();
-    else if (str_igual(cmd, "sobre"))   cmd_sobre();
-    else if (str_igual(cmd, "invadir")) cmd_invadir();
-    else if (str_igual(cmd, "reboot"))  cmd_reboot();
-    else if (str_igual(cmd, "programas")) cmd_programas();
-    else programa_rodar(argv);
+/* Executa os comandos ligados por pipes e espera todos terminarem. */
+static void rodar(comando_t *cmds, u32 n)
+{
+    long pids[MAX_COMANDOS], tubos[MAX_COMANDOS], abertos[2 * MAX_COMANDOS];
+    u32 n_abertos = 0;
+    for (u32 i = 0; i < n; i++) pids[i] = tubos[i] = -1;
+
+    for (u32 i = 0; i < n; i++) {
+        comando_t *c = &cmds[i];
+        u32 ent = 0, ent_c = 0, sai = 0, sai_c = 0;    /* 0 = herda (o terminal) */
+
+        if (i > 0) { ent = PID_TUBOS; ent_c = (u32)tubos[i - 1]; }
+        if (c->entrada) {
+            long a = arq_abrir(c->entrada, ARQ_MODO_LER);
+            if (a < 0) { erro_arquivo("Arquivo nao encontrado: ", c->entrada); break; }
+            abertos[n_abertos++] = a;
+            ent = PID_ARQUIVOS; ent_c = (u32)a;
+        }
+        if (i + 1 < n) {
+            tubos[i] = tubo_criar();
+            if (tubos[i] < 0) { escreve("Sem pipes livres\n", COR(COR_VERMELHO_CLARO)); break; }
+            sai = PID_TUBOS; sai_c = (u32)tubos[i];
+        }
+        if (c->saida) {
+            long a = arq_abrir(c->saida, c->anexar ? ARQ_MODO_ANEXAR : ARQ_MODO_ESCREVER);
+            if (a < 0) { erro_arquivo("Nao consegui criar: ", c->saida); break; }
+            abertos[n_abertos++] = a;
+            sai = PID_ARQUIVOS; sai_c = (u32)a;
+        }
+
+        /* "ola" -> /bin/ola; "./prog" ou "/tmp/prog" -> como escrito */
+        char caminho[CAMINHO_MAX];
+        const char *nome = c->argv[0];
+        int tem_barra = 0;
+        for (const char *q = nome; *q; q++) if (*q == '/') tem_barra = 1;
+        if (tem_barra) {
+            str_copia(caminho, nome, sizeof(caminho));
+        } else {
+            str_copia(caminho, "/bin/", sizeof(caminho));
+            str_copia(caminho + 5, nome, sizeof(caminho) - 5);
+        }
+
+        pids[i] = executar(caminho, c->argv, ent, ent_c, sai, sai_c);
+        if (pids[i] < 0) {
+            escreve(pids[i] == ERRO_NAO_ACHADO ? "Comando desconhecido: "
+                    : pids[i] == ERRO_FORMATO   ? "Nao e um programa ELF valido: "
+                                                : "Sem memoria ou sem vaga para: ",
+                    COR(COR_VERMELHO_CLARO));
+            escreve(nome, COR(COR_BRANCO));
+            escreve(pids[i] == ERRO_NAO_ACHADO ? "\nDigite 'ajuda' ou 'ls /bin'.\n" : "\n",
+                    COR(COR_CINZA_CLARO));
+            if (i > 0 && tubos[i - 1] >= 0) {     /* ninguém vai ler: solta quem escreve */
+                tubo_liberar((u32)tubos[i - 1]);
+                tubos[i - 1] = -1;
+            }
+        }
+    }
+
+    /* Espera na ordem; quando quem escreve num pipe termina, fecha a
+     * escrita para quem lê receber o "acabou". */
+    for (u32 i = 0; i < n; i++) {
+        if (pids[i] >= 0) avisar_fim(cmds[i].argv[0], sys_esperar((u32)pids[i]));
+        if (tubos[i] >= 0) tubo_fechar_escrita((u32)tubos[i]);
+    }
+    for (u32 i = 0; i < n; i++) if (tubos[i] >= 0) tubo_liberar((u32)tubos[i]);
+    for (u32 i = 0; i < n_abertos; i++) arq_fechar((u32)abertos[i]);
+}
+
+static void executar_linha(void)
+{
+    comando_t cmds[MAX_COMANDOS];
+    u32 n = 0;
+    if (!interpretar(cmds, &n)) {
+        if (n) escreve("Linha invalida (veja: ajuda)\n", COR(COR_VERMELHO_CLARO));
+        return;
+    }
+    if (n == 1 && !cmds[0].entrada && !cmds[0].saida && interno(&cmds[0])) return;
+    rodar(cmds, n);
 }
 
 int main(int argc, char **argv)
@@ -271,8 +332,12 @@ int main(int argc, char **argv)
 
     for (;;) {
         escreve(SISTEMA_PROMPT, COR(COR_CIANO_CLARO));
-        escreve("> ",      COR(COR_AMARELO));
-        ler_linha();
-        executar();
+        escreve(":", COR(COR_CINZA_CLARO));
+        escreve(ambiente()->pasta, COR(COR_AZUL_CLARO));
+        escreve("> ", COR(COR_AMARELO));
+        long n = ler(linha, LINHA_MAX);
+        if (n <= 0) continue;
+        linha[n] = '\0';
+        executar_linha();
     }
 }

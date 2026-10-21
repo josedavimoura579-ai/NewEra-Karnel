@@ -168,7 +168,7 @@ install -m 755 "$REPO/nefs/nefs" "$RAIZ/usr/bin/nefs"
 MODELO="$RAIZ/usr/share/nefs/novaera"
 mkdir -p "$MODELO/usuario"
 for f in kernel.c boot.asm cpu.asm novaera.h linker.ld build.sh sistema.conf \
-         programas.lista LICENSE README.md; do
+         programas.lista logo.txt LICENSE README.md; do
     cp "$REPO/$f" "$MODELO/"
 done
 cp "$REPO"/usuario/*.c "$REPO"/usuario/*.h "$REPO"/usuario/*.asm "$REPO"/usuario/*.ld \

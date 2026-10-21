@@ -28,11 +28,12 @@ ls
 
 | Arquivo | O que é |
 |---|---|
-| `sistema.conf` | nome, versão, lema e prompt do seu sistema |
+| `sistema.conf` e `logo.txt` | a identidade do seu sistema: nome, versão, lema, prompt e logo |
 | `programas.lista` | os processos que o núcleo inicia no boot |
 | `kernel.c`, `boot.asm`, `cpu.asm` | o microkernel NovaEra |
 | `novaera.h` | o contrato entre o núcleo e os programas |
-| `usuario/` | os programas do anel 3: vídeo, teclado, shell |
+| `usuario/` | os servidores do anel 3: vídeo, teclado, shell, arquivos, terminal, pipes |
+| `usuario/bin/` | os comandos do shell: `ls`, `cat`, `echo`, `novafetch`... |
 | `build.sh` | o roteiro de compilação (o `nefs compilar` usa ele) |
 
 ## Compilando e rodando
@@ -45,7 +46,8 @@ nefs rodar
 O QEMU mostra a tela do seu sistema dentro do próprio terminal. Para
 sair dele: aperte **Alt+2**, digite `quit` e Enter.
 
-Dentro do seu sistema, experimente os comandos `ajuda`, `ps` e `invadir`.
+Dentro do seu sistema, experimente `ajuda`, `ls /bin`, `novafetch`,
+`ps` e `invadir`.
 
 ## Gerando a ISO do seu sistema
 

@@ -14,8 +14,10 @@
  *    - Paginação de 4 níveis: cada processo tem o seu próprio espaço
  *    - Processos, TSS e troca de contexto
  *    - Escalonador preemptivo (timer PIT a 100 Hz, round-robin)
- *    - Programas ELF, do kernel.bin ou do initrd (um .tar do GRUB/QEMU),
- *      com argumentos, heap, pilha sob demanda e código de saída
+ *    - Programas ELF (os do boot vêm no kernel.bin; os outros chegam pela
+ *      memória de quem os cria), com argumentos, heap, pilha sob demanda
+ *      e código de saída
+ *    - Cópia de dados entre um servidor e o cliente que espera por ele
  *    - IPC síncrono por mensagens (enviar / receber / chamar / responder)
  *    - IRQs entregues como mensagens aos drivers que as assinaram
  *    - Supervisão: um processo que falha é encerrado e reiniciado
@@ -244,8 +246,8 @@ static u64 quadro_alocar(void)
 }
 
 /* O initrd: um arquivo .tar que o GRUB ou o QEMU (-initrd) carregam na
- * memória junto com o núcleo, como "módulo" Multiboot. Ele traz os
- * programas que o shell pode executar. */
+ * memória junto com o núcleo, como "módulo" Multiboot. O núcleo não lê o
+ * tar: só o entrega, mapeado, ao servidor de arquivos. */
 static const u8 *initrd;
 static u64       initrd_tam;
 
@@ -365,8 +367,9 @@ static void espaco_destruir(u64 *pml4)
                 u64 *pt = tabela_de(pd[k]);
                 for (u32 l = 0; l < 512; l++) {
                     u64 fisico = pt[l] & PG_ENDERECO;
-                    if ((pt[l] & PG_PRESENTE) && fisico >= (u64)_kernel_fim)
-                        quadro_liberar(fisico);      /* a VGA (0xB8000) não é nossa */
+                    if ((pt[l] & PG_PRESENTE) && fisico >= (u64)_kernel_fim &&
+                        !(fisico >= ((u64)initrd & ~0xFFFull) && fisico < (u64)initrd + initrd_tam))
+                        quadro_liberar(fisico);      /* a VGA e o initrd não são do processo */
                 }
                 quadro_liberar((u64)pt);
             }
@@ -544,6 +547,7 @@ static void timer_iniciar(void)
 #define T_DRIVER     0x1u      /* pode usar IN/OUT (IOPL 3) e assinar IRQs */
 #define T_VGA        0x2u      /* recebe a memória de vídeo mapeada */
 #define T_REINICIAR  0x4u      /* servidor do boot: recarregado se falhar */
+#define T_INITRD     0x8u      /* recebe o initrd mapeado (só leitura) */
 
 /* Uma linha de programas.lista (a tabela PROGRAMAS vem de build/programas.h) */
 typedef struct {
@@ -556,12 +560,17 @@ typedef struct {
     u32        estado;         /* ESTADO_* (novaera.h) */
     char       nome[12];
     u32        flags;
-    const u8  *imagem;         /* o ELF: no kernel.bin ou no initrd */
+    const u8  *imagem;         /* o ELF: no kernel.bin (ou emprestado, em SYS_CRIAR) */
     u64        imagem_tam;
     u32        pai;            /* quem o criou (0 = o núcleo, no boot) */
     u32        reinicios;
     u32        ultima_falha;   /* exceção que causou o último encerramento */
     long       codigo_saida;   /* guardado até o pai chamar SYS_ESPERAR */
+
+    /* Entrada e saída padrão (servidor + canal) e a pasta atual: só o
+     * núcleo guarda, para os filhos herdarem; quem usa é a ulib. */
+    u32        entrada, entrada_canal, saida, saida_canal;
+    char       pasta[CAMINHO_MAX];
 
     u64       *diretorio;      /* PML4: o espaço de endereçamento (CR3) */
     u8        *pilha_nucleo;   /* onde o quadro_t fica enquanto está parado */
@@ -588,12 +597,6 @@ static u32      ticks;          /* só muda e é lida no núcleo, com IF=0 */
 
 #include "programas.h"     /* gerado de programas.lista pelo build.sh */
 
-static int str_igual(const char *a, const char *b)
-{
-    while (*a && *a == *b) { a++; b++; }
-    return *a == *b;
-}
-
 /* Guarda o nome curto do processo: o que vem depois da última '/'. */
 static void nome_copia(char *dst, const char *src)
 {
@@ -602,51 +605,6 @@ static void nome_copia(char *dst, const char *src)
     u32 i = 0;
     for (; src[i] && i < 11; i++) dst[i] = src[i];
     dst[i] = '\0';
-}
-
-/* ---------------------------- O initrd (tar) -----------------------------
- * Um .tar é uma sequência de cabeçalhos de 512 bytes, cada um seguido do
- * conteúdo do arquivo (arredondado para 512). Nome no byte 0, tamanho em
- * octal no byte 124, tipo no byte 156 e a assinatura "ustar" no 257.     */
-
-static u64 octal(const u8 *p, u32 n)
-{
-    u64 v = 0;
-    for (u32 i = 0; i < n && p[i] >= '0' && p[i] <= '7'; i++)
-        v = v * 8 + (u64)(p[i] - '0');
-    return v;
-}
-
-/* A i-ésima entrada que é um arquivo comum. */
-static int tar_entrada(u32 indice, const char **nome, const u8 **dados, u64 *tam)
-{
-    u64 pos = 0;
-    u32 n = 0;
-    while (initrd && pos + 512 <= initrd_tam) {
-        const u8 *h = initrd + pos;
-        if (h[0] == 0) break;                        /* blocos zerados: fim */
-        if (h[257] != 'u' || h[258] != 's' || h[259] != 't' ||
-            h[260] != 'a' || h[261] != 'r') break;   /* não é ustar */
-        u64 t = octal(h + 124, 12);
-        if (t > initrd_tam - pos - 512) break;       /* arquivo cortado */
-        if ((h[156] == '0' || h[156] == 0) && h[99] == 0 && n++ == indice) {
-            *nome  = (const char *)h;
-            if ((*nome)[0] == '.' && (*nome)[1] == '/') *nome += 2;
-            *dados = h + 512;
-            *tam   = t;
-            return 1;
-        }
-        pos += 512 + ((t + 511) & ~511ull);
-    }
-    return 0;
-}
-
-static int tar_achar(const char *caminho, const u8 **dados, u64 *tam)
-{
-    const char *nome;
-    for (u32 i = 0; tar_entrada(i, &nome, dados, tam); i++)
-        if (str_igual(nome, caminho)) return 1;
-    return 0;
 }
 
 /* --------------------------- Carregador ELF ------------------------------
@@ -801,6 +759,13 @@ static long processo_carregar(u32 pid, const args_t *a)
     if (!erro && (t->flags & T_VGA) &&
         !mapear(t->diretorio, USUARIO_VGA, 0xB8000, PG_PRESENTE | PG_ESCRITA | PG_USUARIO))
         erro = ERRO_SEM_MEMORIA;
+    /* O initrd vai inteiro para o servidor de arquivos, só para leitura.
+     * Ele pode não começar no início de uma página: SYS_INITRD diz onde. */
+    u64 initrd_pag = (u64)initrd & ~0xFFFull;
+    for (u64 f = initrd_pag; !erro && (t->flags & T_INITRD) && f < (u64)initrd + initrd_tam;
+         f += QUADRO)
+        if (!mapear(t->diretorio, USUARIO_INITRD + (f - initrd_pag), f, PG_PRESENTE | PG_USUARIO))
+            erro = ERRO_SEM_MEMORIA;
 
     /* A pilha do núcleo é do PID para sempre: assim um reinício pode
      * acontecer enquanto o núcleo ainda está rodando sobre ela. */
@@ -842,6 +807,8 @@ static int processo_criar(u32 pid, const char *nome, const u8 *ini, const u8 *fi
     t->imagem     = ini;
     t->imagem_tam = (u64)(fim - ini);
     t->pai        = PID_KERNEL;
+    t->entrada = t->saida = PID_TERMINAL;   /* o terminal é a tela e o teclado */
+    t->pasta[0] = '/';
 
     mem_zera(&args_tmp, sizeof(args_tmp));
     args_por(&args_tmp, nome);
@@ -1079,54 +1046,84 @@ static void processo_encerrar(u32 pid, long codigo, int falhou, u64 vetor)
     }
 }
 
-/* SYS_CRIAR: carrega um programa do initrd num processo novo. */
-static long processo_executar(tarefa_t *eu, u64 caminho_usuario, u64 argv_usuario)
+/* SYS_CRIAR: cria um processo a partir de um ELF que está na memória de
+ * quem chama (normalmente lido do servidor de arquivos). O núcleo não sabe
+ * o que é um arquivo: ele só recebe os bytes do programa. */
+static long processo_executar(tarefa_t *eu, u64 pedido)
 {
-    static char caminho[100];
-    if (texto_do_usuario(eu, caminho_usuario, caminho, sizeof(caminho)) < 0)
+    if (!usuario_valido(eu, pedido, sizeof(criar_t))) return ERRO_INVALIDO;
+    criar_t c = *(const criar_t *)pedido;
+    if (!c.tamanho || !usuario_valido(eu, c.imagem, c.tamanho) || !c.argv)
         return ERRO_INVALIDO;
 
-    const u8 *imagem;
-    u64 tam;
-    if (!tar_achar(caminho, &imagem, &tam)) return ERRO_NAO_ACHADO;
-
-    /* Os argumentos: um vetor de ponteiros do usuário, terminado em 0.
-     * Sem vetor, o programa recebe só o próprio caminho como argv[0]. */
+    /* Os argumentos: um vetor de ponteiros do usuário, terminado em 0. */
     mem_zera(&args_tmp, sizeof(args_tmp));
-    if (!argv_usuario) {
-        args_por(&args_tmp, caminho);
-    } else {
-        for (u32 i = 0; ; i++) {
-            u64 ptr = argv_usuario + 8ull * i;
-            if (!usuario_valido(eu, ptr, 8)) return ERRO_INVALIDO;
-            u64 texto = *(const u64 *)ptr;
-            if (!texto) break;
-            char *dst = args_tmp.texto + args_tmp.bytes;
-            long n = texto_do_usuario(eu, texto, dst, ARGV_BYTES - args_tmp.bytes);
-            if (n < 0 || args_tmp.argc >= ARGV_MAX) return ERRO_INVALIDO;
-            args_tmp.bytes += (u32)n + 1;
-            args_tmp.argc++;
-        }
+    for (u32 i = 0; ; i++) {
+        u64 ptr = c.argv + 8ull * i;
+        if (!usuario_valido(eu, ptr, 8)) return ERRO_INVALIDO;
+        u64 texto = *(const u64 *)ptr;
+        if (!texto) break;
+        char *dst = args_tmp.texto + args_tmp.bytes;
+        long n = texto_do_usuario(eu, texto, dst, ARGV_BYTES - args_tmp.bytes);
+        if (n < 0 || args_tmp.argc >= ARGV_MAX) return ERRO_INVALIDO;
+        args_tmp.bytes += (u32)n + 1;
+        args_tmp.argc++;
     }
+    if (args_tmp.argc == 0) return ERRO_INVALIDO;    /* argv[0] é o nome */
 
     u32 pid = 1;
     while (pid < MAX_TAREFAS && tarefas[pid].estado != ESTADO_LIVRE) pid++;
     if (pid == MAX_TAREFAS) return ERRO_LOTADO;
 
     tarefa_t *t = &tarefas[pid];
-    nome_copia(t->nome, caminho);
-    t->flags        = 0;
-    t->imagem       = imagem;
-    t->imagem_tam   = tam;
-    t->pai          = atual;
-    t->reinicios    = 0;
-    t->ultima_falha = 0;
+    nome_copia(t->nome, args_tmp.texto);
+    t->flags         = 0;
+    t->imagem        = (const u8 *)c.imagem;   /* lido agora, com o CR3 de quem chama */
+    t->imagem_tam    = c.tamanho;
+    t->pai           = atual;
+    t->reinicios     = 0;
+    t->ultima_falha  = 0;
+    t->entrada       = c.entrada ? c.entrada       : eu->entrada;
+    t->entrada_canal = c.entrada ? c.entrada_canal : eu->entrada_canal;
+    t->saida         = c.saida   ? c.saida         : eu->saida;
+    t->saida_canal   = c.saida   ? c.saida_canal   : eu->saida_canal;
+    mem_copia(t->pasta, eu->pasta, CAMINHO_MAX);
     long erro = processo_carregar(pid, &args_tmp);
+    t->imagem = 0;                              /* a imagem era emprestada */
     if (erro) {
         t->estado = ESTADO_LIVRE;
         return erro;
     }
     return pid;
+}
+
+/* SYS_COPIAR_PARA / SYS_COPIAR_DE: só vale com um cliente que está
+ * esperando a MINHA resposta. Os dois lados são conferidos página a
+ * página e a cópia vai de endereço físico para endereço físico. */
+static long copiar_cliente(tarefa_t *eu, u64 pid, u64 pedido, int para_ele)
+{
+    if (!pid_vivo(pid) || tarefas[pid].estado != ESTADO_RECEBENDO ||
+        tarefas[pid].alvo != atual)
+        return ERRO_PID;
+    if (!usuario_valido(eu, pedido, sizeof(copia_t))) return ERRO_INVALIDO;
+    copia_t c = *(const copia_t *)pedido;
+    tarefa_t *ele = &tarefas[pid];
+    if (!usuario_valido(eu, c.meu, c.bytes) || !usuario_valido(ele, c.dele, c.bytes))
+        return ERRO_INVALIDO;
+
+    u64 *orig_esp = para_ele ? eu->diretorio : ele->diretorio;
+    u64 *dest_esp = para_ele ? ele->diretorio : eu->diretorio;
+    u64 orig = para_ele ? c.meu : c.dele, dest = para_ele ? c.dele : c.meu;
+    for (u64 n = c.bytes; n; ) {
+        u64 cabe = QUADRO - (orig & 0xFFF);
+        if (QUADRO - (dest & 0xFFF) < cabe) cabe = QUADRO - (dest & 0xFFF);
+        if (cabe > n) cabe = n;
+        mem_copia((void *)traduzir(dest_esp, dest), (const void *)traduzir(orig_esp, orig), cabe);
+        orig += cabe;
+        dest += cabe;
+        n    -= cabe;
+    }
+    return (long)c.bytes;
 }
 
 /* ===========================================================================
@@ -1199,7 +1196,7 @@ static long syscall_executar(quadro_t *q)
         return 0;
 
     case SYS_CRIAR:
-        return processo_executar(eu, a, b);
+        return processo_executar(eu, a);
 
     case SYS_ESPERAR: {
         if (a == 0 || a >= MAX_TAREFAS || tarefas[a].pai != atual ||
@@ -1228,16 +1225,48 @@ static long syscall_executar(quadro_t *q)
     case SYS_PID:
         return atual;
 
-    case SYS_INITRD_INFO: {
-        const char *nome;
-        const u8 *dados;
-        u64 tam;
-        if (!usuario_valido(eu, b, sizeof(msg_t))) return ERRO_INVALIDO;
-        if (!tar_entrada((u32)a, &nome, &dados, &tam)) return ERRO_NAO_ACHADO;
-        msg_t *m = (msg_t *)b;
+    case SYS_INITRD: {
+        if (!(eu->flags & T_INITRD))                 return ERRO_SEM_PERMISSAO;
+        if (!usuario_valido(eu, a, sizeof(msg_t)))   return ERRO_INVALIDO;
+        msg_t *m = (msg_t *)a;
         mem_zera(m, sizeof(*m));
-        m->arg[0] = (u32)tam;
-        for (u32 i = 0; nome[i] && i < MSG_TEXTO_MAX - 1; i++) m->texto[i] = nome[i];
+        m->arg[0] = (u32)(USUARIO_INITRD + ((u64)initrd & 0xFFF));
+        m->arg[1] = (u32)initrd_tam;
+        return 0;
+    }
+
+    case SYS_COPIAR_PARA:
+        return copiar_cliente(eu, a, b, 1);
+
+    case SYS_COPIAR_DE:
+        return copiar_cliente(eu, a, b, 0);
+
+    case SYS_AMBIENTE: {
+        if (!usuario_valido(eu, a, sizeof(msg_t))) return ERRO_INVALIDO;
+        msg_t *m = (msg_t *)a;
+        mem_zera(m, sizeof(*m));
+        m->arg[0] = eu->entrada;
+        m->arg[1] = eu->entrada_canal;
+        m->arg[2] = eu->saida;
+        m->arg[3] = eu->saida_canal;
+        mem_copia(m->texto, eu->pasta, CAMINHO_MAX);
+        return 0;
+    }
+
+    case SYS_PASTA: {
+        char nova[CAMINHO_MAX];
+        if (texto_do_usuario(eu, a, nova, CAMINHO_MAX) <= 0 || nova[0] != '/')
+            return ERRO_INVALIDO;               /* caminho absoluto; quem confere é o shell */
+        mem_copia(eu->pasta, nova, CAMINHO_MAX);
+        return 0;
+    }
+
+    case SYS_NUCLEO: {
+        if (!usuario_valido(eu, a, sizeof(msg_t))) return ERRO_INVALIDO;
+        msg_t *m = (msg_t *)a;
+        mem_zera(m, sizeof(*m));
+        const char *v = "NovaEra " NOVAERA_VERSAO " " NOVAERA_ARQUITETURA;
+        mem_copia(m->texto, v, tamanho_str(v) + 1);
         return 0;
     }
     }
@@ -1340,11 +1369,18 @@ quadro_t *interrupt_dispatch(quadro_t *q)
 
 /* ------------------------------- Mensagem ------------------------------- */
 
-/* Nome, versão e lema vêm de sistema.conf: cada sistema tem a sua cara. */
+/* Nome, versão e lema vêm de sistema.conf: cada sistema tem a sua cara.
+ * No NovaEra puro (sem distribuição), a versão mostrada é a do núcleo. */
+#if SISTEMA_PURO
+#define VERSAO_BANNER NOVAERA_VERSAO " " NOVAERA_ARQUITETURA
+#else
+#define VERSAO_BANNER SISTEMA_VERSAO
+#endif
+
 static void banner(void)
 {
     const char *sep = tamanho_str(SISTEMA_LEMA) ? " - " : "";
-    const u32 larg = tamanho_str(SISTEMA_NOME) + 2 + tamanho_str(SISTEMA_VERSAO)
+    const u32 larg = tamanho_str(SISTEMA_NOME) + 2 + tamanho_str(VERSAO_BANNER)
                    + tamanho_str(sep) + tamanho_str(SISTEMA_LEMA);
     u32 col = 0;
     if (larg + 6 <= VGA_COLUNAS) {          /* cabe a moldura? */
@@ -1355,7 +1391,7 @@ static void banner(void)
     u32 c = col;
     c = vga_print(1, c, SISTEMA_NOME,   ATTR(VGA_BRANCO, FUNDO));
     c = vga_print(1, c, " v",           ATTR(VGA_BRANCO, FUNDO));
-    c = vga_print(1, c, SISTEMA_VERSAO, ATTR(VGA_BRANCO, FUNDO));
+    c = vga_print(1, c, VERSAO_BANNER,  ATTR(VGA_BRANCO, FUNDO));
     c = vga_print(1, c, sep,            ATTR(VGA_CINZA_CLARO, FUNDO));
     vga_print(1, c, SISTEMA_LEMA,       ATTR(VGA_AMARELO, FUNDO));
 }
@@ -1381,19 +1417,12 @@ void kernel_main(u64 magic, u64 mbi_endereco)
 
     term_status(1, "Paginacao de 4 niveis: nucleo protegido do anel 3");
 
-    if (initrd) {                            /* quantos programas vieram? */
-        const char *nome;
-        const u8 *dados;
-        u64 tam;
-        u32 n = 0;
-        while (tar_entrada(n, &nome, &dados, &tam)) n++;
+    if (initrd) {                            /* quem lê o tar é o servidor de arquivos */
         term_escreve("[",    ATTR(VGA_CINZA_CLARO, FUNDO));
         term_escreve(" OK ", ATTR(VGA_VERDE_CLARO, FUNDO));
         term_escreve("] initrd: ", ATTR(VGA_CINZA_CLARO, FUNDO));
-        term_numero(n, ATTR(VGA_BRANCO, FUNDO));
-        term_escreve(" arquivos (", ATTR(VGA_BRANCO, FUNDO));
         term_numero((u32)(initrd_tam / 1024), ATTR(VGA_BRANCO, FUNDO));
-        term_escreve(" KiB)\n", ATTR(VGA_BRANCO, FUNDO));
+        term_escreve(" KiB, entregue ao servidor de arquivos\n", ATTR(VGA_BRANCO, FUNDO));
     } else {
         term_escreve("[ -- ] sem initrd: so os servidores do boot\n", ATTR(VGA_CINZA_CLARO, FUNDO));
     }

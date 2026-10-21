@@ -79,7 +79,7 @@ cp437() {
         -e 's/Á/A/g; s/Í/I/g; s/Ó/O/g; s/Ú/U/g; s/Â/A/g; s/Ê/E/g; s/Ô/O/g'
 }
 
-NOME="NovaEra"; VERSAO="?"; LEMA=""; PROMPT="NovaEra"
+NOME="NovaEra"; VERSAO="?"; LEMA=""; PROMPT="NovaEra"; PURO="nao"
 # shellcheck disable=SC1091
 . ./sistema.conf
 
@@ -89,6 +89,7 @@ cat > build/sistema.h <<EOF
 #define SISTEMA_VERSAO "$(cp437 "$VERSAO")"
 #define SISTEMA_LEMA   "$(cp437 "$LEMA")"
 #define SISTEMA_PROMPT "$(cp437 "$PROMPT")"
+#define SISTEMA_PURO   $([ "$PURO" = "sim" ] && echo 1 || echo 0)
 EOF
 
 PROGRAMAS=""
@@ -110,6 +111,7 @@ while read -r nome permissoes; do
         case "$p" in
             driver) flags="$flags | T_DRIVER" ;;
             vga)    flags="$flags | T_VGA" ;;
+            initrd) flags="$flags | T_INITRD" ;;
             -)      ;;
             *)      echo "ERRO: permissão desconhecida '$p' para '$nome'"; exit 1 ;;
         esac
@@ -150,7 +152,16 @@ done
 # --- 3. Programas do initrd (usuario/bin/*.c -> bin/<nome>) -----------------
 
 rm -rf build/initrd
-mkdir -p build/initrd/bin
+mkdir -p build/initrd/bin build/initrd/etc
+
+# /etc/sistema: a identidade do sistema (o "os-release"), lida pelo novafetch.
+{
+    echo "NOME=$NOME"
+    echo "VERSAO=$VERSAO"
+    echo "LEMA=$LEMA"
+    echo "PURO=$PURO"
+} > build/initrd/etc/sistema
+[ -f logo.txt ] && cp logo.txt build/initrd/etc/logo.txt
 for fonte in usuario/bin/*.c; do
     [ -f "$fonte" ] || continue
     nome="$(basename "$fonte" .c)"
@@ -162,11 +173,11 @@ done
 # código gera sempre o mesmo initrd.tar. O tar do BusyBox já usa ustar e
 # não conhece essas opções.
 if ! tar --format=ustar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
-         -C build/initrd -cf build/initrd.tar bin 2>/dev/null; then
-    tar -C build/initrd -cf build/initrd.tar bin
+         -C build/initrd -cf build/initrd.tar bin etc 2>/dev/null; then
+    tar -C build/initrd -cf build/initrd.tar bin etc
 fi
 cp build/initrd.tar initrd.tar
-echo "  usuario/bin/*.c -> initrd.tar ($(ls build/initrd/bin | wc -l) programas, $(wc -c < initrd.tar) bytes)"
+echo "  usuario/bin/*.c + etc/ -> initrd.tar ($(ls build/initrd/bin | wc -l) programas, $(wc -c < initrd.tar) bytes)"
 
 # --- 4. Núcleo ---------------------------------------------------------------
 

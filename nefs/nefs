@@ -125,14 +125,25 @@ cmd_novo() {
     prompt="$(printf '%s' "$nome" | tr -d ' ')"
     cat > "$pasta/sistema.conf" <<EOF
 # ===========================================================================
-#  sistema.conf - a identidade do seu sistema operacional
-#  O build.sh lê este arquivo e gera build/sistema.h.
+#  sistema.conf - a identidade do seu sistema operacional (a "distribuição")
+#  É o "os-release" do seu sistema: o núcleo NovaEra não sabe qual é a
+#  distro. O build.sh gera build/sistema.h e o /etc/sistema do initrd, que
+#  o novafetch lê. O logo fica em logo.txt.
 #  Acentos são aceitos: a tela VGA usa CP437, e o build converte o que der.
 # ===========================================================================
 NOME="$nome"
 VERSAO="0.1"
 LEMA="feito com o NEFS sobre o NovaEra"
 PROMPT="$prompt"
+PURO="nao"
+EOF
+    cat > "$pasta/logo.txt" <<EOF
+  +-----------------+
+  |                 |
+  |   seu logo      |
+  |   aqui :)       |
+  |                 |
+  +-----------------+
 EOF
     cat > "$pasta/LEIAME.md" <<EOF
 # $nome
@@ -176,7 +187,7 @@ int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
 
-    /* escreve() pede ao servidor de vídeo (PID 1) para mostrar o texto. */
+    /* escreve() manda o texto para a saída padrão (normalmente o terminal). */
     escreve("Ola! Aqui e o programa $nome (PID $pid).\n", COR(COR_VERDE_CLARO));
 
     /* Um servidor passa a vida esperando mensagens e respondendo. */
@@ -282,6 +293,7 @@ cmd_info() {
     echo "Sistema:   $NOME $VERSAO"
     echo "Lema:      $LEMA"
     echo "Prompt:    $PROMPT>"
+    echo "Núcleo:    NovaEra $(sed -n 's/^#define NOVAERA_VERSAO *"\(.*\)"/\1/p' "$PROJETO/novaera.h")"
     echo "Pasta:     $PROJETO"
     echo "Programas (PID: nome permissões):"
     pid=1
