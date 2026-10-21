@@ -1,0 +1,16 @@
+# ===========================================================================
+#  programas.lista - os processos que o núcleo inicia no boot (anel 3)
+#
+#  Cada linha: <nome> <permissões>
+#    nome        o programa é usuario/<nome>.c, e vira o PID da sua linha
+#    permissões  driver  pode usar IN/OUT e assinar IRQs
+#                vga     recebe a memória de vídeo mapeada
+#                -       nenhuma (um programa comum)
+#
+#  ATENÇÃO: video, teclado e shell precisam continuar nas 3 primeiras
+#  linhas, nesta ordem (PIDs 1, 2 e 3 em novaera.h). Novos programas
+#  entram depois deles. Máximo: 15 programas.
+# ===========================================================================
+video       driver vga
+teclado     driver
+shell       -

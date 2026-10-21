@@ -9,8 +9,7 @@
 ;    4. salta para o código de 64 bits e chama kernel_main() em C
 ;
 ;  Também ficam aqui: a GDT (anéis 0 e 3 + TSS), os stubs de interrupção,
-;  a porta das chamadas de sistema (int 0x80), a troca de contexto e os
-;  programas do usuário embutidos com incbin.
+;  a porta das chamadas de sistema (int 0x80) e a troca de contexto.
 ;
 ;  Montar com:  nasm -f elf64 boot.asm -o boot.o
 ; ===========================================================================
@@ -321,20 +320,7 @@ isr_comum:
     add rsp, 16                      ; descarta vetor + código de erro
     iretq                            ; volta ao anel do processo escolhido
 
-; --- Programas do usuário embutidos no kernel.bin --------------------------
-; Cada um foi compilado à parte (build.sh) como binário puro para 0x40000000.
-section .rodata
-%macro PROGRAMA 2
-global prog_%1_ini
-global prog_%1_fim
-align 8
-prog_%1_ini:
-    incbin %2
-prog_%1_fim:
-%endmacro
-
-PROGRAMA video,   "build/video.bin"
-PROGRAMA teclado, "build/teclado.bin"
-PROGRAMA shell,   "build/shell.bin"
+; Os programas do usuário são embutidos por build/programas.asm, gerado
+; pelo build.sh a partir de programas.lista.
 
 section .note.GNU-stack noalloc noexec nowrite progbits

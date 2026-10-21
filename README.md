@@ -69,11 +69,13 @@ A ideia central é simples: *você só domina o que construiu desde o começo.*
 ### Ordem de leitura do código
 
 1. **`novaera.h`** — o contrato entre o núcleo e os programas: chamadas de sistema, formato das mensagens, PIDs e o mapa de memória.
-2. **`linker.ld`** — onde cada pedaço do núcleo mora na memória (a partir de 1 MiB).
-3. **`boot.asm`** — a porta de entrada: Multiboot, a ponte de 32 para 64 bits, GDT com anéis 0 e 3, os *stubs* de interrupção, a `int 0x80` e a troca de contexto.
-4. **`kernel.c`** — o microkernel: memória física, paginação, processos, escalonador, IPC e supervisão.
-5. **`usuario/`** — o que roda fora do núcleo: `ulib.h` (biblioteca), `video.c`, `teclado.c` e `shell.c`.
-6. **`build.sh`** e **`run.sh`** — como tudo vira `kernel.bin` e como rodar.
+2. **`sistema.conf`** e **`programas.lista`** — a identidade do sistema e os processos que o núcleo inicia no boot.
+3. **`linker.ld`** — onde cada pedaço do núcleo mora na memória (a partir de 1 MiB).
+4. **`boot.asm`** — a porta de entrada: Multiboot, a ponte de 32 para 64 bits, GDT com anéis 0 e 3, os *stubs* de interrupção, a `int 0x80` e a troca de contexto.
+5. **`cpu.asm`** — as instruções especiais da CPU (portas, CR3, IDT, TSS), chamadas pelo C como funções comuns.
+6. **`kernel.c`** — o microkernel: memória física, paginação, processos, escalonador, IPC e supervisão.
+7. **`usuario/`** — o que roda fora do núcleo: `crt0.asm` e `ulib.h` (biblioteca), `video.c`, `teclado.c` e `shell.c`.
+8. **`build.sh`** e **`run.sh`** — como tudo vira `kernel.bin` e como rodar.
 
 ### Como usar o NovaEra como "motor" do seu sistema
 
@@ -93,7 +95,7 @@ O NovaEra é a **base**: um núcleo que só isola, escalona e entrega mensagens.
 └──────────────────────────────────────────────┘
 ```
 
-**Hoje**, o caminho é: faça um *fork*, crie um programa em `usuario/` usando a `ulib.h`, acrescente-o ao `build.sh`, ao `boot.asm` (`PROGRAMA`) e a `kernel_main()` (`processo_criar`). O núcleo não precisa saber o que o seu programa faz: ele só entrega as mensagens. A interface entre os dois lados é o `novaera.h`, o embrião da **API estável do NovaEra Core** (ver [Roteiro](#roteiro)).
+**Hoje**, o caminho é o comando **`nefs`** (pasta [`nefs/`](nefs/)): `nefs novo meu-so` cria o seu sistema, `nefs programa` cria um processo novo e o registra em `programas.lista`, e `nefs iso` gera a ISO. O núcleo não precisa saber o que o seu programa faz: ele só entrega as mensagens. A interface entre os dois lados é o `novaera.h`, o embrião da **API estável do NovaEra Core** (ver [Roteiro](#roteiro)).
 
 ### Dois estilos de sistema construídos sobre o NEFS
 
@@ -141,8 +143,9 @@ Estado atual: **NovaEra Microkernel v3.0** (alfa).
 | **Drivers** | No anel 3 com IOPL 3 (podem usar `in`/`out`). **Vídeo**: o único processo com `0xB8000` mapeado. **Teclado**: PS/2 *set 1*, layout US, Shift e Caps Lock, também faz o `reboot` pela porta `0x64` |
 | **Supervisão** | Uma exceção no anel 3 encerra só o processo culpado, devolve a memória dele e o recarrega (até 5 vezes), avisando-o do motivo. Uma exceção no anel 0 mostra o painel vermelho de pânico |
 | **Shell (anel 3)** | `ajuda` · `limpar` · `ps` · `mem` · `tempo` · `sobre` · `invadir` (demonstra a proteção de memória) · `reboot` |
-| **Linguagens** | Assembly NASM + C *freestanding* (`clang --target=x86_64-none-elf -mno-red-zone`), ligado com `ld.lld` |
-| **Dependências em tempo de execução** | Nenhuma. Sem libc; o único `#include` é a própria ABI (`novaera.h`) |
+| **Linguagens** | Assembly NASM + C11 *freestanding*, sem assembly embutido nem atributos de compilador: compila com o clang (`CC=clang`, padrão) ou com o cproc + QBE do NEFS (`CC=cproc`). Liga com `ld.lld` ou com o `ld` do binutils |
+| **Configuração** | `sistema.conf` (nome, versão, lema, prompt) e `programas.lista` (processos e permissões); o `build.sh` gera `build/sistema.h`, `build/programas.h` e `build/programas.asm` |
+| **Dependências em tempo de execução** | Nenhuma. Sem libc; os `#include` são a ABI (`novaera.h`) e os arquivos gerados pelo build |
 
 ### Por que agora é um microkernel
 
@@ -173,16 +176,21 @@ Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor d
 ```
 novaera-kernel/
 ├── novaera.h         # A ABI: syscalls, mensagens, PIDs, mapa de memória
+├── sistema.conf      # Nome, versão, lema e prompt do sistema
+├── programas.lista   # Os processos que o núcleo inicia no boot
 ├── boot.asm          # Multiboot, GDT/TSS, stubs, int 0x80, troca de contexto (NASM)
+├── cpu.asm           # Instruções especiais da CPU como funções (NASM)
 ├── kernel.c          # O microkernel: memória, paginação, processos, IPC (C puro)
 ├── linker.ld         # Mapa de memória do núcleo a partir de 1 MiB
 ├── usuario/          # Tudo o que roda no anel 3
-│   ├── ulib.h        #   biblioteca: syscalls, E/S de portas, _start
+│   ├── crt0.asm      #   _start, int 0x80 e E/S de portas
+│   ├── ulib.h        #   biblioteca: syscalls, mensagens, utilitários
 │   ├── usuario.ld    #   todo programa mora em 0x40000000
 │   ├── video.c       #   servidor de vídeo (PID 1)
 │   ├── teclado.c     #   driver de teclado PS/2 (PID 2)
 │   └── shell.c       #   o shell (PID 3)
 ├── build.sh          # Compila os programas, embute-os e liga o kernel.bin
+├── nefs/             # O NEFS: comando nefs, Livro do NEFS e a ISO (separado do núcleo)
 ├── run.sh            # Atalho para rodar no QEMU (pensado para o Termux)
 ├── kernel.bin        # Binário pronto para rodar
 └── README.md
@@ -356,7 +364,7 @@ arquivo .c → cproc → QBE → assembler → linker → programa do NovaEra
 
 O QBE gera código para x86_64, e foi por isso que o NovaEra passou para 64 bits.
 
-- [ ] **Fase 1** — ferramenta `nefs` (no Linux/Termux) para criar, compilar, rodar e empacotar sistemas baseados no NovaEra; ISO inicializável; primeiro livro do NEFS
+- [ ] **Fase 1** — a ISO do NEFS: um Linux mínimo com cproc + QBE, o comando `nefs` e o Livro 1. Já prontos e testados: o comando `nefs`, o Livro 1, o NovaEra compilável sem `__asm__` e a ISO (boot, QEMU e GRUB dentro dela). Falta testar o cproc + QBE na ISO. Veja [`nefs/README.md`](nefs/README.md)
 - [ ] **Fase 2** — preparar o núcleo: programas ELF, sistema de arquivos, criação de processos e uma libc mínima
 - [ ] **Fase 3** — portar cproc + QBE + assembler + linker para o NovaEra e gerar a **ISO do compilador NEFS**
 

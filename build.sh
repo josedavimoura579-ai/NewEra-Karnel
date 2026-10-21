@@ -1,29 +1,131 @@
-#!/usr/bin/env bash
-# NovaEra Microkernel (x86_64) - build.sh
-#   1. compila cada programa do usuário (usuario/*.c) como binário puro
-#   2. monta boot.asm, que embute esses binários no kernel.bin
-#   3. compila o núcleo e liga tudo
-# Dependências: nasm, clang, lld   (Termux: pkg install nasm clang lld)
-set -euo pipefail
+#!/bin/sh
+# ===========================================================================
+#  NovaEra Microkernel (x86_64) - build.sh
+#
+#   1. lê sistema.conf e programas.lista e gera build/sistema.h,
+#      build/programas.h e build/programas.asm
+#   2. compila cada programa do usuário (usuario/<nome>.c + crt0.asm)
+#      como binário puro para 0x40000000
+#   3. compila o núcleo, embute os programas e liga o kernel.bin
+#
+#  Compiladores aceitos (variável CC):
+#    CC=clang  (padrão)                    -> Linux, Termux
+#    CC=cproc  (cproc + QBE, o do NEFS)    -> a ISO do NEFS
+#  Dependências: nasm, um ligador (ld.lld ou o ld do binutils) e o CC.
+#  Escrito em sh puro (sem bash): roda também no BusyBox da ISO do NEFS.
+# ===========================================================================
+set -eu
 cd "$(dirname "$0")"
 mkdir -p build
 
-# -mno-red-zone: uma interrupção no anel 0 escreveria em cima da "zona
-#  vermelha" da pilha; -mgeneral-regs-only: o núcleo não salva SSE/FPU.
-CFLAGS=(--target=x86_64-none-elf -ffreestanding -fno-builtin -fno-stack-protector
-        -fno-pic -mno-red-zone -mgeneral-regs-only -O2 -Wall -Wextra -I.)
+CC="${CC:-clang}"
+if [ -z "${LD:-}" ]; then
+    if command -v ld.lld >/dev/null; then LD=ld.lld; else LD=ld; fi
+fi
 
-for prog in video teclado shell; do
-    clang "${CFLAGS[@]}" -c "usuario/$prog.c" -o "build/$prog.o"
-    ld.lld -m elf_x86_64 -nostdlib -T usuario/usuario.ld --oformat binary \
-           -o "build/$prog.bin" "build/$prog.o"
+case "$(basename "$CC")" in
+    clang*)
+        # -mno-red-zone: uma interrupção no anel 0 escreveria em cima da
+        #  "zona vermelha" da pilha; -mgeneral-regs-only: o núcleo não salva
+        #  os registradores SSE/FPU na troca de processo.
+        CFLAGS="--target=x86_64-none-elf -ffreestanding -fno-builtin -fno-stack-protector
+                -fno-pic -mno-red-zone -mgeneral-regs-only -O2 -Wall -Wextra" ;;
+    *)
+        # cproc + QBE: o QBE só usa SSE para números de ponto flutuante (não
+        # usamos nenhum) e o núcleo nunca é interrompido no meio do código C
+        # (as interrupções ficam desligadas no anel 0, menos em cpu_ocioso).
+        CFLAGS="-std=c11" ;;
+esac
+CFLAGS="$CFLAGS -I. -Ibuild"
+
+# --- 1. Arquivos gerados -----------------------------------------------------
+
+# Texto UTF-8 -> literal C em CP437 (a tabela de caracteres da VGA).
+cp437() {
+    printf '%s' "$1" | sed -e 's/"/\\"/g' \
+        -e 's/ç/\\207/g; s/Ç/\\200/g; s/á/\\240/g; s/é/\\202/g; s/í/\\241/g' \
+        -e 's/ó/\\242/g; s/ú/\\243/g; s/â/\\203/g; s/ê/\\210/g; s/ô/\\223/g' \
+        -e 's/à/\\205/g; s/ü/\\201/g; s/É/\\220/g; s/ã/a/g; s/õ/o/g; s/Ã/A/g; s/Õ/O/g' \
+        -e 's/Á/A/g; s/Í/I/g; s/Ó/O/g; s/Ú/U/g; s/Â/A/g; s/Ê/E/g; s/Ô/O/g'
+}
+
+NOME="NovaEra"; VERSAO="?"; LEMA=""; PROMPT="NovaEra"
+# shellcheck disable=SC1091
+. ./sistema.conf
+
+cat > build/sistema.h <<EOF
+/* Gerado por build.sh a partir de sistema.conf. Não edite. */
+#define SISTEMA_NOME   "$(cp437 "$NOME")"
+#define SISTEMA_VERSAO "$(cp437 "$VERSAO")"
+#define SISTEMA_LEMA   "$(cp437 "$LEMA")"
+#define SISTEMA_PROMPT "$(cp437 "$PROMPT")"
+EOF
+
+PROGRAMAS=""
+NUM_PROGRAMAS=0
+{
+    echo "; Gerado por build.sh a partir de programas.lista. Não edite."
+    echo "section .rodata"
+} > build/programas.asm
+{
+    echo "/* Gerado por build.sh a partir de programas.lista. Não edite. */"
+} > build/programas.h
+TABELA=""
+
+while read -r nome permissoes; do
+    case "$nome" in ''|'#'*) continue ;; esac
+    [ -f "usuario/$nome.c" ] || { echo "ERRO: programas.lista cita '$nome', mas usuario/$nome.c não existe"; exit 1; }
+    flags="0"
+    for p in $permissoes; do
+        case "$p" in
+            driver) flags="$flags | T_DRIVER" ;;
+            vga)    flags="$flags | T_VGA" ;;
+            -)      ;;
+            *)      echo "ERRO: permissão desconhecida '$p' para '$nome'"; exit 1 ;;
+        esac
+    done
+    PROGRAMAS="$PROGRAMAS $nome"
+    NUM_PROGRAMAS=$((NUM_PROGRAMAS + 1))
+    cat >> build/programas.asm <<EOF
+global prog_${nome}_ini
+global prog_${nome}_fim
+align 8
+prog_${nome}_ini:
+    incbin "build/$nome.bin"
+prog_${nome}_fim:
+EOF
+    echo "extern const u8 prog_${nome}_ini[], prog_${nome}_fim[];" >> build/programas.h
+    TABELA="$TABELA    { \"$nome\", prog_${nome}_ini, prog_${nome}_fim, $flags },
+"
+done < programas.lista
+
+{
+    echo "#define NUM_PROGRAMAS $NUM_PROGRAMAS"
+    echo "static const programa_info_t PROGRAMAS[NUM_PROGRAMAS] = {"
+    printf '%s' "$TABELA"
+    echo "};"
+} >> build/programas.h
+
+# --- 2. Programas do usuário -------------------------------------------------
+
+nasm -f elf64 usuario/crt0.asm -o build/crt0.o
+for prog in $PROGRAMAS; do
+    # shellcheck disable=SC2086
+    "$CC" $CFLAGS -c "usuario/$prog.c" -o "build/$prog.o"
+    "$LD" -m elf_x86_64 -nostdlib -T usuario/usuario.ld --oformat binary \
+          -o "build/$prog.bin" build/crt0.o "build/$prog.o"
     echo "  usuario/$prog.c -> build/$prog.bin ($(wc -c < "build/$prog.bin") bytes)"
 done
 
-nasm -f elf64 boot.asm -o build/boot.o
-clang "${CFLAGS[@]}" -c kernel.c -o build/kernel.o
-# Binário puro: o cabeçalho Multiboot (boot.asm) diz onde carregar.
-ld.lld -m elf_x86_64 -nostdlib -T linker.ld --oformat binary \
-       -o kernel.bin build/boot.o build/kernel.o
+# --- 3. Núcleo ---------------------------------------------------------------
 
-echo "OK: kernel.bin gerado ($(wc -c < kernel.bin) bytes)"
+nasm -f elf64 boot.asm -o build/boot.o
+nasm -f elf64 cpu.asm -o build/cpu.o
+nasm -f elf64 build/programas.asm -o build/programas.o
+# shellcheck disable=SC2086
+"$CC" $CFLAGS -c kernel.c -o build/kernel.o
+# Binário puro: o cabeçalho Multiboot (boot.asm) diz onde carregar.
+"$LD" -m elf_x86_64 -nostdlib -T linker.ld --oformat binary \
+      -o kernel.bin build/boot.o build/cpu.o build/kernel.o build/programas.o
+
+echo "OK: kernel.bin gerado ($(wc -c < kernel.bin) bytes) com $CC"

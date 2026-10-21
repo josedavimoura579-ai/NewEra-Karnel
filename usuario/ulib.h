@@ -4,6 +4,7 @@
  *  Biblioteca mínima dos programas do usuário (anel 3).
  *  Um programa NÃO pode tocar no hardware nem na memória do núcleo:
  *  tudo o que ele faz além de calcular passa por int 0x80.
+ *  Sem assembly embutido: o que precisa de assembly está em crt0.asm.
  * ===========================================================================
  */
 #ifndef ULIB_H
@@ -13,15 +14,8 @@
 
 /* ---------------------------- Chamadas de sistema ------------------------ */
 
-static inline long syscall2(u64 numero, u64 a, u64 b)
-{
-    long r;
-    __asm__ volatile ("int $0x80"
-                      : "=a"(r)
-                      : "a"(numero), "b"(a), "c"(b)
-                      : "memory");
-    return r;
-}
+/* Em crt0.asm: executa int 0x80 com RAX = numero, RBX = a, RCX = b. */
+long syscall2(u64 numero, u64 a, u64 b);
 
 static inline long sys_enviar(u32 destino, msg_t *m)    { return syscall2(SYS_ENVIAR, destino, (u64)m); }
 static inline long sys_receber(u32 origem, msg_t *m)    { return syscall2(SYS_RECEBER, origem, (u64)m); }
@@ -36,17 +30,8 @@ static inline void sys_sair(void)                      { syscall2(SYS_SAIR, 0, 0
 
 /* ----------------- Portas de E/S (só para drivers, IOPL 3) --------------- */
 
-static inline void outb(u16 porta, u8 valor)
-{
-    __asm__ volatile ("outb %0, %1" : : "a"(valor), "Nd"(porta));
-}
-
-static inline u8 inb(u16 porta)
-{
-    u8 valor;
-    __asm__ volatile ("inb %1, %0" : "=a"(valor) : "Nd"(porta));
-    return valor;
-}
+void outb(u16 porta, u8 valor);       /* crt0.asm */
+u8   inb(u16 porta);
 
 /* ------------------------------ Utilitários ------------------------------ */
 
@@ -91,22 +76,9 @@ enum {
 #define COR(texto) ((u8)((texto) | (COR_AZUL << 4)))
 
 /* ------------------------------ Ponto de entrada -------------------------
- * O núcleo começa a executar no primeiro byte do programa (0x40000000),
- * que é este _start, com RBX e RCX como argumentos. Se main() voltar,
- * o processo termina. A pilha já chega alinhada em 16 bytes.             */
+ * Todo programa define main(). Quem a chama é _start, em crt0.asm, que
+ * entrega os dois argumentos que o núcleo deixou em RBX e RCX.            */
 
 void main(u64 arg1, u64 arg2);
-
-__attribute__((naked, section(".text.entrada"), used))
-void _start(void)
-{
-    __asm__ volatile (
-        "mov %rbx, %rdi\n"       /* 1º argumento (ABI System V) */
-        "mov %rcx, %rsi\n"       /* 2º argumento */
-        "call main\n"
-        "mov $7, %eax\n"          /* SYS_SAIR */
-        "int $0x80\n"
-        "1: jmp 1b\n");
-}
 
 #endif

@@ -1,8 +1,13 @@
 /*
  * ===========================================================================
  *  NovaEra Microkernel v3.0 (x86_64) - kernel.c
- *  C puro "freestanding": sem libc. O único #include é a ABI do sistema.
+ *  C puro "freestanding": sem libc. Os #include são a ABI do sistema e
+ *  os arquivos que o build.sh gera de sistema.conf e programas.lista.
  *  Quando kernel_main() começa, boot.asm já colocou a CPU em 64 bits.
+ *
+ *  Este arquivo não tem nenhum assembly embutido (__asm__) nem atributos
+ *  de compilador: as instruções especiais ficam em cpu.asm. Assim ele
+ *  compila com o clang e também com o compilador do NEFS (cproc + QBE).
  *
  *  O que mora AQUI (anel 0, o mínimo possível):
  *    - Gerenciador de memória física (lista de quadros de 4 KiB livres)
@@ -24,6 +29,7 @@
  */
 
 #include "novaera.h"
+#include "sistema.h"      /* gerado de sistema.conf pelo build.sh */
 
 #define VGA_MEMORIA ((volatile u16 *)0xB8000)
 #define VGA_COLUNAS 80u
@@ -49,19 +55,16 @@ enum vga_cor {
 #define SEL_DADOS_USUARIO  (0x20 | 3)
 #define SEL_TSS            0x28
 
-/* ----------------------------- E/S de portas ----------------------------- */
+/* --------------------- Instruções especiais (cpu.asm) -------------------- */
 
-static inline void outb(u16 porta, u8 valor)
-{
-    __asm__ volatile ("outb %0, %1" : : "a"(valor), "Nd"(porta));
-}
-
-static inline u8 inb(u16 porta)
-{
-    u8 valor;
-    __asm__ volatile ("inb %1, %0" : "=a"(valor) : "Nd"(porta));
-    return valor;
-}
+void outb(u16 porta, u8 valor);
+u8   inb(u16 porta);
+void cpu_carregar_cr3(u64 pml4);
+u64  cpu_ler_cr2(void);
+void cpu_carregar_idt(u64 base, u16 limite);
+void cpu_carregar_tr(u16 seletor);
+_Noreturn void cpu_ocioso(void);
+_Noreturn void cpu_parar(void);
 
 /* Pequena pausa: escrever na porta 0x80 leva ~1 microssegundo. */
 static inline void io_espera(void)
@@ -349,24 +352,26 @@ static void espaco_destruir(u64 *pml4)
  *  que atualizamos a cada troca de processo.
  * =========================================================================== */
 
-/* Em 64 bits a TSS não guarda mais registradores: só as pilhas. */
-typedef struct __attribute__((packed)) {
-    u32 reservado0;
-    u64 rsp0, rsp1, rsp2;              /* pilha usada ao entrar no anel 0/1/2 */
-    u64 reservado1;
-    u64 ist[7];                        /* pilhas extras (não usadas) */
-    u64 reservado2;
-    u16 reservado3, iomap;
-} tss_t;
-
-static tss_t tss;
+/* Em 64 bits a TSS não guarda mais registradores: só as pilhas.
+ * São 104 bytes, mas o campo rsp0 começa no byte 4 (fora do alinhamento
+ * de um u64). Por isso ela é um vetor de u32, sem struct "packed":
+ *   [0] reservado  [1..2] rsp0  [3..6] rsp1, rsp2  [7..8] reservado
+ *   [9..22] ist1..7  [23..24] reservado  [25] iomap nos 16 bits de cima */
+#define TSS_TAM 104u
+static u32 tss[TSS_TAM / 4];
 extern u8 gdt_tss[16];                 /* entrada reservada em boot.asm */
+
+static void tss_definir_rsp0(u64 rsp0)
+{
+    tss[1] = (u32)rsp0;
+    tss[2] = (u32)(rsp0 >> 32);
+}
 
 static void tss_iniciar(void)
 {
-    u64 base = (u64)&tss;
-    u32 limite = sizeof(tss) - 1;
-    tss.iomap = sizeof(tss);           /* sem mapa de portas: vale o IOPL */
+    u64 base = (u64)tss;
+    u32 limite = TSS_TAM - 1;
+    tss[25] = TSS_TAM << 16;           /* sem mapa de portas: vale o IOPL */
 
     gdt_tss[0] = (u8)limite;
     gdt_tss[1] = (u8)(limite >> 8);
@@ -379,14 +384,15 @@ static void tss_iniciar(void)
     for (u32 i = 0; i < 4; i++)        /* 2ª metade: bits 32-63 da base */
         gdt_tss[8 + i] = (u8)(base >> (32 + 8 * i));
 
-    __asm__ volatile ("ltr %0" : : "r"((u16)SEL_TSS));
+    cpu_carregar_tr(SEL_TSS);
 }
 
 /* ===========================================================================
  *  IDT - Interrupt Descriptor Table
  * =========================================================================== */
 
-typedef struct __attribute__((packed)) {
+/* 16 bytes. Os campos já caem alinhados, então não há preenchimento. */
+typedef struct {
     u16 base_baixo;     /* bits 0-15 do endereço do handler  */
     u16 seletor;        /* seletor de código na GDT (0x08)   */
     u8  ist;
@@ -395,11 +401,6 @@ typedef struct __attribute__((packed)) {
     u32 base_alto;      /* bits 32-63 */
     u32 reservado;
 } idt_entrada_t;
-
-typedef struct __attribute__((packed)) {
-    u16 limite;
-    u64 base;
-} idt_ptr_t;
 
 /* Quadro empilhado por isr_comum (boot.asm). É ELE que representa um
  * processo parado: para retomá-lo, basta apontar RSP para cá e dar IRETQ. */
@@ -437,10 +438,7 @@ static void idt_iniciar(void)
     /* A ÚNICA porta que o anel 3 pode abrir: as chamadas de sistema. */
     idt_definir(0x80, (u64)isr_syscall, SEL_CODIGO_NUCLEO, 0xEE);
 
-    idt_ptr_t ptr;
-    ptr.limite = (u16)(sizeof(idt) - 1);
-    ptr.base   = (u64)idt;
-    __asm__ volatile ("lidt %0" : : "m"(ptr));
+    cpu_carregar_idt((u64)idt, (u16)(sizeof(idt) - 1));
 }
 
 /* ===========================================================================
@@ -506,7 +504,7 @@ static void timer_iniciar(void)
  *  Processos
  * =========================================================================== */
 
-#define MAX_TAREFAS       8u
+#define MAX_TAREFAS       16u
 #define PILHA_NUCLEO_TAM  QUADRO
 #define MAX_REINICIOS     5u
 
@@ -516,6 +514,13 @@ static void timer_iniciar(void)
 typedef struct {
     const u8 *ini, *fim;       /* imagem embutida no kernel.bin */
 } programa_t;
+
+/* Uma linha de programas.lista (a tabela PROGRAMAS vem de build/programas.h) */
+typedef struct {
+    const char *nome;
+    const u8   *ini, *fim;
+    u32         flags;
+} programa_info_t;
 
 typedef struct {
     u32        estado;         /* ESTADO_* (novaera.h) */
@@ -545,9 +550,7 @@ static u64      cr3_atual;
 static u32      contador_ordem;
 static volatile u32 ticks;
 
-extern const u8 prog_video_ini[],   prog_video_fim[];
-extern const u8 prog_teclado_ini[], prog_teclado_fim[];
-extern const u8 prog_shell_ini[],   prog_shell_fim[];
+#include "programas.h"     /* gerado de programas.lista pelo build.sh */
 
 static void nome_copia(char *dst, const char *src)
 {
@@ -784,7 +787,7 @@ static void processo_encerrar(u32 pid, int reiniciar, u64 motivo)
 
     if (cr3_atual == (u64)t->diretorio) {   /* nunca destrua o CR3 em uso */
         cr3_atual = (u64)pml4_boot;
-        __asm__ volatile ("mov %0, %%cr3" : : "r"(cr3_atual) : "memory");
+        cpu_carregar_cr3(cr3_atual);
     }
     espaco_destruir(t->diretorio);
     t->diretorio = 0;
@@ -894,11 +897,9 @@ static const char *const EXC_NOMES[22] = {
     "Virtualizacao", "Protecao de fluxo"
 };
 
-static void kernel_panico(const quadro_t *q) __attribute__((noreturn));
-static void kernel_panico(const quadro_t *q)
+static _Noreturn void kernel_panico(const quadro_t *q)
 {
-    u64 cr2;
-    __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
+    u64 cr2 = cpu_ler_cr2();
 
     const u8 a = ATTR(VGA_BRANCO, VGA_VERMELHO);
     for (u32 i = 0; i < VGA_COLUNAS * 3; i++)
@@ -912,8 +913,7 @@ static void kernel_panico(const quadro_t *q)
     c = vga_print(2, 1, "RIP=", a);     c = vga_hex(2, c, q->rip, a);
     c = vga_print(2, c, " CR2=", a);    vga_hex(2, c, cr2, a);
 
-    for (;;)
-        __asm__ volatile ("cli; hlt");
+    cpu_parar();
 }
 
 /* ===========================================================================
@@ -962,10 +962,10 @@ quadro_t *interrupt_dispatch(quadro_t *q)
     tarefa_t *t = &tarefas[atual];
     if ((u64)t->diretorio != cr3_atual) {
         cr3_atual = (u64)t->diretorio;
-        __asm__ volatile ("mov %0, %%cr3" : : "r"(cr3_atual) : "memory");
+        cpu_carregar_cr3(cr3_atual);
     }
     if (t->pilha_nucleo)
-        tss.rsp0 = (u64)t->pilha_nucleo + PILHA_NUCLEO_TAM;
+        tss_definir_rsp0((u64)t->pilha_nucleo + PILHA_NUCLEO_TAM);
 
     if (t->entregar) {                           /* última etapa do IPC */
         mem_copia((void *)t->msg_usuario, &t->caixa, sizeof(msg_t));
@@ -976,22 +976,24 @@ quadro_t *interrupt_dispatch(quadro_t *q)
 
 /* ------------------------------- Mensagem ------------------------------- */
 
-static const char MSG_NOME[] = "NovaEra Microkernel v3.0 x86_64";
-static const char MSG_SEP[]  = " - ";
-/* A VGA usa CP437, onde 0x87 = 'c cedilha'. Por isso "Come\x87ou". */
-static const char MSG_LEMA[] = "A Nova Era Come" "\x87" "ou";
-
+/* Nome, versão e lema vêm de sistema.conf: cada sistema tem a sua cara. */
 static void banner(void)
 {
-    const u32 larg = tamanho_str(MSG_NOME) + tamanho_str(MSG_SEP) + tamanho_str(MSG_LEMA);
-    const u32 col  = (VGA_COLUNAS - larg) / 2;
-
-    vga_moldura(0, col - 3, larg + 6, 3, ATTR(VGA_CIANO_CLARO, FUNDO));
+    const char *sep = tamanho_str(SISTEMA_LEMA) ? " - " : "";
+    const u32 larg = tamanho_str(SISTEMA_NOME) + 2 + tamanho_str(SISTEMA_VERSAO)
+                   + tamanho_str(sep) + tamanho_str(SISTEMA_LEMA);
+    u32 col = 0;
+    if (larg + 6 <= VGA_COLUNAS) {          /* cabe a moldura? */
+        col = (VGA_COLUNAS - larg) / 2;
+        vga_moldura(0, col - 3, larg + 6, 3, ATTR(VGA_CIANO_CLARO, FUNDO));
+    }
 
     u32 c = col;
-    c = vga_print(1, c, MSG_NOME, ATTR(VGA_BRANCO, FUNDO));
-    c = vga_print(1, c, MSG_SEP,  ATTR(VGA_CINZA_CLARO, FUNDO));
-    vga_print(1, c, MSG_LEMA,     ATTR(VGA_AMARELO, FUNDO));
+    c = vga_print(1, c, SISTEMA_NOME,   ATTR(VGA_BRANCO, FUNDO));
+    c = vga_print(1, c, " v",           ATTR(VGA_BRANCO, FUNDO));
+    c = vga_print(1, c, SISTEMA_VERSAO, ATTR(VGA_BRANCO, FUNDO));
+    c = vga_print(1, c, sep,            ATTR(VGA_CINZA_CLARO, FUNDO));
+    vga_print(1, c, SISTEMA_LEMA,       ATTR(VGA_AMARELO, FUNDO));
 }
 
 /* --------------------------- Ponto de entrada C -------------------------- */
@@ -1024,17 +1026,23 @@ void kernel_main(u64 magic, u64 mbi_endereco)
     term_status(1, "Timer PIT a 100 Hz: escalonador preemptivo");
 
     ocioso_iniciar();
-    int ok = processo_criar(PID_VIDEO,   "video",   prog_video_ini,   prog_video_fim,   T_DRIVER | T_VGA)
-           & processo_criar(PID_TECLADO, "teclado", prog_teclado_ini, prog_teclado_fim, T_DRIVER)
-           & processo_criar(PID_SHELL,   "shell",   prog_shell_ini,   prog_shell_fim,   0);
-    term_status(ok, "Servidores no anel 3: video, teclado, shell");
+    /* Cada linha de programas.lista vira um processo; o PID é a linha. */
+    int ok = NUM_PROGRAMAS < MAX_TAREFAS;
+    for (u32 i = 0; ok && i < NUM_PROGRAMAS; i++)
+        ok = processo_criar(i + 1, PROGRAMAS[i].nome, PROGRAMAS[i].ini,
+                            PROGRAMAS[i].fim, PROGRAMAS[i].flags);
+    term_status(ok, "Processos no anel 3 (programas.lista):");
+    term_escreve("      ", ATTR_FUNDO);
+    for (u32 i = 0; i < NUM_PROGRAMAS; i++) {
+        term_escreve(PROGRAMAS[i].nome, ATTR(VGA_AMARELO, FUNDO));
+        term_escreve(" ", ATTR_FUNDO);
+    }
+    term_putc('\n');
 
     term_escreve("\nEntregando a CPU aos processos do usuario...\n\n", ATTR(VGA_CINZA_CLARO, FUNDO));
     vga_mover_cursor(t_lin, t_col);         /* o servidor de vídeo continua daqui */
 
     /* A partir daqui este código é o processo 0 ("nucleo", ocioso).
      * A próxima IRQ do timer chama o escalonador, e a festa começa. */
-    __asm__ volatile ("sti");
-    for (;;)
-        __asm__ volatile ("hlt");
+    cpu_ocioso();
 }

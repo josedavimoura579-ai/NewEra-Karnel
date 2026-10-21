@@ -7,6 +7,7 @@
  * ===========================================================================
  */
 #include "ulib.h"
+#include "sistema.h"      /* gerado de sistema.conf pelo build.sh */
 
 /* ------------------------- Conversa com os servidores -------------------- */
 
@@ -201,12 +202,12 @@ void main(u64 reinicios, u64 falha)
         escreve_num((u32)reinicios, COR(COR_BRANCO));
         escreve(").\n\n", COR(COR_VERMELHO_CLARO));
     } else {
-        escreve("Shell do NovaEra (processo 3, anel 3, 64 bits). Digite 'ajuda'.\n\n",
+        escreve("Shell do " SISTEMA_NOME " (processo 3, anel 3, 64 bits). Digite 'ajuda'.\n\n",
                 COR(COR_CINZA_CLARO));
     }
 
     for (;;) {
-        escreve("NovaEra", COR(COR_CIANO_CLARO));
+        escreve(SISTEMA_PROMPT, COR(COR_CIANO_CLARO));
         escreve("> ",      COR(COR_AMARELO));
         ler_linha();
         executar();
