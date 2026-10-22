@@ -58,19 +58,42 @@ FILE *fdopen(int fd, const char *modo)
     return NULL;
 }
 
+/* "r", "w+", "ab"... -> as flags de open(); -1 se o modo for inválido. */
+static int flags_de(const char *modo)
+{
+    switch (modo[0]) {
+    case 'r': return strchr(modo, '+') ? O_RDWR : O_RDONLY;
+    case 'w': return (strchr(modo, '+') ? O_RDWR : O_WRONLY) | O_CREAT | O_TRUNC;
+    case 'a': return (strchr(modo, '+') ? O_RDWR : O_WRONLY) | O_CREAT | O_APPEND;
+    }
+    errno = EINVAL;
+    return -1;
+}
+
 FILE *fopen(const char *caminho, const char *modo)
 {
-    int flags;
-    switch (modo[0]) {
-    case 'r': flags = strchr(modo, '+') ? O_RDWR : O_RDONLY; break;
-    case 'w': flags = (strchr(modo, '+') ? O_RDWR : O_WRONLY) | O_CREAT | O_TRUNC; break;
-    case 'a': flags = (strchr(modo, '+') ? O_RDWR : O_WRONLY) | O_CREAT | O_APPEND; break;
-    default:  errno = EINVAL; return NULL;
-    }
+    int flags = flags_de(modo);
+    if (flags < 0) return NULL;
     int fd = open(caminho, flags);
     if (fd < 0) return NULL;
     FILE *f = fdopen(fd, modo);
     if (!f) close(fd);
+    return f;
+}
+
+static int esvaziar(FILE *f);
+
+/* O mesmo FILE passa a ser outro arquivo (como stdout -> um arquivo). */
+FILE *freopen(const char *caminho, const char *modo, FILE *f)
+{
+    esvaziar(f);
+    int flags = flags_de(modo);
+    int fd = flags < 0 || !caminho ? -1 : open(caminho, flags);
+    if (f->fd > 2) close(f->fd);
+    if (fd < 0) { f->usado = 0; return NULL; }
+    int ler = modo[0] == 'r' || strchr(modo, '+');
+    int escrever = modo[0] != 'r' || strchr(modo, '+');
+    preparar(f, fd, ler, escrever);
     return f;
 }
 

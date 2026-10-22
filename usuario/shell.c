@@ -44,7 +44,7 @@ static void cmd_ajuda(void)
     escreve("  reboot   ", c); escreve("reinicia o computador\n", d);
     escreve("Programas em /bin (veja: ls /bin):\n", COR(COR_CIANO_CLARO));
     escreve("  ls cat echo mkdir rm cmp novafetch ola codigo memoria falha filho\n", c);
-    escreve("  qbe nefs-as nefs-ld nefs-ar  (o compilador do NEFS, veja: nefs livro 4)\n", c);
+    escreve("  cproc qbe nefs-cpp nefs-as nefs-ld nefs-ar  (o compilador; nefs livro 4)\n", c);
     escreve("Pipes e arquivos: ", COR(COR_CIANO_CLARO));
     escreve("ls /bin | cat    echo oi > /tmp/a    cat < /tmp/a\n", c);
 }

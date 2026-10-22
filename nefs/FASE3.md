@@ -23,7 +23,7 @@ constrói.
 - **Assembler e ligador:** escrever os nossos (`nefs-as` e `nefs-ld`),
   pequenos e legíveis, para o subconjunto que o QBE gera. O GNU `as`/`ld`
   depende da libbfd e é grande demais.
-- **Pré-processador:** começar com um pequeno, só do NEFS; contribuir com
+- **Pré-processador:** um do NEFS (`nefs-cpp`), completo; contribuir com
   o pré-processador do cproc depois.
 - **Sistema de arquivos no disco:** decidir na Etapa 8 (FAT32 ou formato
   próprio).
@@ -93,13 +93,33 @@ Cada etapa termina com algo testável no QEMU e vira um pull request.
   - *Teste: o `nefs-as` gera os mesmos bytes, relocações e símbolos que o
     GNU as em 71 arquivos: todo o C do NovaEra e do QBE compilado pelo
     cproc, os `.s` do NovaEra e `ferramentas/testes/instrucoes.s` (todas as
-    instruções que o QBE pode gerar). Repita com `ferramentas/testes/testa.sh`. O núcleo montado e ligado por eles dá boot,
+    instruções que o QBE pode gerar). Repita com `ferramentas/testes/testa.sh`.
+    O núcleo montado e ligado por eles dá boot,
     com clang e com cproc + QBE (`testelibc` 47/47, QBE 77/77). Dentro do
     NovaEra: `qbe` → `nefs-as` → `nefs-ld` → o programa roda; e o próprio
     `kernel.bin`, montado e ligado lá dentro, é idêntico ao do Linux.*
-- [ ] **Etapa 6 — cproc rodando no NovaEra**
-  - pré-processador próprio do NEFS
-  - *Teste: `cproc -c ola.c` dentro do NovaEra.*
+- [x] **Etapa 6 — cproc rodando no NovaEra**
+  - **`nefs-cpp`** (`ferramentas/nefs-cpp.c`): pré-processador C11 completo
+    (`#include`, `#define` com `#` e `##`, `__VA_ARGS__`, `#if` com aritmética
+    de inteiros, `#line`, `#pragma once`, `__has_include`), com o algoritmo
+    de Prosser para a expansão de macros
+  - o **cproc** é um porte (`portes/cproc`), do git, no commit fixo; o
+    `config.h` do NovaEra liga o driver a `nefs-cpp`, `cproc-qbe`, `qbe`,
+    `nefs-as` e `nefs-ld`
+  - as receitas de porte aceitam git (commit fixo) e vários programas
+  - nlibc: `fcntl`, `freopen`, `readlink`, `environ`, `strsignal` e os
+    formatos `PRI*LEAST`/`PRI*FAST`; núcleo 3.2: até 256 argumentos e
+    16 KiB de texto por programa
+  - os cabeçalhos da libc em `/usr/include` e exemplos em C em
+    `/usr/share/nefs/exemplos`
+  - a ISO do NEFS deixa de levar o `cpp` do GCC: o cproc dela usa o `nefs-cpp`
+  - *Teste: o assembly gerado com o `nefs-cpp` é igual ao gerado com o
+    `cpp` do GCC em 291 arquivos (todo o C do NovaEra, do QBE e do cproc,
+    e a suíte de testes do cproc), e os exemplos do padrão C saem iguais
+    (`ferramentas/testes/testa-cpp.sh`). Dentro do NovaEra, `cproc -o`,
+    `-c`, `-S` e `-E` funcionam; o `kernel.c`, as 10 partes da nlibc e o
+    `testelibc.c` compilados lá dentro dão objetos idênticos aos do Linux;
+    a nlibc recompilada lá dentro passa no `testelibc` (47/47).*
 - [ ] **Etapa 7 — autossuficiência** (o grande marco)
   - o NovaEra compila o próprio NovaEra; o `nefs` vira um programa nativo
   - *Teste: o `kernel.bin` compilado lá dentro dá boot.*

@@ -21,21 +21,23 @@ modelo.
 ## O compilador: cproc + QBE
 
 ```
-arquivo .c → cproc → QBE → nefs-as → nefs-ld → programa do NovaEra
+arquivo .c → nefs-cpp → cproc → QBE → nefs-as → nefs-ld → programa do NovaEra
 ```
 
 - **[cproc](https://sr.ht/~mcf/cproc/)** entende C11 e gera o código
   intermediário do QBE.
 - **[QBE](https://c9x.me/compile/)** transforma esse código em assembly
   x86_64. São cerca de 10 mil linhas de C: dá para ler inteiro.
+- **nefs-cpp** (pasta `ferramentas/`) é o pré-processador: `#include`,
+  `#define`, `#if`... O cproc chama ele antes de compilar.
 - **nefs-as**, **nefs-ld** e **nefs-ar** (pasta `ferramentas/`) montam,
   ligam e juntam bibliotecas. São do NEFS, pequenos e legíveis, e rodam
   também dentro do NovaEra. O `nefs-as` gera os mesmos bytes que o GNU as,
   e isso é testado.
 
 Versões testadas juntas: **QBE 1.3** e **cproc** no commit `d1c53dd`
-(fixado em `iso/construir.sh`). O pré-processador do cproc ainda não está
-completo, então a ISO leva também o `cpp` do GCC (só o pré-processador).
+(fixados nas receitas de `portes/`). O cproc e o QBE rodam também dentro
+do NovaEra: lá, `cproc -o ola ola.c` faz tudo, do C até o programa.
 
 Para compilar com o cproc, o NovaEra respeita os limites dele:
 

@@ -199,6 +199,31 @@ int isatty(int fd)
 pid_t getpid(void) { return (pid_t)sys_pid(); }
 
 int kill(pid_t pid, int sinal) { (void)pid; (void)sinal; errno = ENOSYS; return -1; }
+
+static char *ambiente_vazio[1];
+char **environ = ambiente_vazio;
+
+int fcntl(int fd, int cmd, ...)
+{
+    nfd_t *f = __fd(fd);
+    if (!f) { errno = EBADF; return -1; }
+    switch (cmd) {
+    case F_GETFD: return FD_CLOEXEC;
+    case F_SETFD: return 0;
+    case F_GETFL: return O_RDWR;
+    case F_SETFL: return 0;
+    }
+    errno = EINVAL;
+    return -1;
+}
+
+/* O NovaEra não tem links simbólicos (nem /proc/self/exe). */
+ssize_t readlink(const char *caminho, char *buf, size_t tam)
+{
+    (void)caminho; (void)buf; (void)tam;
+    errno = EINVAL;
+    return -1;
+}
 sighandler_t signal(int sinal, sighandler_t f) { (void)sinal; (void)f; return SIG_DFL; }
 
 int mkstemp(char *modelo)

@@ -123,7 +123,7 @@ Compile com `bash build.sh`, rode no QEMU, digite `ola` e aperte Enter. Repare q
 
 ## Especificação técnica
 
-Estado atual: **NovaEra Microkernel v3.1** (alfa).
+Estado atual: **NovaEra Microkernel v3.2** (alfa).
 
 | Componente | Detalhes |
 |---|---|
@@ -147,12 +147,13 @@ Estado atual: **NovaEra Microkernel v3.1** (alfa).
 | **Drivers** | No anel 3 com IOPL 3 (podem usar `in`/`out`). **Vídeo**: o único processo com `0xB8000` mapeado. Converte UTF-8 para CP437 (os acentos do português aparecem). **Teclado**: PS/2 *set 1*, layout US, Shift, Ctrl e Caps Lock; entrega as teclas ao terminal e faz o `reboot` pela porta `0x64` |
 | **Supervisão** | Uma exceção no anel 3 encerra só o processo culpado, devolve a memória dele e o recarrega (até 5 vezes), avisando-o do motivo. Uma exceção no anel 0 mostra o painel vermelho de pânico |
 | **Shell (anel 3)** | Internos: `ajuda` · `cd` · `pwd` · `limpar` · `ps` · `mem` · `tempo` · `sobre` · `invadir` (demonstra a proteção de memória) · `reboot`. Qualquer outro nome executa `/bin/<nome>`, com argumentos, **pipes** (`a \| b`, até 4) e **redirecionamentos** (`>`, `>>`, `<`). O prompt mostra a pasta atual |
-| **Comandos** (`/bin`, de `usuario/bin/`) | `ls` · `cat` · `echo` · `mkdir` · `rm` · **`novafetch`** (o neofetch do NovaEra) · `ola` · `codigo N` · `memoria [MiB]` · `falha` · `filho` · **`testelibc`** (47 testes da libc) |
+| **Comandos** (`/bin`, de `usuario/bin/`) | `ls` · `cat` · `echo` · `mkdir` · `rm` · **`novafetch`** (o neofetch do NovaEra) · `ola` · `codigo N` · `memoria [MiB]` · `falha` · `filho` · `cmp` · **`testelibc`** (47 testes da libc) |
+| **Compilador** (`/bin`, dentro do NovaEra) | **`cproc`** (C → programa: `cproc -o /tmp/ola /usr/share/nefs/exemplos/ola.c`), `qbe`, `nefs-cpp`, `nefs-as`, `nefs-ld`, `nefs-ar`; cabeçalhos em `/usr/include`, a libc em `/usr/lib/nefs/libc.a` |
 | **libc** (`libc/`, a "nlibc") | C padrão para os programas do NovaEra: `stdio` (`printf` com `%.17g` exato, `scanf`, `fopen`, buffers), `stdlib` (`malloc`, `qsort` estável, `strtod` com arredondamento correto), `string`, `ctype`, `errno`, `getopt` e o POSIX que o cproc usa (`pipe`, `posix_spawnp`, `waitpid`, `mkstemp`, `unlink`). Por baixo, tudo vira mensagem para os servidores. Os comandos de `/bin` são ligados com ela |
 | **Ponto flutuante** | O núcleo liga o SSE e salva/restaura os registradores de ponto flutuante (FXSAVE/FXRSTOR) de cada processo na troca de contexto; o próprio núcleo não usa SSE |
 | **Linguagens** | Assembly x86-64 (sintaxe AT&T, a mesma que o QBE escreve) + C11 *freestanding*, sem assembly embutido nem atributos de compilador: compila com o clang (`CC=clang`, padrão) ou com o cproc + QBE do NEFS (`CC=cproc`) |
-| **Montador e ligador** | Os do NEFS, em `ferramentas/`: **`nefs-as`** (assembly AT&T → objeto ELF, com os mesmos bytes que o GNU as), **`nefs-ld`** (objetos → programa ELF ou o `kernel.bin`) e **`nefs-ar`** (bibliotecas `.a`). Também rodam dentro do NovaEra. O `as`/`ld` do binutils continuam como alternativa (`FERRAMENTAS=sistema`) |
-| **Versões** | O **núcleo** tem a sua (`NOVAERA_VERSAO` em `novaera.h`, hoje 3.1); a **distribuição** tem a dela em `sistema.conf`. No NovaEra puro (`PURO="sim"`) não há distribuição, e o banner e o `novafetch` mostram a versão do núcleo |
+| **Montador e ligador** | Os do NEFS, em `ferramentas/`: **`nefs-cpp`** (o pré-processador C), **`nefs-as`** (assembly AT&T → objeto ELF, com os mesmos bytes que o GNU as), **`nefs-ld`** (objetos → programa ELF ou o `kernel.bin`) e **`nefs-ar`** (bibliotecas `.a`). Também rodam dentro do NovaEra. O `as`/`ld` do binutils continuam como alternativa (`FERRAMENTAS=sistema`) |
+| **Versões** | O **núcleo** tem a sua (`NOVAERA_VERSAO` em `novaera.h`, hoje 3.2); a **distribuição** tem a dela em `sistema.conf`. No NovaEra puro (`PURO="sim"`) não há distribuição, e o banner e o `novafetch` mostram a versão do núcleo |
 | **Configuração** | `sistema.conf` (nome, versão, lema, prompt, puro) e `logo.txt` (a identidade, como o `/etc/os-release` do Linux) e `programas.lista` (servidores e permissões); o `build.sh` gera `build/sistema.h`, `build/programas.h`, `build/programas.s` e, no initrd, `/etc/sistema` e `/etc/logo.txt` |
 | **Dependências em tempo de execução** | Nenhuma. O núcleo não usa libc; os `#include` dele são a ABI (`novaera.h`) e os arquivos gerados pelo build. Os programas usam a libc do próprio NovaEra, nunca a do Linux (`-nostdinc`) |
 
@@ -209,8 +210,9 @@ novaera-kernel/
 │   └── bin/          #   os comandos: ls, cat, echo, mkdir, rm, novafetch...
 ├── build.sh          # Compila os programas, embute-os e liga o kernel.bin
 ├── libc/             # A libc do NovaEra: include/ (cabeçalhos), src/, crt0.s
-├── ferramentas/      # nefs-as, nefs-ld e nefs-ar: montador, ligador e bibliotecas
-├── portes/           # Programas de fora compilados para o NovaEra (o QBE)
+├── ferramentas/      # nefs-cpp, nefs-as, nefs-ld, nefs-ar: pré-processador, montador, ligador
+├── exemplos/         # programas em C para compilar dentro do NovaEra (cproc)
+├── portes/           # Programas de fora compilados para o NovaEra (QBE e cproc)
 ├── nefs/             # O NEFS: comando nefs, Livro do NEFS e a ISO (separado do núcleo)
 ├── run.sh            # Atalho para rodar no QEMU (pensado para o Termux)
 ├── kernel.bin        # Binário pronto para rodar
@@ -303,7 +305,7 @@ Uma janela abre com um PC virtual. Em menos de um segundo você verá a tela azu
 
 ```
 ╔════════════════════════════════════════════════════════╗
-║  NovaEra Microkernel v3.1 x86_64 - A Nova Era Começou  ║
+║  NovaEra Microkernel v3.2 x86_64 - A Nova Era Começou  ║
 ╚════════════════════════════════════════════════════════╝
 ```
 
@@ -408,7 +410,8 @@ O QBE gera código para x86_64, e foi por isso que o NovaEra passou para 64 bits
   - [x] Etapa 3 — a libc do NovaEra (nlibc) e ponto flutuante no núcleo
   - [x] Etapa 4 — o QBE rodando dentro do NovaEra (`qbe /usr/share/qbe/ola.ssa`)
   - [x] Etapa 5 — `nefs-as`, `nefs-ld` e `nefs-ar`: o núcleo montado e ligado por eles dá boot
-  - [ ] Etapas 6 a 8 — cproc, autossuficiência, ISO
+  - [x] Etapa 6 — o cproc e o `nefs-cpp` (pré-processador) rodando no NovaEra: `cproc -o ola ola.c` lá dentro
+  - [ ] Etapas 7 e 8 — autossuficiência, ISO
 
 ### Fases futuras (depois da Fase 3)
 

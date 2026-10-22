@@ -678,6 +678,18 @@ static void carrega(char *nome)
     else obj_inclui(obj_le(nome, d, tam));
 }
 
+/* -lnome: procura libnome.a nas pastas de -L e em /usr/lib/nefs. */
+static void biblioteca(const char *nome, const char **pastas, int npastas)
+{
+    for (int k = 0; k < npastas; k++) {
+        char *c = xmalloc(strlen(pastas[k]) + strlen(nome) + 8);
+        sprintf(c, "%s/lib%s.a", pastas[k], nome);
+        FILE *f = fopen(c, "rb");
+        if (f) { fclose(f); carrega(c); return; }
+    }
+    erro("biblioteca não encontrada", nome);
+}
+
 int main(int argc, char **argv)
 {
     const char *saida = "a.out", *entrada = "_start";
@@ -708,17 +720,9 @@ int main(int argc, char **argv)
         else if (strncmp(a, "-L", 2) == 0) continue;
         else if (strcmp(a, "-binario") == 0) binario = 1;
         else if (strcmp(a, "-mapa") == 0) mostra_mapa = 1;
-        else if (strncmp(a, "-l", 2) == 0 && a[2]) {
-            char *achou = 0;
-            for (int k = 0; k < npastas && !achou; k++) {
-                char *c = xmalloc(strlen(pastas[k]) + strlen(a) + 8);
-                sprintf(c, "%s/lib%s.a", pastas[k], a + 2);
-                FILE *f = fopen(c, "rb");
-                if (f) { fclose(f); achou = c; }
-            }
-            if (!achou) erro("biblioteca não encontrada", a);
-            carrega(achou);
-        }
+        else if (strcmp(a, "-s") == 0 || strcmp(a, "-static") == 0) continue;   /* do cproc */
+        else if (strcmp(a, "-l") == 0 && i + 1 < argc) biblioteca(argv[++i], pastas, npastas);
+        else if (strncmp(a, "-l", 2) == 0 && a[2]) biblioteca(a + 2, pastas, npastas);
         else if (a[0] == '-') uso();
         else carrega(xstrdup(a));
     }

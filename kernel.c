@@ -717,13 +717,16 @@ static int args_por(args_t *a, const char *texto)
 static int pilha_preparar(tarefa_t *t, const args_t *a, u64 *rsp, u64 *argv)
 {
     u64 topo = USUARIO_PILHA_TOPO;
-    if (!mapear_faixa(t->diretorio, topo - QUADRO, topo)) return 0;
-    t->pilha_baixo = topo - QUADRO;
-
     u64 textos = (topo - a->bytes) & ~7ull;
+    u64 vetor = (textos - (a->argc + 1) * 8) & ~15ull;   /* alinhado em 16 */
+    /* as páginas dos argumentos e mais uma, para a pilha começar */
+    u64 baixo = (vetor & ~(u64)(QUADRO - 1)) - QUADRO;
+    if (!mapear_faixa(t->diretorio, baixo, topo)) return 0;
+    t->pilha_baixo = baixo;
+
     if (!copiar_para_espaco(t->diretorio, textos, a->texto, a->bytes)) return 0;
 
-    u64 ptrs[ARGV_MAX + 1];
+    static u64 ptrs[ARGV_MAX + 1];       /* estático: a pilha do núcleo é pequena */
     u32 pos = 0;
     for (u32 i = 0; i < a->argc; i++) {
         ptrs[i] = textos + pos;
@@ -731,7 +734,6 @@ static int pilha_preparar(tarefa_t *t, const args_t *a, u64 *rsp, u64 *argv)
     }
     ptrs[a->argc] = 0;
 
-    u64 vetor = (textos - (a->argc + 1) * 8) & ~15ull;   /* alinhado em 16 */
     if (!copiar_para_espaco(t->diretorio, vetor, ptrs, (a->argc + 1) * 8)) return 0;
     *argv = vetor;
     *rsp  = vetor;

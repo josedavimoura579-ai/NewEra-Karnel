@@ -4,8 +4,9 @@ VERSAO=1.3
 URL=https://c9x.me/compile/release/qbe-1.3.tar.xz
 SHA256=d587905d620dc5e1d2bfa7c2cc642b9b837aa89a3188c6e37b53d756cf66e320
 PASTA=qbe-1.3
-# Os arquivos .c que viram o programa (a lista do Makefile do QBE).
-FONTES="main.c util.c parse.c abi.c cfg.c mem.c ssa.c alias.c load.c
+# Os programas e os arquivos .c de cada um (a lista do Makefile do QBE).
+PROGRAMAS="qbe"
+FONTES_qbe="main.c util.c parse.c abi.c cfg.c mem.c ssa.c alias.c load.c
         copy.c fold.c gvn.c gcm.c simpl.c ifopt.c live.c spill.c rega.c emit.c
         amd64/targ.c amd64/sysv.c amd64/isel.c amd64/emit.c amd64/winabi.c
         arm64/targ.c arm64/abi.c arm64/isel.c arm64/emit.c

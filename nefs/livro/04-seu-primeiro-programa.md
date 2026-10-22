@@ -148,28 +148,42 @@ O `usuario/teclado.c` é um driver completo: leia-o como exemplo.
 
 ## O compilador dentro do NovaEra
 
-O NovaEra já roda o **QBE**, a metade de trás do compilador do NEFS. No
-shell do seu sistema:
+O compilador inteiro do NEFS roda dentro do NovaEra. No shell do seu
+sistema:
 
 ```
-qbe /usr/share/qbe/ola.ssa
+cproc -o /tmp/ola /usr/share/nefs/exemplos/ola.c
+/tmp/ola Maria
 ```
 
-Ele lê a linguagem intermediária do QBE (SSA) e escreve o assembly x86_64,
-igual ao que o QBE escreve no Linux. O QBE não foi reescrito: é o código
-original compilado com a libc do NovaEra (veja a pasta `portes/`).
+O `cproc` é o mesmo compilador que você usa na ISO. Lá dentro, ele chama
+cinco programas, um depois do outro:
 
-O montador e o ligador do NEFS também rodam lá dentro. Do SSA até um
-programa que roda, sem sair do NovaEra:
+| Programa | O que faz |
+|---|---|
+| `nefs-cpp` | o pré-processador: `#include`, `#define`, `#if` |
+| `cproc-qbe` | o compilador de verdade: C → linguagem intermediária do QBE (SSA) |
+| `qbe` | SSA → assembly x86_64 |
+| `nefs-as` | assembly → objeto (`.o`) |
+| `nefs-ld` | objetos + libc → programa |
+
+Para ver cada passo, use `cproc -v`. Os cabeçalhos (`stdio.h`...) ficam em
+`/usr/include`, e a libc em `/usr/lib/nefs/libc.a`. Outros exemplos:
+`primos.c` e `ordena.c`, na mesma pasta.
+
+Dá também para fazer os passos à mão:
 
 ```
-qbe -o /tmp/ola.s /usr/share/qbe/ola.ssa     # SSA -> assembly
-nefs-as -o /tmp/ola.o /tmp/ola.s             # assembly -> objeto
-nefs-ld -o /tmp/ola /tmp/ola.o -lc           # objeto + libc -> programa
-/tmp/ola
+cproc -S -o /tmp/ola.s /usr/share/nefs/exemplos/ola.c   # C -> assembly
+nefs-as -o /tmp/ola.o /tmp/ola.s                        # assembly -> objeto
+nefs-ld -o /tmp/ola /tmp/ola.o -lc                      # objeto + libc -> programa
 ```
 
-O `-lc` é a libc do NovaEra (`/usr/lib/nefs/libc.a`): o `nefs-ld` pega
-dela só o que o programa usa, inclusive o começo (`_start`, em `crt0.s`).
+O `-lc` é a libc do NovaEra: o `nefs-ld` pega dela só o que o programa
+usa, inclusive o começo (`_start`, em `crt0.s`). O QBE e o cproc não
+foram reescritos: são o código original compilado com a libc do NovaEra
+(veja a pasta `portes/`).
+
+Os arquivos de `/tmp` ficam na memória: somem quando o sistema desliga.
 
 Próximo capítulo: `nefs livro 5`.

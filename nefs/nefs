@@ -95,7 +95,7 @@ compilador() {
 cmd_ferramentas() {
     cc="$(compilador)"
     echo "Compilador C:  ${cc:-NENHUM (instale cproc+qbe ou clang)}"
-    for f in cproc qbe cpp cc qemu-system-x86_64 grub-mkrescue xorriso; do
+    for f in cproc qbe nefs-cpp nefs-as nefs-ld nefs-ar cc qemu-system-x86_64 grub-mkrescue xorriso; do
         if tem "$f"; then printf '  %-20s %s\n' "$f" "$(command -v "$f")"
         else              printf '  %-20s %s\n' "$f" "(não encontrado)"
         fi
@@ -117,7 +117,8 @@ cmd_novo() {
     done
     cp "$NEFS_MODELO"/usuario/*.c "$NEFS_MODELO"/usuario/*.h \
        "$NEFS_MODELO"/usuario/*.s "$NEFS_MODELO"/usuario/*.ld "$pasta/usuario/"
-    cp -r "$NEFS_MODELO/ferramentas" "$pasta/ferramentas"   # nefs-as, nefs-ld, nefs-ar
+    cp -r "$NEFS_MODELO/ferramentas" "$pasta/ferramentas"   # nefs-cpp, nefs-as, nefs-ld, nefs-ar
+    [ -d "$NEFS_MODELO/exemplos" ] && cp -r "$NEFS_MODELO/exemplos" "$pasta/exemplos"   # programas em C
     mkdir -p "$pasta/usuario/bin"
     cp "$NEFS_MODELO"/usuario/bin/*.c "$pasta/usuario/bin/"
     cp -r "$NEFS_MODELO/libc" "$pasta/libc"           # a libc do NovaEra (nlibc)

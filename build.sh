@@ -271,9 +271,12 @@ for fonte in usuario/bin/*.c ferramentas/*.c; do
     compilar "build/bin-$nome.o" "$fonte" $CFLAGS
     ligar_programa "build/initrd/bin/$nome" build/libc/crt0.o "build/bin-$nome.o" "$LIBC"
 done
-# Para ligar programas dentro do NovaEra: nefs-ld -o prog prog.o -lc
-mkdir -p build/initrd/usr/lib/nefs
+# Para compilar e ligar programas dentro do NovaEra (cproc ola.c): a libc
+# (/usr/lib/nefs/libc.a), os cabeçalhos dela (/usr/include) e exemplos.
+mkdir -p build/initrd/usr/lib/nefs build/initrd/usr/share/nefs
 cp build/libc/libc.a build/initrd/usr/lib/nefs/libc.a
+cp -r libc/include build/initrd/usr/include
+[ -d exemplos ] && cp -r exemplos build/initrd/usr/share/nefs/exemplos
 
 # --- 4. Os portes: programas de fora (portes/<nome>/receita) ----------------
 # Cada porte é compilado do código original, sem mudanças, com a libc do
@@ -285,7 +288,9 @@ for receita in portes/*/receita; do
     (
         # shellcheck disable=SC1090
         . "./$receita"
-        arquivo="portes/fontes/$(basename "$URL")"
+        if [ -n "${GIT:-}" ]; then arquivo="portes/fontes/$NOME-$COMMIT.tar.gz"
+        else arquivo="portes/fontes/$(basename "$URL")"
+        fi
         if [ ! -f "$arquivo" ]; then
             echo "  portes: $NOME $VERSAO sem fontes (rode portes/baixar.sh), fica de fora"
             exit 0
@@ -302,21 +307,29 @@ for receita in portes/*/receita; do
             case "$extra" in */receita|*/exemplos) continue ;; esac
             cp "$extra" "build/portes/$PASTA/"
         done
-        objs=""
-        for fonte in $FONTES; do
-            obj="build/portes/$PASTA/$(echo "$fonte" | tr / _).o"
-            # Sem avisos: o código é de outro projeto; eles são assunto de lá.
+        # Cada programa do porte: os seus .c (um .c usado por dois programas
+        # é compilado uma vez só).
+        for prog in $PROGRAMAS; do
+            eval "fontes=\$FONTES_$(echo "$prog" | tr - _)"
+            objs=""
+            # shellcheck disable=SC2154
+            for fonte in $fontes; do
+                obj="build/portes/$PASTA/$(echo "$fonte" | tr / _).o"
+                if [ ! -f "$obj" ]; then
+                    # Sem avisos: o código é de outro projeto; eles são assunto de lá.
+                    # shellcheck disable=SC2086
+                    compilar "$obj" "build/portes/$PASTA/$fonte" $CFLAGS $SEM_AVISOS
+                fi
+                objs="$objs $obj"
+            done
             # shellcheck disable=SC2086
-            compilar "$obj" "build/portes/$PASTA/$fonte" $CFLAGS $SEM_AVISOS
-            objs="$objs $obj"
+            ligar_programa "build/initrd/bin/$prog" build/libc/crt0.o $objs "$LIBC"
+            echo "  portes: $NOME $VERSAO -> bin/$prog ($(wc -c < "build/initrd/bin/$prog") bytes)"
         done
-        # shellcheck disable=SC2086
-        ligar_programa "build/initrd/bin/$NOME" build/libc/crt0.o $objs "$LIBC"
         if [ -n "${EXEMPLOS:-}" ] && [ -d "$dir/exemplos" ]; then
             mkdir -p "build/initrd$EXEMPLOS"
             cp "$dir"/exemplos/* "build/initrd$EXEMPLOS/"
         fi
-        echo "  portes: $NOME $VERSAO -> bin/$NOME ($(wc -c < "build/initrd/bin/$NOME") bytes)"
     )
 done
 

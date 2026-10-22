@@ -31,7 +31,7 @@ em `logo.txt`, compile e digite `novafetch` no shell:
 ```
   +-----------------+     Sistema da Maria
   |   seu logo      |     Sistema:   Sistema da Maria 0.1
-  |   aqui :)       |     Núcleo:    NovaEra 3.1 x86_64
+  |   aqui :)       |     Núcleo:    NovaEra 3.2 x86_64
   +-----------------+     ...
 ```
 

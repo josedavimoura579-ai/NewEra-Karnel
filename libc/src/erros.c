@@ -21,6 +21,13 @@ int __erro_c(long e)
     return EIO;
 }
 
+char *strsignal(int s)
+{
+    static char buf[24];
+    snprintf(buf, sizeof buf, "sinal %d", s);
+    return buf;
+}
+
 char *strerror(int e)
 {
     switch (e) {

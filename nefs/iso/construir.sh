@@ -6,8 +6,9 @@
 #
 #  Dentro da ISO:
 #    - kernel Linux + BusyBox (o terminal, os comandos básicos, o vi)
-#    - o compilador do NEFS: cproc (C) + QBE (backend) + nefs-as, nefs-ld e
-#      nefs-ar (montador, ligador e bibliotecas, deste repositório)
+#    - o compilador do NEFS: cproc (C) + QBE (backend) + nefs-cpp, nefs-as,
+#      nefs-ld e nefs-ar (pré-processador, montador, ligador e bibliotecas,
+#      deste repositório)
 #    - QEMU (para testar o sistema criado) e GRUB (para gerar ISOs)
 #    - o comando nefs, o código do NovaEra (modelo) e o Livro do NEFS
 #
@@ -33,11 +34,13 @@ RAIZ="$TRABALHO/raiz"            # o sistema de arquivos da ISO
 CD="$TRABALHO/cd"                # o conteúdo do CD (kernel + initramfs + GRUB)
 
 NEFS_VERSAO="$(sed -n 's/^NEFS_VERSAO="\(.*\)"/\1/p' "$REPO/nefs/nefs")"
-# Versões testadas juntas: o NovaEra compila e roda com elas.
-QBE_VERSAO="1.3"
-QBE_URL="https://c9x.me/compile/release/qbe-$QBE_VERSAO.tar.xz"
-CPROC_URL="https://git.sr.ht/~mcf/cproc"
-CPROC_COMMIT="d1c53ddf56571573a7025324c8dd5c6d547a4d1f"   # 2026-04-27, usa QBE 1.3
+# Versões testadas juntas: as mesmas dos portes (portes/*/receita), que
+# rodam dentro do NovaEra.
+QBE_VERSAO="$(. "$REPO/portes/qbe/receita"; echo "$VERSAO")"
+QBE_URL="$(. "$REPO/portes/qbe/receita"; echo "$URL")"
+CPROC_URL="$(. "$REPO/portes/cproc/receita"; echo "$GIT")"
+CPROC_COMMIT="$(. "$REPO/portes/cproc/receita"; echo "$COMMIT")"
+CPROC_PASTA="$(. "$REPO/portes/cproc/receita"; echo "$PASTA")"
 
 SEM_COMPILADOR=0
 [ "${1:-}" = "--sem-compilador" ] && SEM_COMPILADOR=1
@@ -85,7 +88,10 @@ if [ "$SEM_COMPILADOR" = 0 ]; then
         || erro "não achei o commit $CPROC_COMMIT do cproc"
     rm -rf "$TRABALHO/cproc"
     cp -r "$FONTES/cproc" "$TRABALHO/cproc"
-    (cd "$TRABALHO/cproc" && ./configure --prefix=/usr >/dev/null && make -s)
+    # O pré-processador é o do NEFS (nefs-cpp), não o cpp do GCC.
+    (cd "$TRABALHO/cproc" && ./configure --prefix=/usr >/dev/null &&
+     sed -i 's/"cpp", "-undef"/"nefs-cpp", "-undef"/' config.h &&
+     grep -q '"nefs-cpp"' config.h && make -s)
     make -s -C "$TRABALHO/cproc" install DESTDIR="$COMPILADOR"
     echo "cproc $(git -C "$FONTES/cproc" rev-parse --short HEAD)" > "$COMPILADOR/versoes.txt"
     echo "qbe $QBE_VERSAO" >> "$COMPILADOR/versoes.txt"
@@ -120,7 +126,7 @@ done
 
 # As ferramentas do NEFS: montador, ligador e bibliotecas. O build.sh do
 # NovaEra as usa direto (dentro da ISO não há compilador para o Linux).
-for f in nefs-as nefs-ld nefs-ar; do
+for f in nefs-cpp nefs-as nefs-ld nefs-ar; do
     gcc -O2 -o "$TRABALHO/$f" "$REPO/ferramentas/$f.c"
     copiar_com_libs "$TRABALHO/$f" "/usr/bin/$f"
 done
@@ -137,13 +143,6 @@ if [ "$SEM_COMPILADOR" = 0 ]; then
     [ -d "$COMPILADOR/usr/lib" ] && cp -a "$COMPILADOR/usr/lib/." "$RAIZ/usr/lib/"
     mkdir -p "$RAIZ/usr/share/nefs"
     cp "$COMPILADOR/versoes.txt" "$RAIZ/usr/share/nefs/compilador.txt"
-    # O pré-processador do cproc ainda não está completo: ele usa o cpp do
-    # GCC (só o pré-processador, cpp + cc1; o compilador continua o cproc).
-    copiar_com_libs "$(readlink -f "$(command -v cpp)")" /usr/bin/cpp
-    cc1="$(gcc -print-prog-name=cc1)"
-    copiar_com_libs "$cc1" "$cc1"
-    cp -a "$(dirname "$(gcc -print-libgcc-file-name)")/include" \
-          "$RAIZ$(dirname "$(gcc -print-libgcc-file-name)")/" 2>/dev/null || true
 fi
 
 # QEMU, para testar o sistema criado sem sair da ISO (tela no terminal)
@@ -183,10 +182,15 @@ mkdir -p "$MODELO/usuario/bin"
 cp "$REPO"/usuario/bin/*.c "$MODELO/usuario/bin/"
 cp -r "$REPO/libc" "$MODELO/libc"
 cp -r "$REPO/ferramentas" "$MODELO/ferramentas"
-# Os portes (o QBE que roda dentro do NovaEra), já com as fontes: a ISO
-# não precisa de internet para compilá-los.
+cp -r "$REPO/exemplos" "$MODELO/exemplos"
+# Os portes (o QBE e o cproc que rodam dentro do NovaEra), já com as
+# fontes: a ISO não precisa de internet para compilá-los.
 mkdir -p "$REPO/portes/fontes"
 cp "$FONTES/qbe-$QBE_VERSAO.tar.xz" "$REPO/portes/fontes/" 2>/dev/null || true
+if [ -d "$FONTES/cproc" ]; then
+    git -C "$FONTES/cproc" archive --format=tar --prefix="$CPROC_PASTA/" "$CPROC_COMMIT" |
+        gzip -n > "$REPO/portes/fontes/cproc-$CPROC_COMMIT.tar.gz"
+fi
 cp -r "$REPO/portes" "$MODELO/portes"
 # O NovaEra original já compilado, para comparar com o seu sistema:
 #   qemu-system-x86_64 -kernel /usr/share/nefs/novaera/kernel.bin \

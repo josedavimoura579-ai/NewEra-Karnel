@@ -22,7 +22,7 @@ typedef unsigned long long u64;
 
 /* A versão do NÚCLEO. A do sistema (a "distribuição") fica em sistema.conf,
  * como o /etc/os-release do Linux: o núcleo não sabe qual é a distro. */
-#define NOVAERA_VERSAO     "3.1"
+#define NOVAERA_VERSAO     "3.2"
 #define NOVAERA_ARQUITETURA "x86_64"
 
 /* ---------------------- Chamadas de sistema (int 0x80) -------------------
@@ -47,7 +47,7 @@ typedef unsigned long long u64;
 #define SYS_COPIAR_DE   16   /* (pid, copia_t*)  copia da memória de quem me CHAMOU para a minha */
 #define SYS_AMBIENTE    17   /* (msg*)           entrada, saída padrão e pasta atual */
 #define SYS_PASTA       18   /* (caminho)        muda a pasta atual          */
-#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.1 x86_64" (como o uname) */
+#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.2 x86_64" (como o uname) */
 
 #define ERRO_INVALIDO   (-1) /* argumento ou ponteiro inválido */
 #define ERRO_SEM_PERMISSAO (-2)
@@ -178,8 +178,8 @@ typedef struct {
 #define USUARIO_PILHA_TAM   0x00100000ull
 #define USUARIO_FIM         USUARIO_PILHA_TOPO
 
-#define ARGV_MAX       16u   /* argumentos por programa      */
-#define ARGV_BYTES   1024u   /* soma do tamanho dos textos   */
+#define ARGV_MAX      256u   /* argumentos por programa (o cproc passa ~50) */
+#define ARGV_BYTES  16384u   /* soma do tamanho dos textos   */
 #define CAMINHO_MAX    64u   /* caminho de arquivo, com o '\0' (cabe numa mensagem) */
 
 #endif
