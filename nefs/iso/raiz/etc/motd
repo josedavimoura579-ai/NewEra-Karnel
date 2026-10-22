@@ -1,0 +1,15 @@
+
+  =================================================================
+   NEFS @NEFS_VERSAO@ - NovaEra From Scratch
+   Crie o seu proprio sistema operacional sobre o NovaEra.
+  =================================================================
+
+   nefs ajuda                      todos os comandos
+   nefs livro                      o Livro do NEFS (comece pelo 1)
+   nefs novo meu-so "Meu Sistema"  cria o seu sistema
+   cd meu-so && nefs compilar      compila com cproc + QBE
+   nefs rodar                      testa numa maquina virtual
+
+   Tudo aqui fica na memoria RAM: copie o seu trabalho antes de
+   desligar (veja o capitulo 2 do livro).
+

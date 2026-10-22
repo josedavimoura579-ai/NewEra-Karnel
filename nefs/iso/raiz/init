@@ -1,0 +1,19 @@
+#!/bin/sh
+# ===========================================================================
+#  NEFS - /init
+#  O primeiro programa que o Linux executa. O sistema inteiro da ISO já
+#  está na memória (initramfs): só falta montar /proc, /sys e /dev e
+#  entregar o controle ao init do BusyBox (que lê /etc/inittab).
+# ===========================================================================
+mount -t proc     proc     /proc
+mount -t sysfs    sysfs    /sys
+mount -t devtmpfs devtmpfs /dev
+mkdir -p /dev/pts
+mount -t devpts   devpts   /dev/pts
+mount -t tmpfs    tmpfs    /tmp
+mount -t tmpfs    tmpfs    /run
+
+hostname nefs
+ip link set lo up 2>/dev/null
+
+exec /sbin/init

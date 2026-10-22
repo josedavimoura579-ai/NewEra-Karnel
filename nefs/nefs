@@ -1,0 +1,342 @@
+#!/bin/sh
+# ===========================================================================
+#  nefs - NovaEra From Scratch
+#  A ferramenta para criar o SEU sistema operacional sobre o NovaEra.
+#
+#  Roda na ISO do NEFS (compilador cproc + QBE) e também em qualquer Linux
+#  ou no Termux (usa o clang se o cproc não estiver instalado).
+#  Escrito em sh puro, sem dependências além das ferramentas de build.
+# ===========================================================================
+set -eu
+
+NEFS_VERSAO="0.1"
+
+# Onde está o código-fonte do NovaEra que serve de modelo para "nefs novo":
+#   na ISO:          /usr/share/nefs/novaera
+#   no repositório:  a pasta acima de nefs/
+if [ -z "${NEFS_MODELO:-}" ]; then
+    aqui="$(cd "$(dirname "$0")" && pwd)"
+    if [ -f "$aqui/../kernel.c" ]; then
+        NEFS_MODELO="$(cd "$aqui/.." && pwd)"
+    else
+        NEFS_MODELO="/usr/share/nefs/novaera"
+    fi
+fi
+NEFS_LIVRO="${NEFS_LIVRO:-$NEFS_MODELO/nefs/livro}"
+[ -d "$NEFS_LIVRO" ] || NEFS_LIVRO="/usr/share/nefs/livro"
+
+# --------------------------------- Cores ----------------------------------
+if [ -t 1 ]; then
+    C_OK="$(printf '\033[1;32m')"; C_ERRO="$(printf '\033[1;31m')"
+    C_DICA="$(printf '\033[1;36m')"; C_FIM="$(printf '\033[0m')"
+else
+    C_OK=""; C_ERRO=""; C_DICA=""; C_FIM=""
+fi
+
+ok()   { printf '%s[ OK ]%s %s\n' "$C_OK" "$C_FIM" "$*"; }
+dica() { printf '%s=>%s %s\n' "$C_DICA" "$C_FIM" "$*"; }
+erro() { printf '%s[ERRO]%s %s\n' "$C_ERRO" "$C_FIM" "$*" >&2; exit 1; }
+
+tem() { command -v "$1" >/dev/null 2>&1; }
+
+# Estamos dentro de um projeto? (procura sistema.conf subindo as pastas)
+achar_projeto() {
+    d="$(pwd)"
+    while [ "$d" != "/" ]; do
+        if [ -f "$d/sistema.conf" ] && [ -f "$d/kernel.c" ]; then
+            PROJETO="$d"
+            return 0
+        fi
+        d="$(dirname "$d")"
+    done
+    erro "nenhum projeto aqui. Crie um com: nefs novo <pasta>"
+}
+
+# ------------------------------- Comandos ---------------------------------
+
+cmd_ajuda() {
+    cat <<EOF
+NEFS $NEFS_VERSAO - NovaEra From Scratch
+Crie o seu próprio sistema operacional sobre o microkernel NovaEra.
+
+Uso: nefs <comando> [argumentos]
+
+  novo <pasta> [nome]   cria um sistema novo a partir do NovaEra
+  comando <nome>        cria um comando do shell (programa do initrd)
+  programa <nome>       cria um servidor que sobe no boot (programas.lista)
+  compilar              compila o sistema e gera o kernel.bin
+  rodar                 liga o sistema numa máquina virtual (QEMU)
+  iso                   gera uma ISO inicializável do sistema (GRUB)
+  info                  mostra a configuração do sistema atual
+  livro [capítulo]      lê o livro do NEFS (sem número: lista os capítulos)
+  ferramentas           mostra o compilador e as ferramentas encontradas
+  versao                mostra a versão do NEFS
+
+Primeiros passos:
+  nefs novo meu-so "Meu Sistema"
+  cd meu-so
+  nefs compilar
+  nefs rodar
+EOF
+}
+
+cmd_versao() {
+    echo "NEFS $NEFS_VERSAO (NovaEra From Scratch)"
+}
+
+compilador() {
+    if [ -n "${CC:-}" ]; then echo "$CC"
+    elif tem cproc; then echo cproc
+    elif tem clang; then echo clang
+    else echo ""
+    fi
+}
+
+cmd_ferramentas() {
+    cc="$(compilador)"
+    echo "Compilador C:  ${cc:-NENHUM (instale cproc+qbe ou clang)}"
+    for f in cproc qbe nefs-cpp nefs-as nefs-ld nefs-ar cc qemu-system-x86_64 grub-mkrescue xorriso; do
+        if tem "$f"; then printf '  %-20s %s\n' "$f" "$(command -v "$f")"
+        else              printf '  %-20s %s\n' "$f" "(não encontrado)"
+        fi
+    done
+    echo "Modelo NovaEra: $NEFS_MODELO"
+}
+
+cmd_novo() {
+    [ $# -ge 1 ] || erro "uso: nefs novo <pasta> [nome do sistema]"
+    pasta="$1"
+    nome="${2:-$(basename "$pasta")}"
+    [ ! -e "$pasta" ] || erro "'$pasta' já existe"
+    [ -f "$NEFS_MODELO/kernel.c" ] || erro "modelo do NovaEra não encontrado em $NEFS_MODELO"
+
+    mkdir -p "$pasta/usuario"
+    for f in kernel.c boot.s cpu.s novaera.h linker.ld build.sh \
+             sistema.conf programas.lista LICENSE; do
+        cp "$NEFS_MODELO/$f" "$pasta/"
+    done
+    cp "$NEFS_MODELO"/usuario/*.c "$NEFS_MODELO"/usuario/*.h \
+       "$NEFS_MODELO"/usuario/*.s "$NEFS_MODELO"/usuario/*.ld "$pasta/usuario/"
+    cp -r "$NEFS_MODELO/ferramentas" "$pasta/ferramentas"   # nefs-cpp, nefs-as, nefs-ld, nefs-ar
+    [ -d "$NEFS_MODELO/exemplos" ] && cp -r "$NEFS_MODELO/exemplos" "$pasta/exemplos"   # programas em C
+    mkdir -p "$pasta/usuario/bin"
+    cp "$NEFS_MODELO"/usuario/bin/*.c "$pasta/usuario/bin/"
+    cp -r "$NEFS_MODELO/libc" "$pasta/libc"           # a libc do NovaEra (nlibc)
+    [ -d "$NEFS_MODELO/portes" ] && cp -r "$NEFS_MODELO/portes" "$pasta/portes"   # QBE e outros portes
+    chmod +x "$pasta/build.sh"
+
+    # A identidade do sistema novo. O prompt é o nome sem espaços.
+    prompt="$(printf '%s' "$nome" | tr -d ' ')"
+    cat > "$pasta/sistema.conf" <<EOF
+# ===========================================================================
+#  sistema.conf - a identidade do seu sistema operacional (a "distribuição")
+#  É o "os-release" do seu sistema: o núcleo NovaEra não sabe qual é a
+#  distro. O build.sh gera build/sistema.h e o /etc/sistema do initrd, que
+#  o novafetch lê. O logo fica em logo.txt.
+#  Acentos são aceitos: a tela VGA usa CP437, e o build converte o que der.
+# ===========================================================================
+NOME="$nome"
+VERSAO="0.1"
+LEMA="feito com o NEFS sobre o NovaEra"
+PROMPT="$prompt"
+PURO="nao"
+EOF
+    cat > "$pasta/logo.txt" <<EOF
+  +-----------------+
+  |                 |
+  |   seu logo      |
+  |   aqui :)       |
+  |                 |
+  +-----------------+
+EOF
+    cat > "$pasta/LEIAME.md" <<EOF
+# $nome
+
+Sistema operacional criado com o [NEFS](https://github.com/josedavimoura579-ai/NewEra-Karnel)
+sobre o microkernel NovaEra.
+
+    nefs compilar   # gera o kernel.bin
+    nefs rodar      # liga numa máquina virtual
+    nefs iso        # gera uma ISO inicializável
+EOF
+    ok "sistema '$nome' criado em $pasta/"
+    dica "próximos passos:  cd $pasta  &&  nefs compilar  &&  nefs rodar"
+}
+
+cmd_programa() {
+    [ $# -ge 1 ] || erro "uso: nefs programa <nome>"
+    achar_projeto
+    nome="$1"
+    case "$nome" in
+        *[!a-z0-9_]*|[!a-z]*) erro "nome inválido: use letras minúsculas, números e _, começando por letra" ;;
+    esac
+    [ "${#nome}" -le 11 ] || erro "nome muito longo (máximo 11 letras)"
+    [ ! -f "$PROJETO/usuario/$nome.c" ] || erro "usuario/$nome.c já existe"
+
+    total="$(grep -cv '^[[:space:]]*\(#\|$\)' "$PROJETO/programas.lista" || true)"
+    [ "$total" -lt 15 ] || erro "o núcleo aceita no máximo 15 programas"
+    pid=$((total + 1))
+
+    cat > "$PROJETO/usuario/$nome.c" <<EOF
+/*
+ * usuario/$nome.c - um programa do anel 3 (PID $pid)
+ * Criado por "nefs programa $nome".
+ *
+ * Ele não pode tocar no hardware nem na memória de ninguém: tudo o que
+ * faz passa por mensagens (ver novaera.h e usuario/ulib.h).
+ */
+#include "ulib.h"
+
+int main(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+
+    /* escreve() manda o texto para a saída padrão (normalmente o terminal). */
+    escreve("Ola! Aqui e o programa $nome (PID $pid).\n", COR(COR_VERDE_CLARO));
+
+    /* Um servidor passa a vida esperando mensagens e respondendo. */
+    msg_t m;
+    for (;;) {
+        sys_receber(PID_QUALQUER, &m);
+        /* trate m.tipo aqui; responda com sys_responder(m.origem, &m) */
+    }
+}
+EOF
+    printf '%-11s -\n' "$nome" >> "$PROJETO/programas.lista"
+    ok "programa '$nome' criado: usuario/$nome.c (PID $pid)"
+    dica "ele já está em programas.lista; rode  nefs compilar  &&  nefs rodar"
+}
+
+cmd_comando() {
+    [ $# -ge 1 ] || erro "uso: nefs comando <nome>"
+    achar_projeto
+    nome="$1"
+    case "$nome" in
+        *[!a-z0-9_]*|[!a-z]*) erro "nome inválido: use letras minúsculas, números e _, começando por letra" ;;
+    esac
+    [ ! -f "$PROJETO/usuario/bin/$nome.c" ] || erro "usuario/bin/$nome.c já existe"
+    mkdir -p "$PROJETO/usuario/bin"
+    cat > "$PROJETO/usuario/bin/$nome.c" <<EOF
+/*
+ * usuario/bin/$nome.c - um comando do shell. Criado por "nefs comando $nome".
+ *
+ * É C padrão, com a libc do NovaEra (printf, fopen, malloc...). O build o
+ * coloca no initrd como /bin/$nome; o shell o executa quando você digita
+ * "$nome" (com argumentos, se quiser). O valor que main() devolve é o
+ * código de saída.
+ */
+#include <stdio.h>
+
+int main(int argc, char **argv)
+{
+    printf("Ola do comando $nome!\n");
+    for (int i = 1; i < argc; i++)
+        printf("  argumento %d: %s\n", i, argv[i]);
+    return 0;
+}
+EOF
+    ok "comando '$nome' criado: usuario/bin/$nome.c"
+    dica "rode  nefs compilar  &&  nefs rodar  e digite  $nome  no shell do seu sistema"
+}
+
+cmd_compilar() {
+    achar_projeto
+    cc="$(compilador)"
+    [ -n "$cc" ] || erro "nenhum compilador C encontrado (cproc + qbe, ou clang)"
+    echo "Compilando $(basename "$PROJETO") com $cc..."
+    CC="$cc" sh "$PROJETO/build.sh" || erro "a compilação falhou"
+    ok "kernel.bin pronto em $PROJETO/kernel.bin"
+}
+
+cmd_rodar() {
+    achar_projeto
+    [ -f "$PROJETO/kernel.bin" ] || cmd_compilar
+    tem qemu-system-x86_64 || erro "qemu-system-x86_64 não encontrado"
+    # Sem interface gráfica (ISO do NEFS, SSH, Termux): a tela vai para o terminal.
+    if [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+        dica "para sair do QEMU: Alt+2, digite  quit  e Enter"
+        exec qemu-system-x86_64 -kernel "$PROJETO/kernel.bin" -initrd "$PROJETO/initrd.tar" \
+             -m 64M -nic none -display curses
+    fi
+    exec qemu-system-x86_64 -kernel "$PROJETO/kernel.bin" -initrd "$PROJETO/initrd.tar" \
+         -m 64M -nic none
+}
+
+cmd_iso() {
+    achar_projeto
+    cmd_compilar
+    tem grub-mkrescue || erro "grub-mkrescue não encontrado (precisa de grub, xorriso e mtools)"
+    nome="$(basename "$PROJETO")"
+    raiz="$PROJETO/build/iso"
+    rm -rf "$raiz"
+    mkdir -p "$raiz/boot/grub"
+    cp "$PROJETO/kernel.bin" "$raiz/boot/kernel.bin"
+    cp "$PROJETO/initrd.tar" "$raiz/boot/initrd.tar"
+    . "$PROJETO/sistema.conf"
+    cat > "$raiz/boot/grub/grub.cfg" <<EOF
+set timeout=2
+set default=0
+menuentry "$NOME $VERSAO" {
+    multiboot /boot/kernel.bin
+    module /boot/initrd.tar
+    boot
+}
+EOF
+    grub-mkrescue -o "$PROJETO/$nome.iso" "$raiz" >/dev/null 2>&1 \
+        || erro "grub-mkrescue falhou"
+    ok "ISO pronta: $PROJETO/$nome.iso"
+    dica "teste com:  qemu-system-x86_64 -cdrom $nome.iso -m 64M"
+}
+
+cmd_info() {
+    achar_projeto
+    . "$PROJETO/sistema.conf"
+    echo "Sistema:   $NOME $VERSAO"
+    echo "Lema:      $LEMA"
+    echo "Prompt:    $PROMPT>"
+    echo "Núcleo:    NovaEra $(sed -n 's/^#define NOVAERA_VERSAO *"\(.*\)"/\1/p' "$PROJETO/novaera.h")"
+    echo "Pasta:     $PROJETO"
+    echo "Programas (PID: nome permissões):"
+    pid=1
+    grep -v '^[[:space:]]*\(#\|$\)' "$PROJETO/programas.lista" | while read -r n p; do
+        printf '  %2d: %-11s %s\n' "$pid" "$n" "$p"
+        pid=$((pid + 1))
+    done
+}
+
+cmd_livro() {
+    [ -d "$NEFS_LIVRO" ] || erro "livro não encontrado em $NEFS_LIVRO"
+    if [ $# -eq 0 ]; then
+        echo "O Livro do NEFS - capítulos:"
+        for f in "$NEFS_LIVRO"/[0-9]*.md; do
+            n="$(basename "$f" | cut -d- -f1)"
+            t="$(head -n 1 "$f" | sed 's/^# *//')"
+            printf '  %s  %s\n' "$n" "$t"
+        done
+        dica "leia um capítulo com:  nefs livro <número>"
+        return
+    fi
+    num="$(printf '%02d' "$1" 2>/dev/null)" || erro "capítulo inválido: $1"
+    arq="$(ls "$NEFS_LIVRO"/"$num"-*.md 2>/dev/null | head -n 1)"
+    [ -n "$arq" ] || erro "capítulo $1 não existe"
+    if [ -t 1 ] && tem less; then less "$arq"; else cat "$arq"; fi
+}
+
+# --------------------------------- Início ---------------------------------
+
+comando="${1:-ajuda}"
+[ $# -gt 0 ] && shift
+case "$comando" in
+    ajuda|help|-h|--help) cmd_ajuda ;;
+    versao|--version)     cmd_versao ;;
+    ferramentas)          cmd_ferramentas ;;
+    novo)                 cmd_novo "$@" ;;
+    programa)             cmd_programa "$@" ;;
+    comando)              cmd_comando "$@" ;;
+    compilar)             cmd_compilar ;;
+    rodar)                cmd_rodar ;;
+    iso)                  cmd_iso ;;
+    info)                 cmd_info ;;
+    livro)                cmd_livro "$@" ;;
+    *) erro "comando desconhecido: $comando (veja: nefs ajuda)" ;;
+esac

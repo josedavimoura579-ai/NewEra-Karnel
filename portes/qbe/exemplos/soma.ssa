@@ -1,0 +1,16 @@
+# Soma os números de 1 a n com um laço: mostra blocos, phi e jnz.
+
+export function w $soma(w %n) {
+@inicio
+@laco
+        %i =w phi @inicio 1, @corpo %i1
+        %s =w phi @inicio 0, @corpo %s1
+        %fim =w csgtw %i, %n
+        jnz %fim, @saida, @corpo
+@corpo
+        %s1 =w add %s, %i
+        %i1 =w add %i, 1
+        jmp @laco
+@saida
+        ret %s
+}

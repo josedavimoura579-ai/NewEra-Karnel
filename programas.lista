@@ -1,0 +1,21 @@
+# ===========================================================================
+#  programas.lista - os processos que o núcleo inicia no boot (anel 3)
+#
+#  Cada linha: <nome> <permissões>
+#    nome        o programa é usuario/<nome>.c, e vira o PID da sua linha
+#    permissões  driver  pode usar IN/OUT e assinar IRQs
+#                vga     recebe a memória de vídeo mapeada
+#                initrd  recebe o initrd mapeado (só leitura)
+#                -       nenhuma (um programa comum)
+#
+#  ATENÇÃO: as 6 primeiras linhas são os servidores do sistema, nesta
+#  ordem (PIDs 1 a 6 em novaera.h). Novos servidores entram depois deles.
+#  Os comandos do shell (ls, cat...) não ficam aqui: ficam em usuario/bin/
+#  e vão para o initrd. Máximo: 15 servidores.
+# ===========================================================================
+video       driver vga
+teclado     driver
+shell       -
+arquivos    initrd
+terminal    -
+tubos       -
