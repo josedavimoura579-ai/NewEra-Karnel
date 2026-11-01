@@ -12,6 +12,9 @@
 #include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
+#include <time.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include "interno.h"
@@ -162,6 +165,60 @@ int rmdir(const char *caminho)
 }
 
 int remove(const char *caminho) { return arq_apagar(caminho) < 0 ? (errno = ENOENT, -1) : 0; }
+
+/* ------------------------------- Pastas ---------------------------------- */
+
+int stat(const char *caminho, struct stat *st)
+{
+    u32 tam;
+    long tipo = arq_info(caminho, &tam);
+    if (tipo < 0) { errno = ENOENT; return -1; }
+    st->st_mode = tipo == ARQ_TIPO_PASTA ? (S_IFDIR | 0755) : (S_IFREG | 0644);
+    st->st_size = tipo == ARQ_TIPO_PASTA ? 0 : (off_t)tam;
+    return 0;
+}
+
+int mkdir(const char *caminho, mode_t modo)
+{
+    (void)modo;
+    if (arq_info(caminho, 0) >= 0) { errno = EEXIST; return -1; }
+    long r = arq_pasta(caminho);
+    if (r < 0) { errno = __erro_c(r); return -1; }
+    return 0;
+}
+
+/* O servidor de arquivos entrega uma pasta item por item (ARQ_LISTAR). */
+struct __dir {
+    char          caminho[CAMINHO_MAX];
+    u32           i;
+    struct dirent atual;
+};
+
+DIR *opendir(const char *caminho)
+{
+    if (arq_info(caminho, 0) != ARQ_TIPO_PASTA) { errno = ENOTDIR; return NULL; }
+    DIR *d = malloc(sizeof *d);
+    if (!d) { errno = ENOMEM; return NULL; }
+    if (caminho_absoluto(caminho, d->caminho) < 0) { free(d); errno = ENAMETOOLONG; return NULL; }
+    d->i = 0;
+    return d;
+}
+
+struct dirent *readdir(DIR *d)
+{
+    char nome[MSG_TEXTO_MAX];
+    long tipo = arq_listar(d->caminho, d->i, nome, 0);
+    if (tipo < 0) return NULL;
+    d->i++;
+    d->atual.d_type = tipo == ARQ_TIPO_PASTA ? DT_DIR : DT_REG;
+    strncpy(d->atual.d_name, nome, sizeof d->atual.d_name - 1);
+    d->atual.d_name[sizeof d->atual.d_name - 1] = '\0';
+    return &d->atual;
+}
+
+void rewinddir(DIR *d) { d->i = 0; }
+
+int closedir(DIR *d) { free(d); return 0; }
 
 int access(const char *caminho, int modo)
 {
@@ -335,3 +392,14 @@ pid_t waitpid(pid_t pid, int *status, int opcoes)
 }
 
 pid_t wait(int *status) { return waitpid(-1, status, 0); }
+
+/* -------------------------------- Tempo ---------------------------------- */
+
+clock_t clock(void) { return (clock_t)sys_tempo(); }
+
+time_t time(time_t *t)
+{
+    time_t s = (time_t)(sys_tempo() / 100);
+    if (t) *t = s;
+    return s;
+}

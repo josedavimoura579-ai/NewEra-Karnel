@@ -52,6 +52,7 @@ char *strerror(int e)
     case EPIPE:   return "Pipe sem leitor";
     case EDOM:    return "Fora do dominio";
     case ERANGE:  return "Resultado fora do intervalo";
+    case ENAMETOOLONG: return "Caminho longo demais (o NovaEra aceita ate 63 letras)";
     case ENOSYS:  return "Ainda nao existe no NovaEra";
     case ENOTEMPTY: return "A pasta nao esta vazia";
     }

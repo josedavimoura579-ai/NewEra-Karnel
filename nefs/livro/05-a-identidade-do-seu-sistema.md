@@ -89,6 +89,4 @@ Os dois começam igual: `nefs novo`.
 
 ---
 
-Este é o fim do Livro 1. Os próximos volumes vão tratar de memória
-compartilhada, sistema de arquivos, drivers de disco e de como o
-próprio compilador do NEFS poderá, um dia, rodar dentro do NovaEra.
+Próximo capítulo: `nefs livro 6`.

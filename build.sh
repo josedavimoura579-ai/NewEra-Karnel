@@ -50,9 +50,9 @@ if [ "$FERRAMENTAS" = "nefs" ]; then
         for f in nefs-as nefs-ld nefs-ar; do
             "$HOSTCC" -O2 -o "build/ferramentas/$f" "ferramentas/$f.c"
         done
-        NEFS_AS="build/ferramentas/nefs-as"
-        NEFS_LD="build/ferramentas/nefs-ld"
-        AR="build/ferramentas/nefs-ar"
+        NEFS_AS="$PWD/build/ferramentas/nefs-as"
+        NEFS_LD="$PWD/build/ferramentas/nefs-ld"
+        AR="$PWD/build/ferramentas/nefs-ar"
         echo "  ferramentas/*.c -> nefs-as, nefs-ld, nefs-ar (com $HOSTCC)"
     elif command -v nefs-as >/dev/null && command -v nefs-ld >/dev/null && command -v nefs-ar >/dev/null; then
         NEFS_AS="nefs-as"; NEFS_LD="nefs-ld"; AR="nefs-ar"
@@ -147,6 +147,8 @@ case "$(basename "$CC")" in
         SEM_AVISOS="-w" ;;
 esac
 CFLAGS_NUCLEO="$CFLAGS_NUCLEO -I. -Ibuild"
+# Os portes compilam de dentro da pasta deles: as pastas vão absolutas.
+CFLAGS_PORTE="$CFLAGS -nostdinc -I$PWD/libc/include -I$PWD -I$PWD/build -I$PWD/usuario"
 CFLAGS="$CFLAGS -nostdinc -Ilibc/include -I. -Ibuild -Iusuario"
 
 # --- 1. Arquivos gerados -----------------------------------------------------
@@ -308,7 +310,10 @@ for receita in portes/*/receita; do
             cp "$extra" "build/portes/$PASTA/"
         done
         # Cada programa do porte: os seus .c (um .c usado por dois programas
-        # é compilado uma vez só).
+        # é compilado uma vez só). A compilação roda DENTRO da pasta do porte,
+        # com o caminho relativo ("main.c"): o assert() guarda esse caminho,
+        # e assim o porte sai igual ao que o nefs compila dentro do NovaEra.
+        RAIZ="$PWD"
         for prog in $PROGRAMAS; do
             eval "fontes=\$FONTES_$(echo "$prog" | tr - _)"
             objs=""
@@ -318,7 +323,7 @@ for receita in portes/*/receita; do
                 if [ ! -f "$obj" ]; then
                     # Sem avisos: o código é de outro projeto; eles são assunto de lá.
                     # shellcheck disable=SC2086
-                    compilar "$obj" "build/portes/$PASTA/$fonte" $CFLAGS $SEM_AVISOS
+                    (cd "build/portes/$PASTA" && compilar "$RAIZ/$obj" "$fonte" $CFLAGS_PORTE $SEM_AVISOS)
                 fi
                 objs="$objs $obj"
             done
@@ -330,7 +335,43 @@ for receita in portes/*/receita; do
             mkdir -p "build/initrd$EXEMPLOS"
             cp "$dir"/exemplos/* "build/initrd$EXEMPLOS/"
         fi
+        # O código do porte vai para /usr/src/<PASTA>: os .c usados, todos
+        # os .h, o LICENSE e os arquivos do NovaEra para ele (o config.h).
+        destino="build/initrd/usr/src/$PASTA"
+        (
+            cd "build/portes/$PASTA"
+            for prog in $PROGRAMAS; do
+                eval "fontes=\$FONTES_$(echo "$prog" | tr - _)"
+                # shellcheck disable=SC2154
+                for fonte in $fontes; do echo "$fonte"; done
+            done
+            find . -type f \( -name '*.h' -o -name LICENSE \) | sed 's|^\./||'
+        ) | sort -u | while read -r f; do
+            mkdir -p "$destino/$(dirname "$f")"
+            cp "build/portes/$PASTA/$f" "$destino/$f"
+        done
+        for extra in "$dir"/*; do
+            case "$extra" in */receita|*/exemplos) continue ;; esac
+            cp "$extra" "$destino/"
+        done
     )
+done
+
+# O código do NovaEra vai para /usr/src/novaera: dentro do NovaEra, o
+# "nefs compilar" recompila o sistema inteiro a partir dele.
+SRC="build/initrd/usr/src/novaera"
+mkdir -p "$SRC"
+for f in kernel.c novaera.h boot.s cpu.s linker.ld build.sh sistema.conf \
+         programas.lista logo.txt LICENSE; do
+    [ -f "$f" ] && cp "$f" "$SRC/$f"
+done
+for d in usuario libc ferramentas exemplos portes; do
+    [ -d "$d" ] || continue
+    find "$d" -type f ! -name '.*' | while read -r f; do
+        case "$f" in portes/fontes/*|ferramentas/testes/*) continue ;; esac
+        mkdir -p "$SRC/$(dirname "$f")"
+        cp "$f" "$SRC/$f"
+    done
 done
 
 # Formato ustar: o que o núcleo sabe ler. Data, dono e ordem fixos: o mesmo

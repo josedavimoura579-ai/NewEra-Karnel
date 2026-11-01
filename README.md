@@ -147,7 +147,8 @@ Estado atual: **NovaEra Microkernel v3.2** (alfa).
 | **Drivers** | No anel 3 com IOPL 3 (podem usar `in`/`out`). **Vídeo**: o único processo com `0xB8000` mapeado. Converte UTF-8 para CP437 (os acentos do português aparecem). **Teclado**: PS/2 *set 1*, layout US, Shift, Ctrl e Caps Lock; entrega as teclas ao terminal e faz o `reboot` pela porta `0x64` |
 | **Supervisão** | Uma exceção no anel 3 encerra só o processo culpado, devolve a memória dele e o recarrega (até 5 vezes), avisando-o do motivo. Uma exceção no anel 0 mostra o painel vermelho de pânico |
 | **Shell (anel 3)** | Internos: `ajuda` · `cd` · `pwd` · `limpar` · `ps` · `mem` · `tempo` · `sobre` · `invadir` (demonstra a proteção de memória) · `reboot`. Qualquer outro nome executa `/bin/<nome>`, com argumentos, **pipes** (`a \| b`, até 4) e **redirecionamentos** (`>`, `>>`, `<`). O prompt mostra a pasta atual |
-| **Comandos** (`/bin`, de `usuario/bin/`) | `ls` · `cat` · `echo` · `mkdir` · `rm` · **`novafetch`** (o neofetch do NovaEra) · `ola` · `codigo N` · `memoria [MiB]` · `falha` · `filho` · `cmp` · **`testelibc`** (47 testes da libc) |
+| **Comandos** (`/bin`, de `usuario/bin/`) | `ls` · `cat` · `echo` · `mkdir` · `rm` · **`novafetch`** (o neofetch do NovaEra) · `ola` · `codigo N` · `memoria [MiB]` · `falha` · `filho` · `cmp` · `base64` · **`nefs`** (`compilar`, `novo`, `info`) · **`testelibc`** (47 testes da libc) |
+| **Autossuficiência** | O código do NovaEra vem junto, em `/usr/src/novaera` (e o do QBE e do cproc em `/usr/src`): `cd /usr/src/novaera` e **`nefs compilar`** recompilam o sistema inteiro lá dentro, em menos de um minuto no QEMU |
 | **Compilador** (`/bin`, dentro do NovaEra) | **`cproc`** (C → programa: `cproc -o /tmp/ola /usr/share/nefs/exemplos/ola.c`), `qbe`, `nefs-cpp`, `nefs-as`, `nefs-ld`, `nefs-ar`; cabeçalhos em `/usr/include`, a libc em `/usr/lib/nefs/libc.a` |
 | **libc** (`libc/`, a "nlibc") | C padrão para os programas do NovaEra: `stdio` (`printf` com `%.17g` exato, `scanf`, `fopen`, buffers), `stdlib` (`malloc`, `qsort` estável, `strtod` com arredondamento correto), `string`, `ctype`, `errno`, `getopt` e o POSIX que o cproc usa (`pipe`, `posix_spawnp`, `waitpid`, `mkstemp`, `unlink`). Por baixo, tudo vira mensagem para os servidores. Os comandos de `/bin` são ligados com ela |
 | **Ponto flutuante** | O núcleo liga o SSE e salva/restaura os registradores de ponto flutuante (FXSAVE/FXRSTOR) de cada processo na troca de contexto; o próprio núcleo não usa SSE |
@@ -411,7 +412,8 @@ O QBE gera código para x86_64, e foi por isso que o NovaEra passou para 64 bits
   - [x] Etapa 4 — o QBE rodando dentro do NovaEra (`qbe /usr/share/qbe/ola.ssa`)
   - [x] Etapa 5 — `nefs-as`, `nefs-ld` e `nefs-ar`: o núcleo montado e ligado por eles dá boot
   - [x] Etapa 6 — o cproc e o `nefs-cpp` (pré-processador) rodando no NovaEra: `cproc -o ola ola.c` lá dentro
-  - [ ] Etapas 7 e 8 — autossuficiência, ISO
+  - [x] Etapa 7 — **autossuficiência**: dentro do NovaEra, `nefs compilar` recompila o sistema inteiro, e a 3ª geração é idêntica à 2ª
+  - [ ] Etapa 8 — disco e a ISO do NEFS sem Linux
 
 ### Fases futuras (depois da Fase 3)
 
@@ -463,7 +465,7 @@ Distribuído sob a licença **MIT**: use, estude, modifique e redistribua livrem
 
 ## English summary
 
-**NovaEra** is a from-scratch **x86_64 (64-bit long mode) microkernel** written in x86-64 assembly and freestanding C, started and built entirely on an Android phone using Termux. The kernel (ring 0) only does physical memory management, per-process paging, preemptive round-robin scheduling (PIT at 100 Hz), synchronous message-passing IPC over `int 0x80`, and delivers hardware IRQs as messages. The NEFS toolchain is **cproc** + **QBE** plus our own assembler, linker and archiver (`nefs-as`, `nefs-ld`, `nefs-ar`), all of which also run inside NovaEra. The **VGA video server, the PS/2 keyboard driver and the shell all run in ring 3** as isolated processes that talk through messages. If a user process faults, the kernel kills only that process, frees its memory and restarts it: try the `invadir` command, which makes the shell read kernel memory.
+**NovaEra** is a from-scratch **x86_64 (64-bit long mode) microkernel** written in x86-64 assembly and freestanding C, started and built entirely on an Android phone using Termux. The kernel (ring 0) only does physical memory management, per-process paging, preemptive round-robin scheduling (PIT at 100 Hz), synchronous message-passing IPC over `int 0x80`, and delivers hardware IRQs as messages. The NEFS toolchain is **cproc** + **QBE** plus our own assembler, linker and archiver (`nefs-as`, `nefs-ld`, `nefs-ar`), all of which also run inside NovaEra. **NovaEra is self-hosting**: it ships its own source code in `/usr/src`, and `nefs compilar` rebuilds the whole system (kernel, libc, programs and the C compiler) from inside NovaEra; the third generation is byte-for-byte identical to the second. The **VGA video server, the PS/2 keyboard driver and the shell all run in ring 3** as isolated processes that talk through messages. If a user process faults, the kernel kills only that process, frees its memory and restarts it: try the `invadir` command, which makes the shell read kernel memory.
 
 **NEFS (NovaEra From Scratch)** is our methodology: read the code, run it, modify it, extend it and ship your own operating system on top of a minimal, fully readable core, whether in an Arch-like (minimal, build-it-yourself) or Debian-like (curated, stable) spirit.
 

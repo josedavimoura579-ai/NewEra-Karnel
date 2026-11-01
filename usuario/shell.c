@@ -43,8 +43,9 @@ static void cmd_ajuda(void)
     escreve("  invadir  ", c); escreve("tenta ler a memoria do nucleo (e o shell morre!)\n", d);
     escreve("  reboot   ", c); escreve("reinicia o computador\n", d);
     escreve("Programas em /bin (veja: ls /bin):\n", COR(COR_CIANO_CLARO));
-    escreve("  ls cat echo mkdir rm cmp novafetch ola codigo memoria falha filho\n", c);
+    escreve("  ls cat echo mkdir rm cmp base64 novafetch ola codigo memoria falha filho\n", c);
     escreve("  cproc qbe nefs-cpp nefs-as nefs-ld nefs-ar  (o compilador; nefs livro 4)\n", c);
+    escreve("  nefs compilar  (em /usr/src/novaera: o NovaEra se compila; nefs livro 6)\n", c);
     escreve("Pipes e arquivos: ", COR(COR_CIANO_CLARO));
     escreve("ls /bin | cat    echo oi > /tmp/a    cat < /tmp/a\n", c);
 }

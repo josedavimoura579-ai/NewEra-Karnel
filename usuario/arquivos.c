@@ -14,7 +14,7 @@
  */
 #include "ulib.h"
 
-#define MAX_NOS     256u
+#define MAX_NOS    4096u        /* arquivos e pastas: o código do NovaEra todo cabe */
 #define MAX_CANAIS   32u
 #define NOME_MAX     32u
 

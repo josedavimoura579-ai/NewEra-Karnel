@@ -120,9 +120,23 @@ Cada etapa termina com algo testável no QEMU e vira um pull request.
     `-c`, `-S` e `-E` funcionam; o `kernel.c`, as 10 partes da nlibc e o
     `testelibc.c` compilados lá dentro dão objetos idênticos aos do Linux;
     a nlibc recompilada lá dentro passa no `testelibc` (47/47).*
-- [ ] **Etapa 7 — autossuficiência** (o grande marco)
-  - o NovaEra compila o próprio NovaEra; o `nefs` vira um programa nativo
-  - *Teste: o `kernel.bin` compilado lá dentro dá boot.*
+- [x] **Etapa 7 — autossuficiência** (o grande marco)
+  - **`nefs` nativo** (`ferramentas/nefs.c`): `nefs compilar` faz dentro do
+    NovaEra o que o `build.sh` faz no Linux (gera `build/kernel.bin` e
+    `build/initrd.tar`); `nefs novo` cria um sistema a partir do código;
+    `nefs info`
+  - o initrd leva o código: `/usr/src/novaera`, `/usr/src/qbe-1.3` e
+    `/usr/src/cproc-d1c53dd` (o `build.sh` e o `nefs` põem os mesmos arquivos)
+  - os portes compilam de dentro da pasta deles: o `assert()` guarda o mesmo
+    caminho nos dois sistemas, e os binários saem iguais
+  - nlibc: `dirent.h`, `sys/stat.h` (`stat`, `mkdir`), `time.h` (`clock`,
+    `time`); servidor de arquivos com até 4096 itens; comando `base64`
+  - *Teste (três gerações): a geração 1 (compilada no Linux) compilou a
+    geração 2 em 37 s, dentro do QEMU; o `kernel.bin` e os 204 arquivos do
+    initrd da geração 2 são idênticos aos do `build.sh` com `CC=cproc`. A
+    geração 2 deu boot, passou no `testelibc` e compilou a geração 3, que é
+    idêntica byte a byte à geração 2 (`kernel.bin` e `initrd.tar`): ponto
+    fixo. Cabe em 64 MiB de memória.*
 - [ ] **Etapa 8 — a ISO NEFS-sobre-NovaEra**
   - driver de disco (ATA) e sistema de arquivos para guardar os projetos
   - geração de ISO dentro do NovaEra
