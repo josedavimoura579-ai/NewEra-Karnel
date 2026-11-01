@@ -279,6 +279,12 @@ mkdir -p build/initrd/usr/lib/nefs build/initrd/usr/share/nefs
 cp build/libc/libc.a build/initrd/usr/lib/nefs/libc.a
 cp -r libc/include build/initrd/usr/include
 [ -d exemplos ] && cp -r exemplos build/initrd/usr/share/nefs/exemplos
+# O Livro do NEFS (nefs livro) e o GRUB das ISOs (nefs iso).
+[ -d nefs/livro ] && cp -r nefs/livro build/initrd/usr/share/nefs/livro
+if [ -f ferramentas/grub/eltorito.img ]; then
+    mkdir -p build/initrd/usr/lib/nefs/grub
+    cp ferramentas/grub/eltorito.img build/initrd/usr/lib/nefs/grub/eltorito.img
+fi
 
 # --- 4. Os portes: programas de fora (portes/<nome>/receita) ----------------
 # Cada porte é compilado do código original, sem mudanças, com a libc do
@@ -365,7 +371,7 @@ for f in kernel.c novaera.h boot.s cpu.s linker.ld build.sh sistema.conf \
          programas.lista logo.txt LICENSE; do
     [ -f "$f" ] && cp "$f" "$SRC/$f"
 done
-for d in usuario libc ferramentas exemplos portes; do
+for d in usuario libc ferramentas exemplos portes nefs/livro; do
     [ -d "$d" ] || continue
     find "$d" -type f ! -name '.*' | while read -r f; do
         case "$f" in portes/fontes/*|ferramentas/testes/*) continue ;; esac

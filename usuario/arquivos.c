@@ -16,7 +16,7 @@
 
 #define MAX_NOS    4096u        /* arquivos e pastas: o código do NovaEra todo cabe */
 #define MAX_CANAIS   32u
-#define NOME_MAX     32u
+#define NOME_MAX     64u          /* um nome (cabe no texto da mensagem) */
 
 typedef struct {
     u32  usado;
@@ -223,7 +223,7 @@ static void pedido(msg_t *m)
     m->texto[MSG_TEXTO_MAX - 1] = '\0';
 
     if (m->tipo == MSG_LER || m->tipo == MSG_ESCREVER) {
-        u32 c = m->arg[0];
+        u32 c = ARQ_CANAL(m->arg[0]);
         if (c >= MAX_CANAIS || !canais[c].usado) { erro(quem, ERRO_INVALIDO); return; }
         no_t *n = &nos[canais[c].no];
         if (m->tipo == MSG_LER) {
@@ -236,10 +236,18 @@ static void pedido(msg_t *m)
             canais[c].pos += qtd;
             ok(quem, qtd, 0);
         } else {
-            u32 qtd = m->arg[2] < MSG_TEXTO_MAX ? m->arg[2] : MSG_TEXTO_MAX;
+            /* arg[3]: os dados estão na memória de quem chamou (até
+             * ESCRITA_MAX); senão, no texto da mensagem */
+            u32 max = m->arg[3] ? ESCRITA_MAX : MSG_TEXTO_MAX;
+            u32 qtd = m->arg[2] < max ? m->arg[2] : max;
             u32 fim = canais[c].pos + qtd;
             if (!reservar(n, fim)) { erro(quem, ERRO_SEM_MEMORIA); return; }
-            mem_copia(n->dados + canais[c].pos, m->texto, qtd);
+            if (m->arg[3]) {
+                if (sys_copiar_de(quem, n->dados + canais[c].pos, m->arg[3], qtd) < 0) {
+                    erro(quem, ERRO_INVALIDO);
+                    return;
+                }
+            } else mem_copia(n->dados + canais[c].pos, m->texto, qtd);
             canais[c].pos = fim;
             if (fim > n->tam) n->tam = fim;
             ok(quem, qtd, 0);
@@ -248,7 +256,7 @@ static void pedido(msg_t *m)
     }
 
     if (m->tipo == ARQ_FECHAR) {
-        if (m->arg[0] < MAX_CANAIS) canais[m->arg[0]].usado = 0;
+        if (ARQ_CANAL(m->arg[0]) < MAX_CANAIS) canais[ARQ_CANAL(m->arg[0])].usado = 0;
         ok(quem, 0, 0);
         return;
     }
@@ -330,6 +338,9 @@ int main(int argc, char **argv)
     nos[0].usado = 1;                            /* a raiz, "/" */
     nos[0].tipo  = ARQ_TIPO_PASTA;
     carregar_initrd();
+    /* /disco: o lugar onde o disco aparece (quem cuida dele é o PID_FAT) */
+    const char *disco = &ARQ_DISCO[1];
+    if (achar_filho(0, disco, str_tam(disco)) < 0) criar_no(0, disco, ARQ_TIPO_PASTA);
     if (achar_filho(0, "tmp", 3) < 0) criar_no(0, "tmp", ARQ_TIPO_PASTA);
 
     msg_t m;

@@ -68,7 +68,7 @@ int close(int fd)
     nfd_t *f = __fd(fd);
     if (!f) return -1;
     if (f->dono && e_tubo(f)) tubo_fechar(f->canal, f->ponta);
-    else if (f->dono && f->servidor == PID_ARQUIVOS) arq_fechar(f->canal);
+    else if (f->dono && (f->servidor == PID_ARQUIVOS || f->servidor == PID_FAT)) arq_fechar(f->canal);
     f->usado = 0;
     return 0;
 }
@@ -146,7 +146,7 @@ int open(const char *caminho, int flags, ...)
              : (flags & O_TRUNC) || tipo < 0 ? ARQ_MODO_ESCREVER : ARQ_MODO_ANEXAR;
     long canal = arq_abrir(caminho, modo);
     if (canal < 0) { errno = __erro_c(canal); return -1; }
-    return __fd_novo(PID_ARQUIVOS, (u32)canal, 0, 1);
+    return __fd_novo(ARQ_SERVIDOR(canal), (u32)canal, 0, 1);
 }
 
 int unlink(const char *caminho)
@@ -294,7 +294,7 @@ int mkstemp(char *modelo)
         if (arq_info(modelo, 0) >= 0) continue;
         long canal = arq_abrir(modelo, ARQ_MODO_ESCREVER);
         if (canal < 0) { errno = __erro_c(canal); return -1; }
-        return __fd_novo(PID_ARQUIVOS, (u32)canal, 0, 1);
+        return __fd_novo(ARQ_SERVIDOR(canal), (u32)canal, 0, 1);
     }
     errno = EEXIST;
     return -1;

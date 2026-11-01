@@ -32,7 +32,7 @@ int main(int argc, char **argv)
             erro = 1;
             continue;
         }
-        copiar(PID_ARQUIVOS, (u32)canal);
+        copiar(ARQ_SERVIDOR(canal), (u32)canal);
         arq_fechar((u32)canal);
     }
     return erro;

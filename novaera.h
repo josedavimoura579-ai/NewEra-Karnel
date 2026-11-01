@@ -56,6 +56,9 @@ typedef unsigned long long u64;
 #define ERRO_SEM_MEMORIA (-5)
 #define ERRO_FORMATO    (-6) /* o arquivo não é um programa ELF x86_64 válido */
 #define ERRO_LOTADO     (-7) /* não há vaga para mais processos */
+#define ERRO_EXISTE     (-8) /* o arquivo ou a pasta já existe */
+#define ERRO_DISCO      (-9) /* erro de leitura ou escrita no disco */
+#define ERRO_SEM_ESPACO (-10) /* o disco está cheio */
 
 /* --------------------------- Processos fixos ----------------------------
  * O NovaEra ainda não tem um servidor de nomes: cada servidor tem um
@@ -67,6 +70,8 @@ typedef unsigned long long u64;
 #define PID_ARQUIVOS 4       /* servidor de arquivos (ramfs)     */
 #define PID_TERMINAL 5       /* terminal: entrada e saída padrão */
 #define PID_TUBOS    6       /* pipes                            */
+#define PID_DISCO    7       /* driver de disco (ATA)            */
+#define PID_FAT      8       /* o disco, em /disco (FAT32)       */
 #define PID_QUALQUER 0xFFFFFFFFu   /* em SYS_RECEBER: aceita de qualquer um */
 
 /* ------------------------------ Mensagem --------------------------------
@@ -91,7 +96,12 @@ typedef struct {
 /* Entrada e saída: o MESMO protocolo no terminal, nos pipes e nos arquivos.
  * Um "canal" diz qual pipe ou qual arquivo aberto (no terminal, sempre 0). */
 #define MSG_ESCREVER       30    /* arg[0] = canal, arg[1] = cor, arg[2] = bytes, texto = dados;
-                                    resposta: arg[0] = bytes escritos       */
+                                    resposta: arg[0] = bytes escritos.
+                                    Nos servidores de arquivos, arg[3] != 0
+                                    é o endereço dos dados em quem chamou
+                                    (até ESCRITA_MAX bytes de uma vez):
+                                    o servidor copia com SYS_COPIAR_DE.     */
+#define ESCRITA_MAX     65536u
 #define MSG_LER            31    /* arg[0] = canal, arg[1] = máximo, arg[2] = endereço do
                                     buffer; resposta: arg[0] = bytes (0 = fim).
                                     Os endereços do usuário ficam abaixo de
@@ -109,6 +119,19 @@ typedef struct {
 #define ARQ_MODO_LER       1
 #define ARQ_MODO_ESCREVER  2     /* cria ou apaga o conteúdo */
 #define ARQ_MODO_ANEXAR    3     /* cria ou escreve no fim  */
+/* Os caminhos que começam em /disco vão para o PID_FAT; o resto, para o
+ * PID_ARQUIVOS. O canal que a ulib entrega leva o servidor nos bits 8-15
+ * (ARQ_SERVIDOR); o servidor só olha os bits 0-7. */
+#define ARQ_DISCO          "/disco"
+#define ARQ_SERVIDOR(c)    (((u32)(c) >> 8) & 0xFFu)
+#define ARQ_CANAL(c)       ((u32)(c) & 0xFFu)
+
+/* Driver de disco (ATA, setores de 512 bytes, até 128 por pedido) */
+#define DISCO_INFO         60    /* resposta: arg[0] = setores (0 = sem disco) */
+#define DISCO_LER          61    /* arg[0] = setor (LBA), arg[1] = quantos, arg[2] = endereço do buffer */
+#define DISCO_ESCREVER     62    /* idem, os dados vêm do buffer de quem chamou */
+#define DISCO_SETOR        512u
+#define FAT_MONTAR         63    /* ao PID_FAT: lê o disco de novo (depois do formatar) */
 
 /* Pipes. Cada ponta (leitura, escrita) conta quantas referências abertas
  * ela tem. Sem escritores, quem lê recebe o fim; sem leitores, quem escreve

@@ -66,12 +66,10 @@ Para tirar os arquivos de dentro do NovaEra no teste, usamos a porta
 serial: `base64 build/kernel.bin` escreve o arquivo como texto, e o QEMU
 (`-serial file:saida.txt`) guarda esse texto do lado de fora.
 
-## O que ainda falta
+## O que vem agora
 
 Os arquivos de `/tmp` e de `build/` ficam na memória: somem quando o
-sistema desliga. Para o NovaEra guardar o que compilou e dar boot no
-sistema novo sozinho, falta um **disco** — a Etapa 8 da Fase 3.
+sistema desliga. O próximo capítulo mostra o disco, onde o que você
+compila fica guardado, e como gerar uma ISO do seu sistema.
 
-Este é o fim do Livro 1. Os próximos volumes vão tratar de disco, sistema
-de arquivos, memória compartilhada, gráficos e de como montar uma área de
-trabalho (veja `nefs/ROTEIRO.md`).
+Próximo capítulo: `nefs livro 7`.

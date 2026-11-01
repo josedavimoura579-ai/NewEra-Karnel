@@ -98,6 +98,26 @@ static inline void mem_zera(void *dst, u64 n)
     while (n--) *d++ = 0;
 }
 
+static inline void mem_set(void *dst, u8 v, u64 n)
+{
+    u8 *d = dst;
+    while (n--) *d++ = v;
+}
+
+static inline int mem_igual(const void *a, const void *b, u64 n)
+{
+    const u8 *x = a, *y = b;
+    while (n--) if (*x++ != *y++) return 0;
+    return 1;
+}
+
+/* O caractere c aparece no texto s? */
+static inline int str_tem(const char *s, char c)
+{
+    for (; *s; s++) if (*s == c) return 1;
+    return 0;
+}
+
 static inline void msg_zera(msg_t *m) { mem_zera(m, sizeof(*m)); }
 
 /* Escreve n em decimal em buf (precisa de 11 bytes); devolve buf. */
@@ -193,11 +213,26 @@ static inline ambiente_t *ambiente(void)
     return &ulib_amb;
 }
 
-/* Escreve n bytes num servidor de saída (pedaços de até 63 bytes). */
+/* Escreve n bytes num servidor de saída: no terminal e nos pipes, em
+ * pedaços de até 63 bytes; nos arquivos, até ESCRITA_MAX de uma vez (o
+ * servidor copia direto da minha memória). */
 static inline long escreve_em(u32 servidor, u32 canal, const char *dados, u64 n, u8 cor)
 {
     msg_t m;
     u64 total = 0;
+    if (servidor == PID_ARQUIVOS || servidor == PID_FAT) {
+        while (total < n) {
+            u64 k = n - total > ESCRITA_MAX ? ESCRITA_MAX : n - total;
+            msg_zera(&m);
+            m.tipo   = MSG_ESCREVER;
+            m.arg[0] = canal;
+            m.arg[2] = (u32)k;
+            m.arg[3] = (u32)(u64)(dados + total);
+            if (sys_chamar(servidor, &m) < 0 || m.tipo == MSG_ERRO || m.arg[0] == 0) return ERRO_INVALIDO;
+            total += m.arg[0];
+        }
+        return (long)total;
+    }
     while (total < n) {
         msg_zera(&m);
         m.tipo   = MSG_ESCREVER;
@@ -292,17 +327,29 @@ static inline int caminho_absoluto(const char *rel, char *saida)
 
 /* -------------------------------- Arquivos -------------------------------- */
 
-/* Pedido ao servidor de arquivos com um caminho; devolve a resposta em m. */
+/* Quem cuida de um caminho absoluto: /disco é o disco (FAT32); o resto,
+ * o servidor de arquivos da memória. */
+static inline u32 arq_servidor_de(const char *abs)
+{
+    const char *d = ARQ_DISCO;
+    u32 i = 0;
+    while (d[i] && abs[i] == d[i]) i++;
+    return !d[i] && (abs[i] == '\0' || abs[i] == '/') ? PID_FAT : PID_ARQUIVOS;
+}
+
+/* Pedido ao servidor de arquivos com um caminho; devolve a resposta em m
+ * (em m->origem fica quem respondeu). */
 static inline long arq_pedido(u32 tipo, const char *caminho, msg_t *m)
 {
     char abs[CAMINHO_MAX];
     if (caminho_absoluto(caminho, abs) < 0) return ERRO_INVALIDO;
-    u32 a0 = m->arg[0];
+    u32 a0 = m->arg[0], srv = arq_servidor_de(abs);
     msg_zera(m);
     m->tipo   = tipo;
     m->arg[0] = a0;
     str_copia(m->texto, abs, MSG_TEXTO_MAX);
-    if (sys_chamar(PID_ARQUIVOS, m) < 0) return ERRO_PID;
+    if (sys_chamar(srv, m) < 0) return ERRO_PID;
+    m->origem = srv;
     if (m->tipo == MSG_ERRO) return -(long)m->arg[0];
     return 0;
 }
@@ -330,12 +377,14 @@ static inline long arq_listar(const char *pasta, u32 i, char *nome, u32 *tamanho
     return m.arg[0];
 }
 
+/* O canal devolvido leva o servidor nos bits 8-15: ARQ_SERVIDOR(canal)
+ * diz com quem falar para ler, escrever e fechar. */
 static inline long arq_abrir(const char *caminho, u32 modo)
 {
     msg_t m;
     m.arg[0] = modo;
     long r = arq_pedido(ARQ_ABRIR, caminho, &m);
-    return r < 0 ? r : (long)m.arg[0];
+    return r < 0 ? r : (long)(m.origem << 8 | ARQ_CANAL(m.arg[0]));
 }
 
 static inline void arq_fechar(u32 canal)
@@ -343,8 +392,8 @@ static inline void arq_fechar(u32 canal)
     msg_t m;
     msg_zera(&m);
     m.tipo   = ARQ_FECHAR;
-    m.arg[0] = canal;
-    sys_chamar(PID_ARQUIVOS, &m);
+    m.arg[0] = ARQ_CANAL(canal);
+    sys_chamar(ARQ_SERVIDOR(canal), &m);
 }
 
 static inline long arq_pasta(const char *caminho)
@@ -371,7 +420,7 @@ static inline u8 *arq_carregar(const char *caminho, u32 *tamanho)
     u8 *buf = umalloc(tam ? tam : 1);
     u32 lidos = 0;
     while (buf && lidos < tam) {
-        long n = ler_de(PID_ARQUIVOS, (u32)canal, (char *)buf + lidos, tam - lidos);
+        long n = ler_de(ARQ_SERVIDOR(canal), (u32)canal, (char *)buf + lidos, tam - lidos);
         if (n <= 0) break;
         lidos += (u32)n;
     }

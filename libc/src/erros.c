@@ -17,6 +17,9 @@ int __erro_c(long e)
     case ERRO_SEM_MEMORIA:   return ENOMEM;
     case ERRO_FORMATO:       return ENOEXEC;
     case ERRO_LOTADO:        return EAGAIN;
+    case ERRO_EXISTE:        return EEXIST;
+    case ERRO_DISCO:         return EIO;
+    case ERRO_SEM_ESPACO:    return ENOSPC;
     }
     return EIO;
 }

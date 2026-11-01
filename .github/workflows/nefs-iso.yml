@@ -1,9 +1,10 @@
 # NEFS - constrói a ISO e a publica como Release do GitHub.
 #
-# Dispara quando uma tag "nefs-v*" é criada (ex.: nefs-v0.1), por git push
-# ou pela página "Draft a new release" do GitHub. A ISO é
-# construída do zero pelo nefs/iso/construir.sh, a partir do código da tag,
-# e anexada à Release junto com o seu SHA-256.
+# Dispara quando uma tag "nefs-v*" é criada (ex.: nefs-v0.2), por git push
+# ou pela página "Draft a new release" do GitHub. Duas ISOs, construídas do
+# zero a partir do código da tag e anexadas à Release com o SHA-256:
+#   nefs-novaera-*.iso  o NovaEra puro, sem Linux (nefs/iso/novaera-iso.sh)
+#   nefs-*.iso          a oficina com um Linux mínimo (nefs/iso/construir.sh)
 name: ISO do NEFS
 
 on:
@@ -21,14 +22,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Construir a ISO
+      - name: Construir a ISO sem Linux (o NovaEra puro)
+        run: sh nefs/iso/novaera-iso.sh
+
+      - name: Construir a ISO com o Linux mínimo
         run: sudo bash nefs/iso/construir.sh
 
-      - name: Conferir a ISO
+      - name: Conferir as ISOs
         run: |
-          ISO="$(ls nefs/iso/nefs-*-x86_64.iso)"
-          ls -la "$ISO"
-          (cd nefs/iso && sha256sum "$(basename "$ISO")" > "$(basename "$ISO").sha256")
+          for ISO in nefs/iso/nefs-*-x86_64.iso; do
+              ls -la "$ISO"
+              (cd nefs/iso && sha256sum "$(basename "$ISO")" > "$(basename "$ISO").sha256")
+          done
           cat nefs/iso/*.sha256
 
       - name: Publicar a Release
@@ -40,9 +45,28 @@ jobs:
           cat > notas.md <<EOF
           ## NEFS $VERSAO - NovaEra From Scratch
 
-          A ISO para criar o seu próprio sistema operacional sobre o microkernel NovaEra.
+          Para criar o seu próprio sistema operacional sobre o microkernel NovaEra.
 
-          **Como usar** (numa máquina virtual, com pelo menos 1 GiB de RAM):
+          ### nefs-novaera-$VERSAO-x86_64.iso — sem Linux (recomendada)
+
+          O NovaEra puro: dá boot direto e já traz o compilador (cproc + QBE),
+          o \`nefs\`, o código-fonte e o livro. Com um disco para guardar o trabalho:
+
+              truncate -s 256M disco.img
+              qemu-system-x86_64 -cdrom nefs-novaera-$VERSAO-x86_64.iso -m 256M \\
+                  -drive file=disco.img,format=raw
+
+          Dentro dele:
+
+              formatar                                   # o disco (FAT32), uma vez
+              nefs novo /disco/meu Meu Sistema           # o seu sistema
+              nefs compilar /disco/meu                   # compila lá dentro
+              nefs iso -o /disco/meu.iso /disco/meu      # a ISO do seu sistema
+              nefs livro                                 # o Livro do NEFS
+
+          ### nefs-$VERSAO-x86_64.iso — com um Linux mínimo
+
+          A oficina da Fase 1 (pelo menos 1 GiB de RAM):
 
               qemu-system-x86_64 -cdrom nefs-$VERSAO-x86_64.iso -m 1G
 

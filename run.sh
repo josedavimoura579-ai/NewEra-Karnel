@@ -14,6 +14,14 @@ MODO="${1:-curses}"
 BASE=(-kernel kernel.bin -m 64M -nic none)
 [ -f initrd.tar ] && BASE+=(-initrd initrd.tar)   # os programas que o shell executa
 
+# O disco do NovaEra (/disco): um arquivo de 64 MiB, criado no primeiro uso.
+# Dentro do NovaEra, rode "formatar" uma vez. O que você guardar lá fica.
+if [ ! -f disco.img ]; then
+    echo "Criando disco.img (64 MiB). Dentro do NovaEra, rode: formatar"
+    dd if=/dev/zero of=disco.img bs=1M count=64 2>/dev/null || truncate -s 64M disco.img
+fi
+BASE+=(-drive file=disco.img,format=raw,index=0,media=disk)
+
 if [ "$MODO" != "vnc" ] && ! "$QEMU" -display help 2>&1 | grep -qw curses; then
     echo "Este QEMU não tem modo curses; usando VNC."
     MODO="vnc"

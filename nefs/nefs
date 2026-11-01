@@ -9,7 +9,7 @@
 # ===========================================================================
 set -eu
 
-NEFS_VERSAO="0.1"
+NEFS_VERSAO="0.2"
 
 # Onde está o código-fonte do NovaEra que serve de modelo para "nefs novo":
 #   na ISO:          /usr/share/nefs/novaera
@@ -252,14 +252,21 @@ cmd_rodar() {
     achar_projeto
     [ -f "$PROJETO/kernel.bin" ] || cmd_compilar
     tem qemu-system-x86_64 || erro "qemu-system-x86_64 não encontrado"
+    # O disco do sistema (/disco, FAT32): criado no primeiro uso; dentro do
+    # sistema, rode "formatar" uma vez.
+    disco="$PROJETO/disco.img"
+    if [ ! -f "$disco" ]; then
+        dd if=/dev/zero of="$disco" bs=1M count=64 2>/dev/null
+        dica "disco.img criado (64 MiB): dentro do sistema, rode  formatar"
+    fi
     # Sem interface gráfica (ISO do NEFS, SSH, Termux): a tela vai para o terminal.
     if [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
         dica "para sair do QEMU: Alt+2, digite  quit  e Enter"
         exec qemu-system-x86_64 -kernel "$PROJETO/kernel.bin" -initrd "$PROJETO/initrd.tar" \
-             -m 64M -nic none -display curses
+             -drive file="$disco",format=raw,index=0,media=disk -m 64M -nic none -display curses
     fi
     exec qemu-system-x86_64 -kernel "$PROJETO/kernel.bin" -initrd "$PROJETO/initrd.tar" \
-         -m 64M -nic none
+         -drive file="$disco",format=raw,index=0,media=disk -m 64M -nic none
 }
 
 cmd_iso() {

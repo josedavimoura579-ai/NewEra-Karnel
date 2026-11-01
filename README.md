@@ -139,6 +139,7 @@ Estado atual: **NovaEra Microkernel v3.2** (alfa).
 | **Programas** | **ELF de 64 bits**: os servidores do boot vêm embutidos no `kernel.bin`; os comandos ficam em `/bin`, no servidor de arquivos. Para executar um, quem cria lê o ELF do servidor de arquivos e entrega os bytes ao núcleo (`CRIAR`): **o núcleo não sabe o que é um arquivo**. Recebem `main(argc, argv)`, a entrada e a saída padrão e a pasta atual (herdadas do pai) e devolvem o código de saída |
 | **Arquivos** (PID 4) | Servidor no anel 3: pastas e arquivos na memória (ramfs). Monta a árvore a partir do **initrd** (`initrd.tar`, um módulo Multiboot do GRUB ou de `qemu -initrd`), que o núcleo mapeia só para ele, só para leitura. Arquivos do initrd são copiados na primeira escrita. Abrir, ler, escrever, anexar, listar, criar pasta, apagar. `/bin`, `/etc` e `/tmp` |
 | **Terminal** (PID 5) | O TTY, no anel 3: recebe as teclas do driver de teclado, edita a linha (Backspace), mostra o eco e entrega linhas inteiras a quem lê. **Ctrl+D** numa linha vazia = fim da entrada. É a entrada e a saída padrão de todo programa não redirecionado |
+| **Disco** (PIDs 7 e 8) | `disco`: driver ATA no anel 3 (portas de E/S, sem interrupção). `fat`: o sistema de arquivos **FAT32** em `/disco`, com nomes longos; o mesmo protocolo dos outros arquivos. `formatar` prepara o disco |
 | **Pipes** (PID 6) | Servidor no anel 3: tubos de 4 KiB; escrever num tubo cheio e ler de um vazio só adiam a resposta. O mesmo protocolo (`MSG_LER`/`MSG_ESCREVER`) vale para terminal, pipes e arquivos |
 | **Escalonador** | Preemptivo, *round-robin*, com o timer PIT a **100 Hz** (IRQ 0) |
 | **Chamadas de sistema** | `int 0x80` (única porta da IDT com DPL 3): `ENVIAR`, `RECEBER`, `CHAMAR`, `RESPONDER`, `CEDER`, `IRQ_ASSINAR`, `TEMPO`, `TAREFA_INFO`, `MEMORIA`, `SAIR`, `CRIAR`, `ESPERAR`, `SBRK`, `PID`, `INITRD`, `COPIAR_PARA`, `COPIAR_DE` (um servidor copia dados direto da/para a memória de quem o chamou e espera a resposta), `AMBIENTE`, `PASTA`, `NUCLEO` (como o `uname`). Todo ponteiro recebido é conferido nas tabelas de página antes de o núcleo tocar nele |
@@ -147,7 +148,7 @@ Estado atual: **NovaEra Microkernel v3.2** (alfa).
 | **Drivers** | No anel 3 com IOPL 3 (podem usar `in`/`out`). **Vídeo**: o único processo com `0xB8000` mapeado. Converte UTF-8 para CP437 (os acentos do português aparecem). **Teclado**: PS/2 *set 1*, layout US, Shift, Ctrl e Caps Lock; entrega as teclas ao terminal e faz o `reboot` pela porta `0x64` |
 | **Supervisão** | Uma exceção no anel 3 encerra só o processo culpado, devolve a memória dele e o recarrega (até 5 vezes), avisando-o do motivo. Uma exceção no anel 0 mostra o painel vermelho de pânico |
 | **Shell (anel 3)** | Internos: `ajuda` · `cd` · `pwd` · `limpar` · `ps` · `mem` · `tempo` · `sobre` · `invadir` (demonstra a proteção de memória) · `reboot`. Qualquer outro nome executa `/bin/<nome>`, com argumentos, **pipes** (`a \| b`, até 4) e **redirecionamentos** (`>`, `>>`, `<`). O prompt mostra a pasta atual |
-| **Comandos** (`/bin`, de `usuario/bin/`) | `ls` · `cat` · `echo` · `mkdir` · `rm` · **`novafetch`** (o neofetch do NovaEra) · `ola` · `codigo N` · `memoria [MiB]` · `falha` · `filho` · `cmp` · `base64` · **`nefs`** (`compilar`, `novo`, `info`) · **`testelibc`** (47 testes da libc) |
+| **Comandos** (`/bin`, de `usuario/bin/`) | `ls` · `cat` · `echo` · `mkdir` · `rm` · **`novafetch`** (o neofetch do NovaEra) · `ola` · `codigo N` · `memoria [MiB]` · `falha` · `filho` · `cmp` · `cp` · `base64` · **`formatar`** (o disco, FAT32) · **`nefs`** (`compilar`, `novo`, `iso`, `livro`, `info`) · **`testelibc`** (47 testes da libc) |
 | **Autossuficiência** | O código do NovaEra vem junto, em `/usr/src/novaera` (e o do QBE e do cproc em `/usr/src`): `cd /usr/src/novaera` e **`nefs compilar`** recompilam o sistema inteiro lá dentro, em menos de um minuto no QEMU |
 | **Compilador** (`/bin`, dentro do NovaEra) | **`cproc`** (C → programa: `cproc -o /tmp/ola /usr/share/nefs/exemplos/ola.c`), `qbe`, `nefs-cpp`, `nefs-as`, `nefs-ld`, `nefs-ar`; cabeçalhos em `/usr/include`, a libc em `/usr/lib/nefs/libc.a` |
 | **libc** (`libc/`, a "nlibc") | C padrão para os programas do NovaEra: `stdio` (`printf` com `%.17g` exato, `scanf`, `fopen`, buffers), `stdlib` (`malloc`, `qsort` estável, `strtod` com arredondamento correto), `string`, `ctype`, `errno`, `getopt` e o POSIX que o cproc usa (`pipe`, `posix_spawnp`, `waitpid`, `mkstemp`, `unlink`). Por baixo, tudo vira mensagem para os servidores. Os comandos de `/bin` são ligados com ela |
@@ -208,6 +209,8 @@ novaera-kernel/
 │   ├── arquivos.c    #   servidor de arquivos, ramfs (PID 4)
 │   ├── terminal.c    #   o terminal / TTY (PID 5)
 │   ├── tubos.c       #   os pipes (PID 6)
+│   ├── disco.c       #   o driver de disco ATA (PID 7)
+│   ├── fat.c         #   o disco em /disco, FAT32 (PID 8)
 │   └── bin/          #   os comandos: ls, cat, echo, mkdir, rm, novafetch...
 ├── build.sh          # Compila os programas, embute-os e liga o kernel.bin
 ├── libc/             # A libc do NovaEra: include/ (cabeçalhos), src/, crt0.s
@@ -338,6 +341,11 @@ Clique dentro da janela do QEMU para dar foco ao teclado e digite:
 
 Para sair, feche a janela do QEMU.
 
+**O disco:** com `-drive file=disco.img,format=raw` (o `run.sh` cria um de
+64 MiB), o NovaEra ganha um disco em `/disco` (FAT32). Rode `formatar` uma
+vez; o que você guardar lá fica, e abre também no Windows, no Linux e no
+celular (`mdir -i disco.img ::/`, do pacote `mtools`).
+
 ### Compilando a partir do código-fonte
 
 **No Linux** (Debian/Ubuntu; em outras distros, instale os equivalentes de `clang` e `qemu`):
@@ -391,7 +399,7 @@ bash run.sh            # tela de texto dentro do Termux; use "bash run.sh vnc" p
 - [x] Servidores de arquivos (ramfs), terminal (TTY) e pipes, no anel 3
 - [x] Imagem ISO inicializável (`nefs iso`, com GRUB)
 - [ ] **API estável do NovaEra Core** para sistemas derivados (NEFS)
-- [ ] Driver de disco e sistema de arquivos persistente (como servidores)
+- [x] Driver de disco (ATA) e sistema de arquivos FAT32 em `/disco` (como servidores)
 
 ### Roteiro do NEFS: o compilador
 
@@ -405,7 +413,7 @@ O QBE gera código para x86_64, e foi por isso que o NovaEra passou para 64 bits
 
 - [x] **Fase 1** — a ISO do NEFS: um Linux mínimo com cproc + QBE, o comando `nefs` e o Livro 1. Veja [`nefs/README.md`](nefs/README.md)
 - [x] **Fase 2** — preparar o núcleo (ELF, arquivos, processos, libc): virou as Etapas 1 a 3 da Fase 3
-- [ ] **Fase 3** — o NEFS rodando 100% sobre o NovaEra, sem Linux. Plano em 8 etapas: [`nefs/FASE3.md`](nefs/FASE3.md)
+- [x] **Fase 3** — o NEFS rodando 100% sobre o NovaEra, sem Linux. Plano em 8 etapas: [`nefs/FASE3.md`](nefs/FASE3.md)
   - [x] Etapa 1 — programas ELF, initrd, heap, pilha sob demanda, criar/esperar processos
   - [x] Etapa 2 — servidores de arquivos, terminal e pipes; `ls`, `cat`, `echo`, `mkdir`, `rm`, `novafetch`
   - [x] Etapa 3 — a libc do NovaEra (nlibc) e ponto flutuante no núcleo
@@ -413,7 +421,7 @@ O QBE gera código para x86_64, e foi por isso que o NovaEra passou para 64 bits
   - [x] Etapa 5 — `nefs-as`, `nefs-ld` e `nefs-ar`: o núcleo montado e ligado por eles dá boot
   - [x] Etapa 6 — o cproc e o `nefs-cpp` (pré-processador) rodando no NovaEra: `cproc -o ola ola.c` lá dentro
   - [x] Etapa 7 — **autossuficiência**: dentro do NovaEra, `nefs compilar` recompila o sistema inteiro, e a 3ª geração é idêntica à 2ª
-  - [ ] Etapa 8 — disco e a ISO do NEFS sem Linux
+  - [x] Etapa 8 — disco FAT32 (`/disco`) e a **ISO do NEFS sem Linux**: `nefs iso` gera ISOs dentro do NovaEra
 
 ### Fases futuras (depois da Fase 3)
 

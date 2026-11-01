@@ -23,7 +23,7 @@ static void ler_arquivo(const char *caminho, char *buf, u32 max)
     if (canal < 0) return;
     u32 n = 0;
     long r;
-    while (n < max - 1 && (r = ler_de(PID_ARQUIVOS, (u32)canal, buf + n, max - 1 - n)) > 0)
+    while (n < max - 1 && (r = ler_de(ARQ_SERVIDOR(canal), (u32)canal, buf + n, max - 1 - n)) > 0)
         n += (u32)r;
     buf[n] = '\0';
     arq_fechar((u32)canal);

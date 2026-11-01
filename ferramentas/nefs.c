@@ -46,6 +46,9 @@ extern char **environ;
 
 static int verboso;
 
+/* A imagem de boot do GRUB, no código do NovaEra (veja ferramentas/grub). */
+#define GRUB_ELTORITO "ferramentas/grub/eltorito.img"
+
 /* ------------------------------ Utilidades ------------------------------- */
 
 static void erro(const char *fmt, ...)
@@ -96,12 +99,17 @@ static void tx_s(texto_t *t, const char *s) { tx_poe(t, s, strlen(s)); }
 
 static void tx_f(texto_t *t, const char *fmt, ...)
 {
-    char b[512];
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(b, sizeof b, fmt, ap);
+    int n = vsnprintf(NULL, 0, fmt, ap);        /* primeiro, o tamanho */
     va_end(ap);
-    tx_s(t, b);
+    if (n < 0) erro("formato inválido");
+    char *b = xmalloc((size_t)n + 1);
+    va_start(ap, fmt);
+    vsnprintf(b, (size_t)n + 1, fmt, ap);
+    va_end(ap);
+    tx_poe(t, b, (size_t)n);
+    free(b);
 }
 
 static char *junta(const char *a, const char *b)
@@ -498,7 +506,8 @@ static void tar_grava(const char *saida)
 static const char *const fontes_raiz[] = {
     "kernel.c", "novaera.h", "boot.s", "cpu.s", "linker.ld", "build.sh",
     "sistema.conf", "programas.lista", "logo.txt", "LICENSE", NULL };
-static const char *const fontes_pastas[] = { "usuario", "libc", "ferramentas", "exemplos", "portes", NULL };
+static const char *const fontes_pastas[] = {
+    "usuario", "libc", "ferramentas", "exemplos", "portes", "nefs/livro", NULL };
 static const char *const fontes_fora[] = { "portes/fontes", "ferramentas/testes", NULL };
 
 /* ------------------------------- Portes ---------------------------------- */
@@ -785,6 +794,8 @@ static void cmd_compilar(int argc, char **argv)
     tar_arquivo("usr/lib/nefs/libc.a", "build/libc/libc.a", 0);
     tar_arvore("usr/include", "libc/include", NULL);
     tar_arvore("usr/share/nefs/exemplos", "exemplos", NULL);
+    tar_arvore("usr/share/nefs/livro", "nefs/livro", NULL);
+    if (existe(GRUB_ELTORITO)) tar_arquivo("usr/lib/nefs/grub/eltorito.img", GRUB_ELTORITO, 0);
     for (int i = 0; i < receitas.n; i++) {
         const char *ex = var(&portes[i].v, "EXEMPLOS", NULL);
         if (ex && portes[i].fonte) {
@@ -827,6 +838,239 @@ static void cmd_compilar(int argc, char **argv)
     long seg = (long)((clock() - inicio) / CLOCKS_PER_SEC);
     printf("OK: build/kernel.bin (%ld bytes) e build/initrd.tar (%ld bytes), em %ld min %ld s\n",
            tamanho("build/kernel.bin"), tamanho("build/initrd.tar"), seg / 60, seg % 60);
+}
+
+/* ---------------------------------- iso ---------------------------------- */
+
+/*
+ * Uma ISO inicializável (CD/DVD, ou um pendrive no QEMU): ISO 9660 com o
+ * boot "El Torito". Quem dá o boot é o GRUB (a imagem pronta em
+ * ferramentas/grub/eltorito.img: o GRUB não compila dentro do NovaEra),
+ * que lê /boot/grub/grub.cfg e carrega o kernel.bin e o initrd.tar.
+ *
+ *   setor 0-15   vazios (área do sistema)
+ *   16           descritor primário (o nome do volume, onde está a raiz)
+ *   17           descritor de boot El Torito (onde está o catálogo)
+ *   18           fim dos descritores
+ *   19, 20       tabelas de caminhos (little e big endian)
+ *   21           o catálogo de boot (qual arquivo é a imagem de boot)
+ *   22...        as pastas e, depois, os arquivos
+ * Os números de 16 e 32 bits aparecem duas vezes: little e big endian.
+ */
+
+#define ISO_SETOR 2048u
+
+typedef struct {
+    const char *nome;      /* 8.3 em maiúsculas, como pede o ISO 9660 nível 1 */
+    int   pai;             /* índice da pasta (a raiz é 0) */
+    int   pasta;
+    char *dados;
+    size_t tam;
+    unsigned lba, setores;
+} iso_item_t;
+
+static void iso_le32(unsigned char *p, unsigned v) { p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8); p[2] = (unsigned char)(v >> 16); p[3] = (unsigned char)(v >> 24); }
+static void iso_be32(unsigned char *p, unsigned v) { p[3] = (unsigned char)v; p[2] = (unsigned char)(v >> 8); p[1] = (unsigned char)(v >> 16); p[0] = (unsigned char)(v >> 24); }
+static void iso_ambos32(unsigned char *p, unsigned v) { iso_le32(p, v); iso_be32(p + 4, v); }
+static void iso_ambos16(unsigned char *p, unsigned v) { p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8); p[2] = (unsigned char)(v >> 8); p[3] = (unsigned char)v; }
+
+/* Um registro de pasta; devolve o tamanho. */
+static unsigned iso_registro(unsigned char *p, const char *nome, unsigned nlen, unsigned lba,
+                             unsigned tam, int pasta)
+{
+    unsigned n = 33 + nlen;
+    if (n & 1) n++;
+    memset(p, 0, n);
+    p[0] = (unsigned char)n;
+    iso_ambos32(p + 2, lba);
+    iso_ambos32(p + 10, tam);
+    p[25] = pasta ? 2 : 0;
+    iso_ambos16(p + 28, 1);
+    p[32] = (unsigned char)nlen;
+    memcpy(p + 33, nome, nlen);
+    return n;
+}
+
+static void iso_espaco(unsigned char *p, size_t n) { memset(p, ' ', n); }
+
+static void cmd_iso(int argc, char **argv)
+{
+    const char *pasta = ".", *saida = "build/novaera.iso";
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) saida = argv[++i];
+        else pasta = argv[i];
+    }
+    if (chdir(pasta) != 0) erro("não achei a pasta %s", pasta);
+    if (!existe("build/kernel.bin") || !existe("build/initrd.tar"))
+        erro("falta build/kernel.bin ou build/initrd.tar: rode antes  nefs compilar");
+    const char *grub = existe(GRUB_ELTORITO) ? GRUB_ELTORITO : "/usr/lib/nefs/grub/eltorito.img";
+    if (!existe(grub)) erro("não achei a imagem de boot do GRUB (%s)", GRUB_ELTORITO);
+
+    static const char cfg[] =
+        "# GRUB da ISO do NovaEra (gerada por \"nefs iso\")\n"
+        "set timeout=0\n"
+        "menuentry \"NovaEra\" {\n"
+        "    multiboot /boot/kernel.bin\n"
+        "    module /boot/initrd.tar initrd\n"
+        "    boot\n"
+        "}\n";
+    iso_item_t it[8];
+    int n = 0;
+    memset(it, 0, sizeof it);
+    it[n].nome = "";             it[n].pasta = 1; it[n].pai = 0; n++;     /* 0: raiz */
+    it[n].nome = "BOOT";         it[n].pasta = 1; it[n].pai = 0; n++;     /* 1 */
+    it[n].nome = "GRUB";         it[n].pasta = 1; it[n].pai = 1; n++;     /* 2 */
+    /* em cada pasta, os nomes em ordem alfabética (o ISO 9660 pede) */
+    it[n].nome = "INITRD.TAR";   it[n].pai = 1; it[n].dados = le_arquivo("build/initrd.tar", &it[n].tam); n++;
+    it[n].nome = "KERNEL.BIN";   it[n].pai = 1; it[n].dados = le_arquivo("build/kernel.bin", &it[n].tam); n++;
+    it[n].nome = "ELTORITO.IMG"; it[n].pai = 2; it[n].dados = le_arquivo(grub, &it[n].tam); n++;
+    int boot = n - 1;
+    it[n].nome = "GRUB.CFG";     it[n].pai = 2; it[n].dados = xstrdup(cfg); it[n].tam = strlen(cfg); n++;
+    for (int i = 0; i < n; i++) if (!it[i].pasta && !it[i].dados) erro("não consegui ler %s", it[i].nome);
+
+    /* onde cada coisa fica */
+    unsigned lba = 22;
+    for (int i = 0; i < n; i++) if (it[i].pasta) { it[i].lba = lba++; it[i].setores = 1; it[i].tam = ISO_SETOR; }
+    for (int i = 0; i < n; i++) if (!it[i].pasta) {
+        it[i].lba = lba;
+        it[i].setores = (unsigned)((it[i].tam + ISO_SETOR - 1) / ISO_SETOR);
+        lba += it[i].setores ? it[i].setores : 0;
+    }
+    /* 150 setores (300 KiB) de folga no fim, como o mkisofs: o GRUB e
+     * algumas BIOS leem o CD em blocos grandes, e ler além do fim falha */
+    unsigned total = lba + 150;
+
+    /* a "boot info table" que a imagem do GRUB espera (como o
+     * -boot-info-table do xorriso): onde está a ISO e a própria imagem */
+    unsigned char *bi = (unsigned char *)it[boot].dados;
+    if (it[boot].tam < 64) erro("imagem de boot pequena demais");
+    unsigned soma = 0;
+    for (size_t k = 64; k < it[boot].tam; k += 4)      /* a última palavra, completada com zeros */
+        for (size_t j = 0; j < 4 && k + j < it[boot].tam; j++) soma += (unsigned)bi[k + j] << (8 * j);
+    memset(bi + 8, 0, 56);
+    iso_le32(bi + 8, 16);
+    iso_le32(bi + 12, it[boot].lba);
+    iso_le32(bi + 16, (unsigned)it[boot].tam);
+    iso_le32(bi + 20, soma);
+
+    unsigned char *img = xmalloc((size_t)total * ISO_SETOR);
+    /* as pastas */
+    for (int d = 0; d < n; d++) {
+        if (!it[d].pasta) continue;
+        unsigned char *p = img + (size_t)it[d].lba * ISO_SETOR;
+        p += iso_registro(p, "\0", 1, it[d].lba, ISO_SETOR, 1);                       /* . */
+        p += iso_registro(p, "\1", 1, it[it[d].pai].lba, ISO_SETOR, 1);              /* .. */
+        for (int i = 1; i < n; i++) {
+            if (it[i].pai != d || i == d) continue;
+            char nome[32];
+            snprintf(nome, sizeof nome, it[i].pasta ? "%s" : "%s;1", it[i].nome);
+            p += iso_registro(p, nome, (unsigned)strlen(nome), it[i].lba, (unsigned)(it[i].pasta ? ISO_SETOR : it[i].tam), it[i].pasta);
+        }
+    }
+    /* os arquivos */
+    for (int i = 0; i < n; i++)
+        if (!it[i].pasta && it[i].tam) memcpy(img + (size_t)it[i].lba * ISO_SETOR, it[i].dados, it[i].tam);
+
+    /* as tabelas de caminhos: uma linha por pasta (pais antes dos filhos) */
+    unsigned char *lt = img + 19 * ISO_SETOR, *mt = img + 20 * ISO_SETOR;
+    unsigned tam_tab = 0, num[8] = {0}, k = 0;
+    for (int d = 0; d < n; d++) {
+        if (!it[d].pasta) continue;
+        num[d] = ++k;
+        unsigned nl = d == 0 ? 1 : (unsigned)strlen(it[d].nome);
+        const char *nm = d == 0 ? "\0" : it[d].nome;
+        unsigned char *a = lt + tam_tab, *b = mt + tam_tab;
+        a[0] = b[0] = (unsigned char)nl;
+        iso_le32(a + 2, it[d].lba);
+        iso_be32(b + 2, it[d].lba);
+        unsigned pai = d == 0 ? 1 : num[it[d].pai];
+        a[6] = (unsigned char)pai; a[7] = (unsigned char)(pai >> 8);
+        b[7] = (unsigned char)pai; b[6] = (unsigned char)(pai >> 8);
+        memcpy(a + 8, nm, nl);
+        memcpy(b + 8, nm, nl);
+        tam_tab += 8 + nl + (nl & 1);
+    }
+
+    /* o descritor primário */
+    unsigned char *pv = img + 16 * ISO_SETOR;
+    pv[0] = 1;
+    memcpy(pv + 1, "CD001", 5);
+    pv[6] = 1;
+    iso_espaco(pv + 8, 32);
+    iso_espaco(pv + 40, 32);
+    memcpy(pv + 40, "NOVAERA", 7);
+    iso_ambos32(pv + 80, total);
+    iso_ambos16(pv + 120, 1);
+    iso_ambos16(pv + 124, 1);
+    iso_ambos16(pv + 128, ISO_SETOR);
+    iso_ambos32(pv + 132, tam_tab);
+    iso_le32(pv + 140, 19);
+    iso_be32(pv + 148, 20);
+    iso_registro(pv + 156, "\0", 1, it[0].lba, ISO_SETOR, 1);
+    iso_espaco(pv + 190, 128 * 4 + 37 * 3);
+    memcpy(pv + 318, "NEFS", 4);                     /* quem preparou */
+    for (int c = 0; c < 4; c++) {                    /* datas: "não informadas" */
+        memset(pv + 813 + 17 * c, '0', 16);
+        pv[813 + 17 * c + 16] = 0;
+    }
+    pv[881] = 1;
+
+    /* El Torito: o descritor de boot e o catálogo */
+    unsigned char *br = img + 17 * ISO_SETOR;
+    memcpy(br + 1, "CD001", 5);
+    br[6] = 1;
+    memcpy(br + 7, "EL TORITO SPECIFICATION", 23);
+    iso_le32(br + 71, 21);
+    unsigned char *cat = img + 21 * ISO_SETOR;
+    cat[0] = 1;                                       /* validação, plataforma x86 */
+    cat[30] = 0x55; cat[31] = 0xAA;
+    unsigned s16 = 0;
+    for (int c = 0; c < 32; c += 2) s16 += (unsigned)cat[c] | (unsigned)cat[c + 1] << 8;
+    s16 = (0x10000u - (s16 & 0xFFFF)) & 0xFFFF;
+    cat[28] = (unsigned char)s16; cat[29] = (unsigned char)(s16 >> 8);
+    cat[32] = 0x88;                                   /* a entrada de boot: inicializável */
+    cat[33] = 0;                                      /* sem emulação de disquete */
+    cat[38] = 4;                                      /* a BIOS carrega 4 setores de 512 */
+    iso_le32(cat + 40, it[boot].lba);
+    unsigned char *fim = img + 18 * ISO_SETOR;
+    fim[0] = 255;
+    memcpy(fim + 1, "CD001", 5);
+    fim[6] = 1;
+
+    grava_arquivo(saida, (const char *)img, (size_t)total * ISO_SETOR);
+    printf("OK: %s (%ld bytes): kernel.bin + initrd.tar + GRUB\n", saida, tamanho(saida));
+}
+
+/* -------------------------------- livro ---------------------------------- */
+
+static void cmd_livro(int argc, char **argv)
+{
+    const char *pasta = existe("/usr/share/nefs/livro") ? "/usr/share/nefs/livro" : "nefs/livro";
+    lista_t caps = {0};
+    lista_pasta(pasta, ".md", &caps);
+    if (!caps.n) erro("o livro não está em %s", pasta);
+    /* os capítulos são "01-o-que-e.md", "02-...": o número vem do nome */
+    if (argc == 0) {
+        printf("O Livro do NEFS (leia um capítulo com: nefs livro <número>):\n");
+        for (int i = 0; i < caps.n; i++) {
+            char *t = le_arquivo(caps.v[i], NULL), *nl = t ? strchr(t, '\n') : NULL;
+            if (nl) *nl = '\0';
+            printf("  %s\n", t ? (t[0] == '#' ? t + 2 : t) : caps.v[i]);
+            free(t);
+        }
+        return;
+    }
+    int n = atoi(argv[0]);
+    for (int i = 0; i < caps.n; i++) {
+        char *b = base(caps.v[i], "");
+        int num = atoi(b);
+        free(b);
+        if (num != n) continue;
+        char *t = le_arquivo(caps.v[i], NULL);
+        if (t) fputs(t, stdout);
+        return;
+    }
+    erro("o capítulo %s não existe", argv[0]);
 }
 
 /* --------------------------------- novo ---------------------------------- */
@@ -916,6 +1160,8 @@ static void uso(void)
     printf("nefs - o NEFS dentro do NovaEra\n"
            "  nefs compilar [-v] [-sem-portes] [pasta]   compila o sistema da pasta\n"
            "  nefs novo <pasta> [nome do sistema]        um sistema novo, a partir de /usr/src/novaera\n"
+           "  nefs iso [-o saida.iso] [pasta]            uma ISO inicializável (depois do compilar)\n"
+           "  nefs livro [capítulo]                      o Livro do NEFS\n"
            "  nefs info                                  o sistema e as ferramentas\n"
            "Exemplo:  cd /usr/src/novaera  e  nefs compilar\n");
 }
@@ -926,6 +1172,8 @@ int main(int argc, char **argv)
     if (!strcmp(argv[1], "compilar")) cmd_compilar(argc - 2, argv + 2);
     else if (!strcmp(argv[1], "novo")) cmd_novo(argc - 2, argv + 2);
     else if (!strcmp(argv[1], "info")) cmd_info();
+    else if (!strcmp(argv[1], "iso")) cmd_iso(argc - 2, argv + 2);
+    else if (!strcmp(argv[1], "livro")) cmd_livro(argc - 2, argv + 2);
     else { uso(); return 2; }
     return 0;
 }

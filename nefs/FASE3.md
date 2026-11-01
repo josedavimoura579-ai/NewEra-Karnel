@@ -25,8 +25,8 @@ constrói.
   depende da libbfd e é grande demais.
 - **Pré-processador:** um do NEFS (`nefs-cpp`), completo; contribuir com
   o pré-processador do cproc depois.
-- **Sistema de arquivos no disco:** decidir na Etapa 8 (FAT32 ou formato
-  próprio).
+- **Sistema de arquivos no disco:** FAT32 (decidido na Etapa 8): o disco
+  do NovaEra abre no Windows, no Linux, no celular e no mtools.
 
 ## Etapas
 
@@ -137,7 +137,29 @@ Cada etapa termina com algo testável no QEMU e vira um pull request.
     geração 2 deu boot, passou no `testelibc` e compilou a geração 3, que é
     idêntica byte a byte à geração 2 (`kernel.bin` e `initrd.tar`): ponto
     fixo. Cabe em 64 MiB de memória.*
-- [ ] **Etapa 8 — a ISO NEFS-sobre-NovaEra**
-  - driver de disco (ATA) e sistema de arquivos para guardar os projetos
-  - geração de ISO dentro do NovaEra
-  - *Entrega: a ISO do NEFS sem Linux.*
+- [x] **Etapa 8 — a ISO NEFS-sobre-NovaEra**
+  - **`disco`** (PID 7, `usuario/disco.c`): driver ATA (PIO, LBA28), setores
+    de 512 bytes, até 128 por pedido
+  - **`fat`** (PID 8, `usuario/fat.c`): FAT32 em `/disco`, com nomes longos
+    (LFN), pastas, criar, anexar, apagar; disco inteiro ou 1ª partição; um
+    cache pequeno de clusters. A ulib manda os caminhos de `/disco` para ele
+    (o canal leva o servidor nos bits 8-15)
+  - escrita em bloco: `MSG_ESCREVER` com `arg[3]` = endereço, até 64 KiB de
+    uma vez (`SYS_COPIAR_DE`), nos dois servidores de arquivos
+  - comandos `formatar` (o mkfs.fat do NovaEra) e `cp`; `run.sh` e
+    `nefs rodar` criam um `disco.img`
+  - **`nefs iso`**: ISO 9660 + El Torito, com o GRUB pronto
+    (`ferramentas/grub/eltorito.img`, feito pelo `gerar.sh`: o GRUB não
+    compila no NovaEra); `nefs livro` dentro do NovaEra
+  - **a ISO do NEFS sem Linux**: `nefs/iso/novaera-iso.sh`; o workflow publica
+    as duas ISOs
+  - *Teste: um disco formatado no Linux (`mkfs.fat`) é lido no NovaEra (nome
+    longo, subpastas, um arquivo de 300 KB com o mesmo SHA-256); o que o
+    NovaEra grava passa no `fsck.fat` e sai igual pelo `mcopy`. Na ISO sem
+    Linux, com um disco vazio: `formatar`, `nefs novo /disco/meu`,
+    `nefs compilar /disco/meu` (1 min 7 s) e `nefs iso -o /disco/meu.iso`;
+    a ISO tirada do disco com o `mcopy` dá boot como "Meu Sistema", passa
+    no `testelibc` e compila programas. Os arquivos continuam no disco no
+    boot seguinte.*
+
+**A Fase 3 terminou:** o NEFS roda 100% sobre o NovaEra, sem Linux.

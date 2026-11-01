@@ -43,7 +43,8 @@ static void cmd_ajuda(void)
     escreve("  invadir  ", c); escreve("tenta ler a memoria do nucleo (e o shell morre!)\n", d);
     escreve("  reboot   ", c); escreve("reinicia o computador\n", d);
     escreve("Programas em /bin (veja: ls /bin):\n", COR(COR_CIANO_CLARO));
-    escreve("  ls cat echo mkdir rm cmp base64 novafetch ola codigo memoria falha filho\n", c);
+    escreve("  ls cat echo mkdir rm cp cmp base64 novafetch ola codigo memoria falha filho\n", c);
+    escreve("  formatar  (prepara o disco, que aparece em /disco; nefs livro 7)\n", c);
     escreve("  cproc qbe nefs-cpp nefs-as nefs-ld nefs-ar  (o compilador; nefs livro 4)\n", c);
     escreve("  nefs compilar  (em /usr/src/novaera: o NovaEra se compila; nefs livro 6)\n", c);
     escreve("Pipes e arquivos: ", COR(COR_CIANO_CLARO));
@@ -246,7 +247,7 @@ static void rodar(comando_t *cmds, u32 n)
             long a = arq_abrir(c->entrada, ARQ_MODO_LER);
             if (a < 0) { erro_arquivo("Arquivo nao encontrado: ", c->entrada); break; }
             abertos[n_abertos++] = a;
-            ent = PID_ARQUIVOS; ent_c = (u32)a;
+            ent = ARQ_SERVIDOR(a); ent_c = (u32)a;
         }
         if (i + 1 < n) {
             tubos[i] = tubo_criar();
@@ -257,7 +258,7 @@ static void rodar(comando_t *cmds, u32 n)
             long a = arq_abrir(c->saida, c->anexar ? ARQ_MODO_ANEXAR : ARQ_MODO_ESCREVER);
             if (a < 0) { erro_arquivo("Nao consegui criar: ", c->saida); break; }
             abertos[n_abertos++] = a;
-            sai = PID_ARQUIVOS; sai_c = (u32)a;
+            sai = ARQ_SERVIDOR(a); sai_c = (u32)a;
         }
 
         /* "ola" -> /bin/ola; "./prog" ou "/tmp/prog" -> como escrito */

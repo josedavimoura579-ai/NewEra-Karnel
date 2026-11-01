@@ -1383,6 +1383,8 @@ static const struct {
     {"lodsb",{0xAC},1,0},{"stosb",{0xAA},1,0},{"stosw",{0x66,0xAB},2,0},
     {"stosl",{0xAB},1,0},{"stosq",{0x48,0xAB},2,1},{"movsb",{0xA4},1,0},
     {"movsq",{0x48,0xA5},2,1},
+    {"insb",{0x6C},1,0},{"insw",{0x66,0x6D},2,0},{"insl",{0x6D},1,0},
+    {"outsb",{0x6E},1,0},{"outsw",{0x66,0x6F},2,0},{"outsl",{0x6F},1,0},
 };
 
 static int enc_simples(const char *mn)
@@ -1848,8 +1850,15 @@ static void comando(char *txt)
         int no = 0;
         pula_espacos();
         if (strcmp(nome, "rep") == 0 || strcmp(nome, "lock") == 0) {
+            pedaco_t *ped = dados_atual();
+            size_t pos = ped->b.n;
             instrucao(nome, o, 0);
             if (*p) comando((char *)p);
+            /* como o GNU as: o prefixo 66 (16 bits) vem antes do rep */
+            if (ped->b.n > pos + 1 && ped->b.d[pos + 1] == 0x66) {
+                ped->b.d[pos + 1] = ped->b.d[pos];
+                ped->b.d[pos] = 0x66;
+            }
             return;
         }
         if (*p) {

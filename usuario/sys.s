@@ -51,6 +51,24 @@ outb:
     outb %al, %dx
     ret
 
+# void ins16(u16 porta, void *buf, u64 n)   - lê n palavras de 16 bits da porta
+# void outs16(u16 porta, const void *buf, u64 n) - escreve n palavras na porta
+# (o disco ATA entrega e recebe os setores assim: 256 palavras cada)
+.globl ins16
+ins16:
+    movq %rdx, %rcx
+    movw %di, %dx
+    movq %rsi, %rdi
+    rep insw
+    ret
+
+.globl outs16
+outs16:
+    movq %rdx, %rcx
+    movw %di, %dx
+    rep outsw
+    ret
+
 # u8 inb(u16 porta)
 .globl inb
 inb:
