@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 [ -f kernel.bin ] || { echo "kernel.bin não existe. Rode ./build.sh primeiro."; exit 1; }
 
 QEMU="$(command -v qemu-system-x86_64 || true)"   # o NovaEra é 64 bits
-[ -n "$QEMU" ] || { echo "QEMU não encontrado. Rode: pkg install qemu-system-x86-64"; exit 1; }
+[ -n "$QEMU" ] || { echo "QEMU não encontrado. No Termux: pkg install qemu-system-x86-64-headless"; exit 1; }
 
 MODO="${1:-curses}"
 BASE=(-kernel kernel.bin -m 64M -nic none)

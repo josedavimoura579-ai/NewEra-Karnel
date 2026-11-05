@@ -87,7 +87,7 @@ O NovaEra é a **base**: um núcleo que só isola, escalona e entrega mensagens.
 ├──────────────────────────────────────────────┤
 │  4. Userland       (shell ✔, ferramentas)      │  ← anel 3
 ├──────────────────────────────────────────────┤
-│  3. Serviços       (arquivos, rede, gráficos)  │  ← anel 3 (futuro)
+│  3. Serviços  (arquivos ✔, disco ✔, gráficos)  │  ← anel 3
 ├──────────────────────────────────────────────┤
 │  2. Drivers        (teclado ✔, vídeo ✔, ...)   │  ← anel 3, por mensagens
 ├──────────────────────────────────────────────┤
@@ -111,13 +111,13 @@ O NEFS propõe duas filosofias de distribuição — inspiradas no que a comunid
 
 ### Primeira modificação (5 minutos)
 
-Quer sentir o NEFS na prática? Abra o `usuario/shell.c`, encontre a função `executar()` e adicione um comando **antes** do último `else`:
+Quer sentir o NEFS na prática? Abra o `usuario/shell.c`, encontre a função `interno()` e adicione um comando **antes** do último `else`:
 
 ```c
-    else if (str_igual(cmd, "ola"))     escreve("Ola, mundo NEFS!\n", COR(COR_VERDE_CLARO));
+    else if (str_igual(cmd, "oi"))      escreve("Oi, mundo NEFS!\n", COR(COR_VERDE_CLARO));
 ```
 
-Compile com `bash build.sh`, rode no QEMU, digite `ola` e aperte Enter. Repare que você mudou o sistema **sem tocar no núcleo**: o shell é só um programa que pede ao servidor de vídeo para escrever. É assim que um microkernel cresce.
+Compile com `bash build.sh`, rode com `bash run.sh`, digite `oi` e aperte Enter. Repare que você mudou o sistema **sem tocar no núcleo**: o shell é só um programa que pede ao servidor de vídeo para escrever. É assim que um microkernel cresce.
 
 ---
 
@@ -184,12 +184,12 @@ Experimente no shell:
 
 ### O que o NovaEra **ainda não** tem
 
-Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), sinais (`kill`), mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, driver de disco (hoje os arquivos somem ao desligar), usuários e permissões. Veja o [Roteiro](#roteiro).
+Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), sinais (`kill`), threads, mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, relógio (a data dos arquivos é 1980), usuários e permissões, rede e interface gráfica. Veja o [Roteiro](#roteiro).
 
 ### Estrutura do repositório
 
 ```
-novaera-kernel/
+NewEra-Karnel/
 ├── novaera.h         # A ABI: syscalls, mensagens, PIDs, mapa de memória
 ├── sistema.conf      # Nome, versão, lema e prompt do sistema
 ├── programas.lista   # Os servidores que o núcleo inicia no boot
@@ -228,33 +228,48 @@ novaera-kernel/
 
 ## Rodando o kernel no seu computador
 
-Você **não precisa compilar nada**. Basta baixar o `kernel.bin` e o `initrd.tar` (os programas que o shell executa) e rodá-los no **QEMU**, um emulador livre que simula um PC x86 completo.
+Você **não precisa compilar nada**: o `kernel.bin` e o `initrd.tar` (os programas, o compilador e o código-fonte) já vêm prontos no repositório. Basta o **QEMU**, um emulador livre que simula um PC x86_64 completo.
 
-### Passo 1 — Baixe o `kernel.bin` e o `initrd.tar`
-
-Escolha uma das formas:
-
-- **Pelo navegador:** abra os arquivos `kernel.bin` e `initrd.tar` neste repositório e clique em **Download raw file** (ícone de download).
-- **Pelo terminal (Linux e macOS):**
-  ```bash
-  curl -L -o kernel.bin https://github.com/josedavimoura579-ai/NewEra-Karnel/raw/main/kernel.bin
-  curl -L -o initrd.tar https://github.com/josedavimoura579-ai/NewEra-Karnel/raw/main/initrd.tar
-  ```
-- **Pelo PowerShell (Windows):**
-  ```powershell
-  Invoke-WebRequest -Uri https://github.com/josedavimoura579-ai/NewEra-Karnel/raw/main/kernel.bin -OutFile kernel.bin
-  Invoke-WebRequest -Uri https://github.com/josedavimoura579-ai/NewEra-Karnel/raw/main/initrd.tar -OutFile initrd.tar
-  ```
-
-### Passo 2 — Instale o QEMU
+### Passo 1 — Instale o QEMU (e o git)
 
 <details open>
+<summary><b>🤖 Android (Termux)</b> — o caminho em que o NovaEra nasceu</summary>
+
+Instale o Termux pelo [F-Droid](https://f-droid.org/packages/com.termux/) ou pelo [GitHub](https://github.com/termux/termux-app/releases) (a versão da Play Store é antiga e não recebe pacotes). Depois, no Termux:
+
+```bash
+pkg update && pkg upgrade
+pkg install git qemu-system-x86-64-headless
+```
+
+O pacote `-headless` mostra a tela do PC virtual dentro do próprio Termux. Para uma janela gráfica (por um app de VNC), o `run.sh` também serve: veja o Passo 3.
+
+</details>
+
+<details>
+<summary><b>🐧 Linux</b></summary>
+
+```bash
+# Debian / Ubuntu / Mint
+sudo apt install git qemu-system-x86
+
+# Arch / Manjaro
+sudo pacman -S git qemu-system-x86
+
+# Fedora
+sudo dnf install git qemu-system-x86
+```
+
+</details>
+
+<details>
 <summary><b>🪟 Windows</b></summary>
 
 Pelo terminal (PowerShell ou Prompt de Comando):
 
 ```powershell
 winget install --id SoftwareFreedomConservancy.QEMU
+winget install --id Git.Git
 ```
 
 Ou baixe o instalador na [página oficial do QEMU](https://www.qemu.org/download/#windows). O QEMU é instalado em `C:\Program Files\qemu`. Se o comando `qemu-system-x86_64` não for reconhecido, adicione essa pasta ao `PATH` do Windows ou use o caminho completo (veja o Passo 3).
@@ -267,36 +282,41 @@ Ou baixe o instalador na [página oficial do QEMU](https://www.qemu.org/download
 Com o [Homebrew](https://brew.sh):
 
 ```bash
-brew install qemu
+brew install qemu git
 ```
 
 </details>
 
-<details>
-<summary><b>🐧 Linux</b></summary>
+### Passo 2 — Baixe o NovaEra
 
 ```bash
-# Debian / Ubuntu / Mint
-sudo apt install qemu-system-x86
-
-# Arch / Manjaro
-sudo pacman -S qemu-system-x86
-
-# Fedora
-sudo dnf install qemu-system-x86
+git clone https://github.com/josedavimoura579-ai/NewEra-Karnel.git
+cd NewEra-Karnel
 ```
 
-</details>
+Sem o git, baixe o ZIP pelo botão **Code → Download ZIP** desta página e descompacte. Basta ter o `kernel.bin` e o `initrd.tar`.
 
 ### Passo 3 — Rode
 
-Na pasta onde estão o `kernel.bin` e o `initrd.tar`:
+**No Termux e no Linux**, de dentro da pasta `NewEra-Karnel`:
+
+```bash
+bash run.sh
+```
+
+O `run.sh` liga o NovaEra com 64 MiB de memória e um disco (`disco.img`, de 64 MiB, criado na primeira vez). A tela aparece no próprio terminal:
+
+- **No celular, gire para a horizontal** ou diminua a fonte (gesto de pinça): o PC virtual precisa de 80×25 letras.
+- **Para sair do QEMU:** aperte **Alt+2**, digite `quit` e Enter. (No Termux, o Alt fica na barra de teclas extras; se ela não tiver, Esc e depois 2.)
+- **Janela gráfica:** `bash run.sh vnc` e conecte um app de VNC (bVNC, RealVNC...) em `localhost:5901`.
+
+**Em qualquer sistema**, direto com o QEMU:
 
 ```bash
 qemu-system-x86_64 -kernel kernel.bin -initrd initrd.tar -m 64M
 ```
 
-Sem o `-initrd`, o sistema liga do mesmo jeito, mas o shell só tem os comandos embutidos.
+Para ter o disco também, acrescente `-drive file=disco.img,format=raw` (crie antes um arquivo de 64 MiB: `truncate -s 64M disco.img` no Linux e no macOS, ou `fsutil file createnew disco.img 67108864` no Windows).
 
 > O NovaEra é 64 bits: use `qemu-system-x86_64`. Com `qemu-system-i386`, a tela mostra um aviso vermelho e o sistema para.
 >
@@ -305,7 +325,7 @@ Sem o `-initrd`, o sistema liga do mesmo jeito, mas o shell só tem os comandos 
 > & "C:\Program Files\qemu\qemu-system-x86_64.exe" -kernel kernel.bin -initrd initrd.tar -m 64M
 > ```
 
-Uma janela abre com um PC virtual. Em menos de um segundo você verá a tela azul com a mensagem:
+Em menos de um segundo você verá a mensagem:
 
 ```
 ╔════════════════════════════════════════════════════════╗
@@ -313,65 +333,65 @@ Uma janela abre com um PC virtual. Em menos de um segundo você verá a tela azu
 ╚════════════════════════════════════════════════════════╝
 ```
 
-seguida dos testes de inicialização (`[ OK ]`), da entrega da CPU aos processos do usuário e do prompt `NovaEra>`.
+seguida dos testes de inicialização (`[ OK ]`), da entrega da CPU aos processos do usuário e do prompt `NovaEra:/>`.
 
 ### Passo 4 — Converse com o kernel
 
-Clique dentro da janela do QEMU para dar foco ao teclado e digite:
+Clique dentro da janela do QEMU (ou toque na tela do Termux) e digite:
 
 | Comando | O que acontece |
 |---|---|
 | `ajuda` | Lista os comandos. |
-| `limpar` | Limpa a tela. |
-| `ps` | Lista os processos, o anel, o estado e quantas vezes foram reiniciados. |
-| `mem` | Mostra a memória física livre. |
-| `tempo` | Mostra há quanto tempo o sistema está ligado. |
-| `sobre` | Explica, em quatro linhas, o que é um microkernel. |
-| `ls /bin` | Lista os comandos. `ls`, `cat`, `echo`, `mkdir` e `rm` funcionam como no Linux. |
 | `novafetch` | O logo e as informações do sistema, como o neofetch. |
+| `ps` · `mem` · `tempo` | Os processos (com o anel e os reinícios), a memória livre e há quanto tempo o sistema está ligado. |
+| `sobre` | Explica, em quatro linhas, o que é um microkernel. |
+| `ls /bin` | Lista os comandos. `ls`, `cat`, `echo`, `mkdir`, `rm` e `cp` funcionam como no Linux. |
 | `cd /etc` · `cat sistema` | Muda de pasta (o prompt mostra onde você está) e mostra um arquivo. |
 | `echo oi > /tmp/a` · `cat /tmp/a` | Grava num arquivo e lê de volta (`>>` anexa, `<` lê de um arquivo). |
 | `ls /bin \| cat` | Um pipe: a saída do `ls` vira a entrada do `cat`. |
-| `cat` | Repete o que você digita; **Ctrl+D** termina. |
-| `ola um dois` | Um programa que mostra os argumentos que recebeu. |
-| `filho` | Um programa que cria outro processo e espera ele terminar. |
+| `formatar` | Prepara o disco (uma vez): ele aparece em `/disco` e o que você guardar lá fica. |
+| `cproc -o /tmp/ola /usr/share/nefs/exemplos/ola.c` · `/tmp/ola` | Compila um programa em C **dentro** do NovaEra e roda. |
+| `cd /usr/src/novaera` · `nefs compilar` | O NovaEra recompila a si mesmo, em menos de um minuto. |
+| `nefs livro` | O Livro do NEFS. |
 | `falha` | Um programa com bug: o núcleo o encerra e o shell segue em frente. |
 | `invadir` | O shell tenta ler a memória do núcleo, é encerrado e reiniciado. |
 | `reboot` | Reinicia a máquina virtual (quem faz isso é o driver de teclado, fora do núcleo). |
 
-Para sair, feche a janela do QEMU.
-
-**O disco:** com `-drive file=disco.img,format=raw` (o `run.sh` cria um de
-64 MiB), o NovaEra ganha um disco em `/disco` (FAT32). Rode `formatar` uma
-vez; o que você guardar lá fica, e abre também no Windows, no Linux e no
-celular (`mdir -i disco.img ::/`, do pacote `mtools`).
+**O disco** usa FAT32: o que você gravar em `/disco` abre também no Windows, no Linux e no celular. Do lado de fora, sem ligar o NovaEra: `mdir -i disco.img ::/` e `mcopy -i disco.img ::/arquivo .` (pacote `mtools`; no Termux, `pkg install mtools`).
 
 ### Compilando a partir do código-fonte
 
-**No Linux** (Debian/Ubuntu; em outras distros, instale os equivalentes de `clang` e `qemu`):
+Para mudar o NovaEra e compilar de novo. A compilação usa o **clang** e as ferramentas do próprio NovaEra (`nefs-as`, `nefs-ld`), que o `build.sh` compila antes. Não precisa de NASM nem de binutils.
+
+**No Termux:**
 
 ```bash
-sudo apt install clang qemu-system-x86
-git clone https://github.com/josedavimoura579-ai/NewEra-Karnel.git
-cd novaera-kernel
+pkg install clang
+cd NewEra-Karnel
 bash build.sh
-qemu-system-x86_64 -kernel kernel.bin -initrd initrd.tar -m 64M
+bash run.sh
 ```
 
-**No Android (Termux)** — o caminho em que o NovaEra nasceu:
+**No Linux** (Debian/Ubuntu; em outras distros, os equivalentes):
 
 ```bash
-pkg update && pkg install clang git
-pkg install qemu-system-x86-64     # o nome do pacote pode variar entre versões do Termux
-git clone https://github.com/josedavimoura579-ai/NewEra-Karnel.git
-cd novaera-kernel
+sudo apt install clang
+cd NewEra-Karnel
 bash build.sh
-bash run.sh            # tela de texto dentro do Termux; use "bash run.sh vnc" para janela gráfica via app VNC
+bash run.sh
 ```
 
-**No Windows e no macOS:** o jeito mais simples de compilar é usar o WSL (Windows) ou uma máquina virtual/contêiner Linux e seguir os passos acima. Para apenas **rodar**, o `kernel.bin` pronto funciona em qualquer sistema com QEMU.
+**Com o compilador dentro do NovaEra.** Sem internet, o `build.sh` compila o sistema sem o QBE e o cproc (e avisa). Para incluí-los, baixe as fontes uma vez antes do `build.sh` (de c9x.me e git.sr.ht):
 
-> **Dica de portabilidade:** os scripts `build.sh` e `run.sh` foram escritos para o Termux. Fora dele, chame-os sempre com `bash build.sh` e `bash run.sh`.
+```bash
+pkg install curl xz-utils        # no Termux;  no Linux: sudo apt install curl xz-utils
+sh portes/baixar.sh
+bash build.sh
+```
+
+**No Windows e no macOS:** o jeito mais simples de compilar é usar o WSL (Windows) ou uma máquina virtual/contêiner Linux e seguir os passos do Linux. Para apenas **rodar**, o `kernel.bin` pronto funciona em qualquer sistema com QEMU.
+
+> **Para criar o seu próprio sistema** sobre o NovaEra (com o seu nome, o seu logo e os seus comandos), use o comando `nefs`: veja [`nefs/README.md`](nefs/README.md) e o Livro do NEFS (`nefs/livro/`).
 
 ---
 
