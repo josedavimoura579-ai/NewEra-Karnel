@@ -1,0 +1,101 @@
+# NEFS - constrói a ISO e a publica como Release do GitHub.
+#
+# Dispara quando uma tag "nefs-v*" é criada (ex.: nefs-v0.2), por git push
+# ou pela página "Draft a new release" do GitHub. Duas ISOs, construídas do
+# zero a partir do código da tag e anexadas à Release com o SHA-256:
+#   nefs-novaera-*.iso  o NovaEra puro, sem Linux (nefs/iso/novaera-iso.sh)
+#   nefs-*.iso          a oficina com um Linux mínimo (nefs/iso/construir.sh)
+name: ISO do NEFS
+
+on:
+  push:
+    tags:
+      - "nefs-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  iso:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Construir a ISO sem Linux (o NovaEra puro)
+        run: sh nefs/iso/novaera-iso.sh
+
+      - name: Construir a ISO com o Linux mínimo
+        run: sudo bash nefs/iso/construir.sh
+
+      - name: Conferir as ISOs
+        run: |
+          for ISO in nefs/iso/nefs-*-x86_64.iso; do
+              ls -la "$ISO"
+              (cd nefs/iso && sha256sum "$(basename "$ISO")" > "$(basename "$ISO").sha256")
+          done
+          cat nefs/iso/*.sha256
+
+      - name: Publicar a Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSAO="${GITHUB_REF_NAME#nefs-v}"
+          cat > notas.md <<EOF
+          ## NEFS $VERSAO - NovaEra From Scratch
+
+          Para criar o seu próprio sistema operacional sobre o microkernel NovaEra.
+
+          ### nefs-novaera-$VERSAO-x86_64.iso — sem Linux (recomendada)
+
+          O NovaEra puro: dá boot direto e já traz o compilador (cproc + QBE),
+          o \`nefs\`, o código-fonte e o livro. Com um disco para guardar o trabalho:
+
+              truncate -s 256M disco.img
+              qemu-system-x86_64 -cdrom nefs-novaera-$VERSAO-x86_64.iso -m 256M \\
+                  -drive file=disco.img,format=raw
+
+          Dentro dele:
+
+              formatar                                   # o disco (FAT32), uma vez
+              nefs novo /disco/meu Meu Sistema           # o seu sistema
+              nefs compilar /disco/meu                   # compila lá dentro
+              nefs iso -o /disco/meu.iso /disco/meu      # a ISO do seu sistema
+              nefs livro                                 # o Livro do NEFS
+
+          ### nefs-$VERSAO-x86_64.iso — com um Linux mínimo
+
+          A oficina da Fase 1 (pelo menos 1 GiB de RAM):
+
+              qemu-system-x86_64 -cdrom nefs-$VERSAO-x86_64.iso -m 1G
+
+          Dentro dela:
+
+              nefs livro                       # o Livro do NEFS
+              nefs novo meu-so "Meu Sistema"   # cria o seu sistema
+              cd meu-so
+              nefs compilar                    # compila com cproc + QBE
+              nefs rodar                       # testa no QEMU
+              nefs iso                         # gera a ISO do seu sistema
+
+          **Dentro da ISO:** Linux mínimo (kernel do Ubuntu + BusyBox), cproc + QBE 1.3,
+          nefs-as, nefs-ld e nefs-ar, QEMU, GRUB, o comando \`nefs\`, o código do NovaEra e o Livro 1.
+
+          Tudo roda na memória RAM: copie o seu trabalho antes de desligar
+          (capítulo 2 do livro).
+
+          O arquivo \`.sha256\` serve para conferir que o download chegou inteiro.
+          EOF
+          ARQUIVOS="$(ls nefs/iso/nefs-*-x86_64.iso nefs/iso/nefs-*-x86_64.iso.sha256)"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+              # A Release já existe (criada pela página do GitHub): anexa a
+              # ISO e, se a descrição estiver vazia, preenche com estas notas.
+              gh release upload "$GITHUB_REF_NAME" $ARQUIVOS --clobber
+              if [ -z "$(gh release view "$GITHUB_REF_NAME" --json body -q .body)" ]; then
+                  gh release edit "$GITHUB_REF_NAME" --notes-file notas.md
+              fi
+          else
+              gh release create "$GITHUB_REF_NAME" $ARQUIVOS \
+                  --title "NEFS $VERSAO" --notes-file notas.md --prerelease
+          fi

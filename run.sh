@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Roda o kernel.bin num PC x86 virtual (QEMU).
+# Roda o kernel.bin num PC x86_64 virtual (QEMU).
 #   ./run.sh          -> tela de texto dentro do próprio Termux (curses)
 #   ./run.sh vnc      -> tela gráfica via app cliente VNC (localhost:5901)
 #   ./run.sh debug    -> como o padrão, mas QEMU sai em vez de reiniciar e grava
@@ -7,11 +7,20 @@
 cd "$(dirname "$0")"
 [ -f kernel.bin ] || { echo "kernel.bin não existe. Rode ./build.sh primeiro."; exit 1; }
 
-QEMU="$(command -v qemu-system-i386 || command -v qemu-system-x86_64 || true)"
-[ -n "$QEMU" ] || { echo "QEMU não encontrado. Rode: pkg install qemu-system-x86-64"; exit 1; }
+QEMU="$(command -v qemu-system-x86_64 || true)"   # o NovaEra é 64 bits
+[ -n "$QEMU" ] || { echo "QEMU não encontrado. No Termux: pkg install qemu-system-x86-64-headless"; exit 1; }
 
 MODO="${1:-curses}"
 BASE=(-kernel kernel.bin -m 64M -nic none)
+[ -f initrd.tar ] && BASE+=(-initrd initrd.tar)   # os programas que o shell executa
+
+# O disco do NovaEra (/disco): um arquivo de 64 MiB, criado no primeiro uso.
+# Dentro do NovaEra, rode "formatar" uma vez. O que você guardar lá fica.
+if [ ! -f disco.img ]; then
+    echo "Criando disco.img (64 MiB). Dentro do NovaEra, rode: formatar"
+    dd if=/dev/zero of=disco.img bs=1M count=64 2>/dev/null || truncate -s 64M disco.img
+fi
+BASE+=(-drive file=disco.img,format=raw,index=0,media=disk)
 
 if [ "$MODO" != "vnc" ] && ! "$QEMU" -display help 2>&1 | grep -qw curses; then
     echo "Este QEMU não tem modo curses; usando VNC."

@@ -1,0 +1,165 @@
+# Fase 3 — o NEFS rodando 100% sobre o NovaEra
+
+**Objetivo:** uma ISO que dá boot **no NovaEra** e traz o cproc + QBE, o
+`nefs` e as ferramentas, sem nenhum Linux por baixo. Hoje a ISO do NEFS
+usa um Linux mínimo como "oficina" (Fase 1); a Fase 3 troca essa oficina
+pelo próprio NovaEra.
+
+## O ponto de partida (medido)
+
+| Peça | O que precisa do sistema | Tamanho |
+|---|---|---|
+| **QBE 1.3** | só C padrão: `stdio`, `stdlib`, `string`, `ctype`, `getopt` | ~17 mil linhas |
+| **cproc** | C padrão + criar processos (`posix_spawnp`), `pipe`, `waitpid`, `mkstemp`, `unlink` | ~8 mil linhas |
+| **Memória** | compilar o `kernel.c` usa cerca de 10 MiB por processo (cproc-qbe e qbe) | — |
+| **Assembly** | o QBE gera só ~55 instruções diferentes e 15 diretivas | — |
+
+No início da Fase 3, cada programa do NovaEra tinha só 64 KiB, e não
+existiam arquivos, disco nem criação de processos. É isso que a fase
+constrói.
+
+## Decisões
+
+- **Assembler e ligador:** escrever os nossos (`nefs-as` e `nefs-ld`),
+  pequenos e legíveis, para o subconjunto que o QBE gera. O GNU `as`/`ld`
+  depende da libbfd e é grande demais.
+- **Pré-processador:** um do NEFS (`nefs-cpp`), completo; contribuir com
+  o pré-processador do cproc depois.
+- **Sistema de arquivos no disco:** FAT32 (decidido na Etapa 8): o disco
+  do NovaEra abre no Windows, no Linux, no celular e no mtools.
+
+## Etapas
+
+Cada etapa termina com algo testável no QEMU e vira um pull request.
+
+- [x] **Etapa 1 — núcleo pronto para programas de verdade**
+  - programas **ELF** (os embutidos e os do initrd)
+  - programas entregues pelo GRUB/QEMU num **initrd** (`initrd.tar`, módulo Multiboot)
+  - memória maior por processo: **heap** (`SYS_SBRK`) e pilha que cresce sob demanda (até 1 MiB)
+  - **criar processo** com argumentos, **terminar** com código de saída e **esperar** o filho
+  - *Teste: o shell executa programas do initrd, com argumentos e código de saída.*
+- [x] **Etapa 2 — servidores de arquivos, terminal e pipes** (anel 3)
+  - servidor de **arquivos** (ramfs) montado a partir do initrd, que o núcleo
+    mapeia só para ele; o núcleo deixou de ler tar: a criação de processos
+    recebe o ELF já lido por quem cria
+  - **terminal** (TTY): edição de linha, eco, Ctrl+D; o teclado entrega as
+    teclas a ele
+  - **pipes**, e o mesmo protocolo de leitura/escrita para terminal, pipes
+    e arquivos; entrada/saída padrão e pasta atual herdadas pelos filhos
+  - `SYS_COPIAR_PARA`/`SYS_COPIAR_DE`: um servidor copia dados direto da/para
+    quem o chamou
+  - shell com `cd`, `pwd`, `|`, `>`, `>>`, `<`; comandos `ls`, `cat`, `echo`,
+    `mkdir`, `rm` e **`novafetch`**
+  - versão do núcleo separada da versão da distribuição (`PURO`, `logo.txt`,
+    `/etc/sistema`); o vídeo mostra acentos (UTF-8 → CP437)
+  - *Teste: `ls /bin | cat`, `echo oi > /tmp/a`, `cat < /tmp/a`, `novafetch`.*
+- [x] **Etapa 3 — a libc do NovaEra ("nlibc")**
+  - `stdio` (com `printf("%.17g")` exato e `fscanf("_%lf")`, que o cproc e o
+    QBE usam), `stdlib` (`malloc` por classes de tamanho, `qsort` estável,
+    `strtod` com arredondamento correto, por bignum), `string`, `ctype`,
+    `errno`, `getopt`, `assert`
+  - POSIX do cproc: descritores, `pipe`, `posix_spawnp` (com dup2 para a
+    entrada e a saída), `waitpid`/`wait`, `mkstemp`, `unlink`
+  - pipes com contagem de referências por ponta; `exit()` devolve as
+    referências; canal com `CANAL_DONO` para os filhos de `posix_spawn`
+  - núcleo: SSE ligado e FPU salva por processo; `SYS_ESPERAR(0)` = qualquer filho
+  - *Teste: `testelibc`, 47 testes conferidos antes com a glibc no Linux,
+    passa no NovaEra compilado com clang e com cproc + QBE.*
+- [x] **Etapa 4 — QBE rodando no NovaEra** (primeiro marco grande)
+  - **portes** (`portes/<nome>/receita`): programas de fora compilados do
+    código original, sem nenhuma mudança, com a nlibc; `portes/baixar.sh`
+    baixa e confere o SHA-256, e o `build.sh` os põe no initrd
+  - o QBE 1.3 é o primeiro porte: `/bin/qbe` e exemplos em `/usr/share/qbe`
+  - o servidor de vídeo copia a saída para a porta serial (COM1): no QEMU,
+    `-serial stdio` mostra tudo do lado de fora
+  - *Teste: os 76 arquivos de teste do QBE e o `kernel.c` em SSA (70 KB),
+    compilados dentro do NovaEra, dão o mesmo assembly, byte a byte, que o
+    QBE no Linux. O QBE compilado com clang e com cproc + QBE.*
+- [x] **Etapa 5 — `nefs-as` e `nefs-ld`**
+  - **`nefs-as`** (`ferramentas/nefs-as.c`): assembly AT&T → objeto ELF64;
+    as instruções que o QBE gera e as do boot (modo de 32 bits, registradores
+    de controle, E/S); escolhe as mesmas codificações, os mesmos NOPs e o
+    mesmo tamanho de salto que o GNU as
+  - **`nefs-ld`** (`ferramentas/nefs-ld.c`): objetos e bibliotecas → programa
+    ELF do NovaEra ou o `kernel.bin` (`-binario`); GOT, COMMON, e das
+    bibliotecas só os objetos necessários
+  - **`nefs-ar`** (`ferramentas/nefs-ar.c`): bibliotecas `.a` (a `libc.a`),
+    com índice de símbolos (o ld do binutils também as aceita)
+  - os `.asm` do NovaEra reescritos na sintaxe AT&T (`boot.s`, `cpu.s`,
+    `crt0.s`, `sys.s`): o NASM saiu do projeto
+  - `build.sh`: `FERRAMENTAS=nefs` (padrão) ou `sistema` (binutils); com
+    `CC=cproc`, cada `.c` passa por `cproc -S` e `nefs-as`
+  - as três ferramentas, a `libc.a` e o comando `cmp` também no NovaEra
+  - *Teste: o `nefs-as` gera os mesmos bytes, relocações e símbolos que o
+    GNU as em 71 arquivos: todo o C do NovaEra e do QBE compilado pelo
+    cproc, os `.s` do NovaEra e `ferramentas/testes/instrucoes.s` (todas as
+    instruções que o QBE pode gerar). Repita com `ferramentas/testes/testa.sh`.
+    O núcleo montado e ligado por eles dá boot,
+    com clang e com cproc + QBE (`testelibc` 47/47, QBE 77/77). Dentro do
+    NovaEra: `qbe` → `nefs-as` → `nefs-ld` → o programa roda; e o próprio
+    `kernel.bin`, montado e ligado lá dentro, é idêntico ao do Linux.*
+- [x] **Etapa 6 — cproc rodando no NovaEra**
+  - **`nefs-cpp`** (`ferramentas/nefs-cpp.c`): pré-processador C11 completo
+    (`#include`, `#define` com `#` e `##`, `__VA_ARGS__`, `#if` com aritmética
+    de inteiros, `#line`, `#pragma once`, `__has_include`), com o algoritmo
+    de Prosser para a expansão de macros
+  - o **cproc** é um porte (`portes/cproc`), do git, no commit fixo; o
+    `config.h` do NovaEra liga o driver a `nefs-cpp`, `cproc-qbe`, `qbe`,
+    `nefs-as` e `nefs-ld`
+  - as receitas de porte aceitam git (commit fixo) e vários programas
+  - nlibc: `fcntl`, `freopen`, `readlink`, `environ`, `strsignal` e os
+    formatos `PRI*LEAST`/`PRI*FAST`; núcleo 3.2: até 256 argumentos e
+    16 KiB de texto por programa
+  - os cabeçalhos da libc em `/usr/include` e exemplos em C em
+    `/usr/share/nefs/exemplos`
+  - a ISO do NEFS deixa de levar o `cpp` do GCC: o cproc dela usa o `nefs-cpp`
+  - *Teste: o assembly gerado com o `nefs-cpp` é igual ao gerado com o
+    `cpp` do GCC em 291 arquivos (todo o C do NovaEra, do QBE e do cproc,
+    e a suíte de testes do cproc), e os exemplos do padrão C saem iguais
+    (`ferramentas/testes/testa-cpp.sh`). Dentro do NovaEra, `cproc -o`,
+    `-c`, `-S` e `-E` funcionam; o `kernel.c`, as 10 partes da nlibc e o
+    `testelibc.c` compilados lá dentro dão objetos idênticos aos do Linux;
+    a nlibc recompilada lá dentro passa no `testelibc` (47/47).*
+- [x] **Etapa 7 — autossuficiência** (o grande marco)
+  - **`nefs` nativo** (`ferramentas/nefs.c`): `nefs compilar` faz dentro do
+    NovaEra o que o `build.sh` faz no Linux (gera `build/kernel.bin` e
+    `build/initrd.tar`); `nefs novo` cria um sistema a partir do código;
+    `nefs info`
+  - o initrd leva o código: `/usr/src/novaera`, `/usr/src/qbe-1.3` e
+    `/usr/src/cproc-d1c53dd` (o `build.sh` e o `nefs` põem os mesmos arquivos)
+  - os portes compilam de dentro da pasta deles: o `assert()` guarda o mesmo
+    caminho nos dois sistemas, e os binários saem iguais
+  - nlibc: `dirent.h`, `sys/stat.h` (`stat`, `mkdir`), `time.h` (`clock`,
+    `time`); servidor de arquivos com até 4096 itens; comando `base64`
+  - *Teste (três gerações): a geração 1 (compilada no Linux) compilou a
+    geração 2 em 37 s, dentro do QEMU; o `kernel.bin` e os 204 arquivos do
+    initrd da geração 2 são idênticos aos do `build.sh` com `CC=cproc`. A
+    geração 2 deu boot, passou no `testelibc` e compilou a geração 3, que é
+    idêntica byte a byte à geração 2 (`kernel.bin` e `initrd.tar`): ponto
+    fixo. Cabe em 64 MiB de memória.*
+- [x] **Etapa 8 — a ISO NEFS-sobre-NovaEra**
+  - **`disco`** (PID 7, `usuario/disco.c`): driver ATA (PIO, LBA28), setores
+    de 512 bytes, até 128 por pedido
+  - **`fat`** (PID 8, `usuario/fat.c`): FAT32 em `/disco`, com nomes longos
+    (LFN), pastas, criar, anexar, apagar; disco inteiro ou 1ª partição; um
+    cache pequeno de clusters. A ulib manda os caminhos de `/disco` para ele
+    (o canal leva o servidor nos bits 8-15)
+  - escrita em bloco: `MSG_ESCREVER` com `arg[3]` = endereço, até 64 KiB de
+    uma vez (`SYS_COPIAR_DE`), nos dois servidores de arquivos
+  - comandos `formatar` (o mkfs.fat do NovaEra) e `cp`; `run.sh` e
+    `nefs rodar` criam um `disco.img`
+  - **`nefs iso`**: ISO 9660 + El Torito, com o GRUB pronto
+    (`ferramentas/grub/eltorito.img`, feito pelo `gerar.sh`: o GRUB não
+    compila no NovaEra); `nefs livro` dentro do NovaEra
+  - **a ISO do NEFS sem Linux**: `nefs/iso/novaera-iso.sh`; o workflow publica
+    as duas ISOs
+  - *Teste: um disco formatado no Linux (`mkfs.fat`) é lido no NovaEra (nome
+    longo, subpastas, um arquivo de 300 KB com o mesmo SHA-256); o que o
+    NovaEra grava passa no `fsck.fat` e sai igual pelo `mcopy`. Na ISO sem
+    Linux, com um disco vazio: `formatar`, `nefs novo /disco/meu`,
+    `nefs compilar /disco/meu` (1 min 7 s) e `nefs iso -o /disco/meu.iso`;
+    a ISO tirada do disco com o `mcopy` dá boot como "Meu Sistema", passa
+    no `testelibc` e compila programas. Os arquivos continuam no disco no
+    boot seguinte.*
+
+**A Fase 3 terminou:** o NEFS roda 100% sobre o NovaEra, sem Linux.

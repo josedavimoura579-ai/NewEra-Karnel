@@ -1,0 +1,10 @@
+# O "olá, mundo" da linguagem do QBE: uma função main que chama puts.
+# Gere o assembly com:   qbe /usr/share/qbe/ola.ssa
+
+data $texto = { b "Ola do QBE no NovaEra!", b 0 }
+
+export function w $main() {
+@inicio
+        %r =w call $puts(l $texto)
+        ret 0
+}
