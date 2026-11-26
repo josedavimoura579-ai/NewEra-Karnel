@@ -279,6 +279,11 @@ static int formatar_ext2(u32 total, const char *nome, u64 mib)
 
 int main(int argc, char **argv)
 {
+    identidade_t eu_;
+    if (sys_identidade(0, &eu_) == 0 && eu_.uid != UID_ROOT) {
+        fprintf(stderr, "%s: precisa ser o root (use: sudo %s ...)\n", argv[0], argv[0]);
+        return 1;
+    }
     int sim = 0, ext2 = 0, i = 1;
     for (; i < argc && argv[i][0] == '-'; i++) {
         if (!strcmp(argv[i], "-sim")) sim = 1;

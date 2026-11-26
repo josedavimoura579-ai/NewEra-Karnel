@@ -7,8 +7,10 @@ int main(int argc, char **argv)
 {
     int erro = 0;
     for (int i = 1; i < argc; i++) {
-        if (arq_apagar(argv[i]) < 0) {
-            escreve_erro("rm: nao consegui apagar (nao existe ou e pasta com arquivos): ");
+        long r = arq_apagar(argv[i]);
+        if (r < 0) {
+            escreve_erro(r == ERRO_SEM_PERMISSAO ? "rm: permissao negada: " :
+                         "rm: nao consegui apagar (nao existe ou e pasta com arquivos): ");
             escreve_erro(argv[i]);
             escreve_erro("\n");
             erro = 1;

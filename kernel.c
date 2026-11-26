@@ -593,6 +593,8 @@ typedef struct {
     u32        irqs;           /* IRQs assinadas (bits) */
     u32        irqs_pendentes;
 
+    identidade_t ident;        /* o usuário e os grupos (0 = root) */
+
     /* Sinais (bit s = sinal s) */
     u32        grupo;          /* grupo de processos: o Ctrl+C vai para o grupo todo */
     u32        sinais;         /* pendentes: chegaram e ainda não foram entregues */
@@ -1129,6 +1131,7 @@ static long processo_executar(tarefa_t *eu, u64 pedido)
     t->reinicios     = 0;
     t->ultima_falha  = FALHA_NENHUMA;
     t->grupo         = c.grupo == GRUPO_NOVO ? pid : c.grupo ? c.grupo : eu->grupo;
+    t->ident         = eu->ident;                  /* o filho é do mesmo usuário */
     t->entrada       = c.entrada ? c.entrada       : eu->entrada;
     t->entrada_canal = c.entrada ? c.entrada_canal : eu->entrada_canal;
     t->saida         = c.saida   ? c.saida         : eu->saida;
@@ -1235,6 +1238,8 @@ static long sinal_enviar(u32 pid, u32 s)
     if (!pid_vivo(pid)) return ERRO_PID;
     tarefa_t *t = &tarefas[pid];
     if (t->flags & T_REINICIAR) return ERRO_SEM_PERMISSAO;   /* os servidores do boot, não */
+    tarefa_t *eu = &tarefas[atual];                          /* só nos meus (ou o root) */
+    if (eu->ident.uid != UID_ROOT && eu->ident.uid != t->ident.uid) return ERRO_SEM_PERMISSAO;
     if (s == 0) return 0;                                    /* kill(pid, 0): "existe?" */
 
     u64 h = s == SINAL_KILL ? SINAL_PADRAO : t->tratador[s];
@@ -1550,6 +1555,29 @@ static long syscall_executar(quadro_t *q)
         if (pid != atual && tarefas[pid].pai != atual) return ERRO_SEM_PERMISSAO;
         if (b >= 0x80000000ull) return ERRO_INVALIDO;
         tarefas[pid].grupo = b ? (u32)b : (u32)pid;
+        return 0;
+    }
+
+    case SYS_IDENTIDADE: {                 /* qualquer um pode ver de quem é um processo */
+        u64 pid = a ? a : atual;
+        if (pid >= MAX_TAREFAS || tarefas[pid].estado == ESTADO_LIVRE) return ERRO_PID;
+        if (!usuario_valido(eu, b, sizeof(identidade_t))) return ERRO_INVALIDO;
+        mem_copia((void *)b, &tarefas[pid].ident, sizeof(identidade_t));
+        return 0;
+    }
+
+    case SYS_IDENTIDADE_MUDAR: {
+        if (eu->ident.uid != UID_ROOT) return ERRO_SEM_PERMISSAO;
+        u64 pid = a ? a : atual;
+        if (pid >= MAX_TAREFAS || !pid_vivo(pid)) return ERRO_PID;
+        tarefa_t *t = &tarefas[pid];
+        int cliente = t->estado == ESTADO_RECEBENDO && t->alvo == atual;
+        if (pid != atual && t->pai != atual && !cliente) return ERRO_SEM_PERMISSAO;
+        if (!usuario_valido(eu, b, sizeof(identidade_t))) return ERRO_INVALIDO;
+        identidade_t nova;
+        mem_copia(&nova, (const void *)b, sizeof(nova));
+        if (nova.n > GRUPOS_MAX) return ERRO_INVALIDO;
+        t->ident = nova;
         return 0;
     }
 

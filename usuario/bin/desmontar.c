@@ -11,6 +11,12 @@
 int main(int argc, char **argv)
 {
     if (argc != 2) { fprintf(stderr, "uso: desmontar PASTA|DISPOSITIVO\n"); return 1; }
+    identidade_t eu_;
+    if (sys_identidade(0, &eu_) == 0 && eu_.uid != UID_ROOT) {
+        fprintf(stderr, "%s: precisa ser o root (use: sudo %s ...)\n", argv[0], argv[0]);
+        return 1;
+    }
+
     char alvo[CAMINHO_MAX], pasta[CAMINHO_MAX];
     long dev_pedido = dispositivo_de(argv[1]);
     if (dev_pedido < 0 && caminho_absoluto(argv[1], alvo) < 0) {

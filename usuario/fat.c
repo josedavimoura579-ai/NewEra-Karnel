@@ -751,6 +751,10 @@ static void pedido(msg_t *m)
     u32 quem = m->origem;
     m->texto[MSG_TEXTO_MAX - 1] = '\0';
 
+    if (m->tipo == SA_MONTAR || m->tipo == SA_DESMONTAR) {   /* só o root monta */
+        identidade_t id;
+        if (sys_identidade(quem, &id) < 0 || id.uid != UID_ROOT) { erro(quem, ERRO_SEM_PERMISSAO); return; }
+    }
     if (m->tipo == FAT_MONTAR) {
         u32 dev = m->arg[0];
         if (m->texto[0] != '/' || volume_de(m->texto)) { erro(quem, ERRO_OCUPADO); return; }
@@ -809,8 +813,20 @@ static void pedido(msg_t *m)
     switch (m->tipo) {
     case ARQ_INFO:
         if ((r = resolver(m->texto, &e, 0, 0)) < 0) { erro(quem, r); return; }
-        if (e.atr & ATR_PASTA) ok(quem, ARQ_TIPO_PASTA, 0);
-        else ok(quem, ARQ_TIPO_ARQUIVO, e.tam);
+        {   /* o FAT32 não guarda dono nem permissões: todos podem tudo (0777) */
+            msg_t s;
+            msg_zera(&s);
+            s.tipo   = MSG_OK;
+            s.arg[0] = (e.atr & ATR_PASTA) ? ARQ_TIPO_PASTA : ARQ_TIPO_ARQUIVO;
+            s.arg[1] = (e.atr & ATR_PASTA) ? 0 : e.tam;
+            s.arg[2] = ((e.atr & ATR_PASTA) ? 0x4000u : 0x8000u) | 0777;
+            sys_responder(quem, &s);
+        }
+        return;
+
+    case ARQ_PERMISSOES:
+    case ARQ_DONO:
+        erro(quem, ERRO_SEM_PERMISSAO);                 /* não há onde guardar */
         return;
 
     case ARQ_LISTAR: {
@@ -825,6 +841,7 @@ static void pedido(msg_t *m)
             s.tipo = MSG_OK;
             s.arg[0] = (e.atr & ATR_PASTA) ? ARQ_TIPO_PASTA : ARQ_TIPO_ARQUIVO;
             s.arg[1] = e.tam;
+            s.arg[2] = ((e.atr & ATR_PASTA) ? 0x4000u : 0x8000u) | 0777;
             str_copia(s.texto, e.nome, MSG_TEXTO_MAX);
             sys_responder(quem, &s);
             return;

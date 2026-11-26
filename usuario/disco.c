@@ -225,6 +225,13 @@ int main(int argc, char **argv)
             sys_responder(quem, &r);
             continue;
         }
+        /* ler e gravar setores direto passa por cima das permissões dos
+         * arquivos: só o root (os servidores de arquivos, o formatar...) */
+        identidade_t id;
+        if (sys_identidade(quem, &id) < 0 || id.uid != UID_ROOT) {
+            responder(quem, ERRO_SEM_PERMISSAO, 0);
+            continue;
+        }
         if (m.tipo == DISCO_RELER) {
             if (d >= DISCOS_MAX || !discos[d].setores) { responder(quem, ERRO_NAO_ACHADO, 0); continue; }
             ler_particoes(d);

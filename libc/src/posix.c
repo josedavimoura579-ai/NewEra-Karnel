@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
@@ -141,16 +142,23 @@ int dup2(int fd, int novo)
 
 int open(const char *caminho, int flags, ...)
 {
-    u32 tam;
+    u32 tam, perm = 0;
+    if (flags & O_CREAT) {                       /* open(caminho, O_CREAT, 0644) */
+        va_list ap;
+        va_start(ap, flags);
+        perm = (u32)va_arg(ap, int) & 07777 & ~022u;
+        va_end(ap);
+    }
     long tipo = arq_info(caminho, &tam);
     if (tipo == ARQ_TIPO_PASTA) { errno = EISDIR; return -1; }
+    if (tipo == ERRO_SEM_PERMISSAO) { errno = EACCES; return -1; }
     if (tipo < 0 && !(flags & O_CREAT)) { errno = ENOENT; return -1; }
     if (tipo >= 0 && (flags & O_CREAT) && (flags & O_EXCL)) { errno = EEXIST; return -1; }
     u32 modo = ARQ_MODO_LER;
     if ((flags & 3) != O_RDONLY)
         modo = (flags & O_APPEND) ? ARQ_MODO_ANEXAR
              : (flags & O_TRUNC) || tipo < 0 ? ARQ_MODO_ESCREVER : ARQ_MODO_ANEXAR;
-    long canal = arq_abrir(caminho, modo);
+    long canal = arq_abrir_com(caminho, modo, perm);
     if (canal < 0) { errno = __erro_c(canal); return -1; }
     return __fd_novo(ARQ_SERVIDOR(canal), (u32)canal, 0, 1);
 }
@@ -176,19 +184,40 @@ int remove(const char *caminho) { return arq_apagar(caminho) < 0 ? (errno = ENOE
 
 int stat(const char *caminho, struct stat *st)
 {
-    u32 tam;
-    long tipo = arq_info(caminho, &tam);
-    if (tipo < 0) { errno = ENOENT; return -1; }
-    st->st_mode = tipo == ARQ_TIPO_PASTA ? (S_IFDIR | 0755) : (S_IFREG | 0644);
-    st->st_size = tipo == ARQ_TIPO_PASTA ? 0 : (off_t)tam;
+    arq_estado_t e;
+    long r = arq_estado(caminho, &e);
+    if (r < 0) { errno = r == ERRO_SEM_PERMISSAO ? EACCES : ENOENT; return -1; }
+    u32 tipo = e.tipo == ARQ_TIPO_PASTA ? S_IFDIR : S_IFREG;
+    st->st_mode  = e.modo ? (mode_t)e.modo : (mode_t)(tipo | (tipo == S_IFDIR ? 0755 : 0644));
+    st->st_size  = e.tipo == ARQ_TIPO_PASTA ? 0 : (off_t)e.tam;
+    st->st_uid   = e.dono;
+    st->st_gid   = e.grupo;
+    st->st_nlink = 1;
+    return 0;
+}
+
+int lstat(const char *caminho, struct stat *st) { return stat(caminho, st); }
+
+int chmod(const char *caminho, mode_t modo)
+{
+    long r = arq_permissoes(caminho, modo & 07777);
+    if (r < 0) { errno = r == ERRO_SEM_PERMISSAO ? EPERM : __erro_c(r); return -1; }
+    return 0;
+}
+
+int chown(const char *caminho, uid_t dono, gid_t grupo)
+{
+    long r = arq_dono(caminho, dono, grupo);
+    if (r < 0) { errno = r == ERRO_SEM_PERMISSAO ? EPERM : __erro_c(r); return -1; }
     return 0;
 }
 
 int mkdir(const char *caminho, mode_t modo)
 {
-    (void)modo;
     if (arq_info(caminho, 0) >= 0) { errno = EEXIST; return -1; }
-    long r = arq_pasta(caminho);
+    msg_t m;
+    m.arg[0] = (modo & 07777 & ~022u) ? (modo & 07777 & ~022u) : 0755;   /* a umask 022 */
+    long r = arq_pedido(ARQ_PASTA, caminho, &m);
     if (r < 0) { errno = __erro_c(r); return -1; }
     return 0;
 }

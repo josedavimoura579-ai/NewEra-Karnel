@@ -54,6 +54,28 @@ static inline const char *sinal_nome(u32 s)
     return s < SINAL_MAX ? nomes[s] : 0;
 }
 
+/* Usuários: quem é um processo (pid 0 = eu); só o root muda. */
+static inline long sys_identidade(u32 pid, identidade_t *id)       { return syscall2(SYS_IDENTIDADE, pid, (u64)id); }
+static inline long sys_identidade_mudar(u32 pid, identidade_t *id) { return syscall2(SYS_IDENTIDADE_MUDAR, pid, (u64)id); }
+
+static inline int no_grupo(const identidade_t *id, u32 g)
+{
+    if (id->gid == g) return 1;
+    for (u32 i = 0; i < id->n && i < GRUPOS_MAX; i++) if (id->grupos[i] == g) return 1;
+    return 0;
+}
+
+/* As permissões rwx do Unix: pode 'quer' (PERM_LER | PERM_ESCREVER |
+ * PERM_EXECUTAR) num arquivo com esse modo, dono e grupo? O root pode
+ * tudo (rodar um programa, só se algum x estiver ligado). */
+static inline int permite(const identidade_t *id, u32 modo, u32 dono, u32 grupo, u32 quer)
+{
+    if (id->uid == UID_ROOT)
+        return !(quer & PERM_EXECUTAR) || (modo & 0xF000) == 0x4000 || (modo & 0111);
+    u32 bits = id->uid == dono ? (modo >> 6) & 7 : no_grupo(id, grupo) ? (modo >> 3) & 7 : modo & 7;
+    return (bits & quer) == quer;
+}
+
 /* Instala uma função como tratador do sinal (ou SINAL_PADRAO/SINAL_IGNORAR). */
 static inline long sinal_tratar(u32 sinal, void (*f)(int))
 {
@@ -369,10 +391,12 @@ static inline long arq_pedido(u32 tipo, const char *caminho, msg_t *m)
     char abs[CAMINHO_MAX];
     if (caminho_absoluto(caminho, abs) < 0) return ERRO_INVALIDO;
     u32 a0 = m->arg[0], srv = PID_ARQUIVOS;
+    u32 a1 = (tipo == ARQ_ABRIR || tipo == ARQ_DONO) ? m->arg[1] : 0;
     for (int tentativa = 0; ; tentativa++) {
         msg_zera(m);
         m->tipo   = tipo;
         m->arg[0] = a0;
+        m->arg[1] = a1;
         str_copia(m->texto, abs, MSG_TEXTO_MAX);
         if (sys_chamar(srv, m) < 0) return ERRO_PID;
         if (m->tipo != ARQ_OUTRO_SERVIDOR) break;
@@ -407,12 +431,87 @@ static inline long arq_listar(const char *pasta, u32 i, char *nome, u32 *tamanho
     return m.arg[0];
 }
 
+/* Tudo o que o servidor sabe de um arquivo (o "stat"). */
+typedef struct {
+    u32 tipo, tam;
+    u32 modo;                /* tipo (0x4000 pasta, 0x8000 arquivo) | permissões */
+    u32 dono, grupo;
+} arq_estado_t;
+
+static inline void arq_estado_de(const msg_t *m, arq_estado_t *e)
+{
+    e->tipo  = m->arg[0];
+    e->tam   = m->arg[1];
+    e->modo  = m->arg[2];
+    e->dono  = m->arg[3] & 0xFFFF;
+    e->grupo = m->arg[3] >> 16;
+}
+
+static inline long arq_estado(const char *caminho, arq_estado_t *e)
+{
+    msg_t m;
+    m.arg[0] = 0;
+    long r = arq_pedido(ARQ_INFO, caminho, &m);
+    if (r < 0) return r;
+    arq_estado_de(&m, e);
+    return 0;
+}
+
+/* Como arq_listar, com o modo, o dono e o grupo (para o ls -l). */
+static inline long arq_listar_estado(const char *pasta, u32 i, char *nome, arq_estado_t *e)
+{
+    msg_t m;
+    m.arg[0] = i;
+    long r = arq_pedido(ARQ_LISTAR, pasta, &m);
+    if (r < 0) return r;
+    str_copia(nome, m.texto, MSG_TEXTO_MAX);
+    arq_estado_de(&m, e);
+    return 0;
+}
+
+/* chmod e chown */
+static inline long arq_permissoes(const char *caminho, u32 modo)
+{
+    msg_t m;
+    m.arg[0] = modo;
+    return arq_pedido(ARQ_PERMISSOES, caminho, &m);
+}
+
+static inline long arq_dono(const char *caminho, u32 uid, u32 gid)
+{
+    msg_t m;
+    m.arg[0] = uid;
+    m.arg[1] = gid;
+    return arq_pedido(ARQ_DONO, caminho, &m);
+}
+
+/* O terminal mostra (1) ou esconde (0) o que se digita: para senhas. */
+static inline void terminal_eco(int ligado)
+{
+    msg_t m;
+    msg_zera(&m);
+    m.tipo   = TERM_ECO;
+    m.arg[0] = (u32)ligado;
+    sys_chamar(PID_TERMINAL, &m);
+}
+
 /* O canal devolvido leva o servidor nos bits 8-15: ARQ_SERVIDOR(canal)
  * diz com quem falar para ler, escrever e fechar. */
+/* 'permissoes': as do arquivo, se ele for criado (0 = 0644). */
+static inline long arq_abrir_com(const char *caminho, u32 modo, u32 permissoes)
+{
+    msg_t m;
+    m.arg[0] = modo;
+    m.arg[1] = permissoes;
+    long r = arq_pedido(ARQ_ABRIR, caminho, &m);
+    return r < 0 ? r : (long)(m.origem << 8 | ARQ_CANAL(m.arg[0]));
+}
+
 static inline long arq_abrir(const char *caminho, u32 modo)
 {
     msg_t m;
     m.arg[0] = modo;
+    m.arg[1] = 0;
     long r = arq_pedido(ARQ_ABRIR, caminho, &m);
     return r < 0 ? r : (long)(m.origem << 8 | ARQ_CANAL(m.arg[0]));
 }
@@ -487,6 +586,12 @@ static inline void tubo_fechar(u32 canal, u32 ponta) { tubo_pedido(TUBO_FECHAR, 
 static inline long executar_grupo(const char *caminho, char **argv, u32 entrada, u32 entrada_canal,
                                   u32 saida, u32 saida_canal, u32 grupo)
 {
+    /* rodar um programa: precisa do x (o núcleo só vê os bytes) */
+    arq_estado_t e;
+    identidade_t eu;
+    if (arq_estado(caminho, &e) < 0) return ERRO_NAO_ACHADO;
+    if (e.modo && sys_identidade(0, &eu) == 0 && !permite(&eu, e.modo, e.dono, e.grupo, PERM_EXECUTAR))
+        return ERRO_SEM_PERMISSAO;
     u32 tam;
     u8 *imagem = arq_carregar(caminho, &tam);
     if (!imagem) return ERRO_NAO_ACHADO;

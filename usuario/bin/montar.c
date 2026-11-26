@@ -19,6 +19,11 @@ int main(int argc, char **argv)
             printf("%s em %s (%s)\n", dispositivo_nome(dev, nome), pasta, servidor_tipo(srv));
         return 0;
     }
+    identidade_t eu_;
+    if (sys_identidade(0, &eu_) == 0 && eu_.uid != UID_ROOT) {
+        fprintf(stderr, "%s: precisa ser o root (use: sudo %s ...)\n", argv[0], argv[0]);
+        return 1;
+    }
     if (argc != 3) {
         fprintf(stderr, "uso: montar [DISPOSITIVO PASTA]      ex.: montar sdb1 /mnt\n");
         return 1;

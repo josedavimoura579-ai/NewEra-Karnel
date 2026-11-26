@@ -12,7 +12,7 @@ int __erro_c(long e)
 {
     switch (e) {
     case ERRO_INVALIDO:      return EINVAL;
-    case ERRO_SEM_PERMISSAO: return EPERM;
+    case ERRO_SEM_PERMISSAO: return EACCES;
     case ERRO_PID:           return ECHILD;
     case ERRO_NAO_ACHADO:    return ENOENT;
     case ERRO_SEM_MEMORIA:   return ENOMEM;

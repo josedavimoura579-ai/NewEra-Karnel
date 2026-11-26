@@ -26,7 +26,7 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         long canal = arq_abrir(argv[i], ARQ_MODO_LER);
         if (canal < 0) {
-            escreve_erro("cat: nao encontrado: ");
+            escreve_erro(canal == ERRO_SEM_PERMISSAO ? "cat: permissao negada: " : "cat: nao encontrado: ");
             escreve_erro(argv[i]);
             escreve_erro("\n");
             erro = 1;

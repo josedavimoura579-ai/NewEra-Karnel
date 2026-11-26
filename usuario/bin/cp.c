@@ -5,6 +5,7 @@
  * Em C padrão, com a libc do NovaEra.
  */
 #include <stdio.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -12,9 +13,9 @@
 static int copia(const char *de, const char *para)
 {
     FILE *a = fopen(de, "rb");
-    if (!a) { fprintf(stderr, "cp: não consegui abrir %s\n", de); return 1; }
+    if (!a) { fprintf(stderr, "cp: não consegui abrir %s: %s\n", de, strerror(errno)); return 1; }
     FILE *b = fopen(para, "wb");
-    if (!b) { fprintf(stderr, "cp: não consegui criar %s\n", para); fclose(a); return 1; }
+    if (!b) { fprintf(stderr, "cp: não consegui criar %s: %s\n", para, strerror(errno)); fclose(a); return 1; }
     static char buf[32768];
     size_t n;
     int erro = 0;

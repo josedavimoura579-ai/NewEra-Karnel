@@ -161,6 +161,11 @@ int main(int argc, char **argv)
                         "ex.: particionar sdb criar 100M      (veja os discos com: discos)\n");
         return 1;
     }
+    identidade_t eu_;
+    if (sys_identidade(0, &eu_) == 0 && eu_.uid != UID_ROOT) {
+        fprintf(stderr, "%s: precisa ser o root (use: sudo %s ...)\n", argv[0], argv[0]);
+        return 1;
+    }
     long d = dispositivo_de(argv[1]);
     msg_t m;
     if (d < 0 || DEV_PARTICAO((u32)d) || !(setores = disco_info((u32)d, &m))) {

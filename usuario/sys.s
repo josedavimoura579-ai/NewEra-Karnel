@@ -32,6 +32,14 @@ __sinal_volta:
     int $0x80
     hlt                              # nunca chega aqui (e daria GPF no anel 3)
 
+# u64 rdtsc(void) - o contador de ciclos da CPU (para sortear um "sal")
+.globl rdtsc
+rdtsc:
+    .byte 0x0f, 0x31                 # rdtsc: EDX:EAX = ciclos desde que ligou
+    shlq $32, %rdx
+    orq %rdx, %rax
+    ret
+
 # void mem_escreve16(u64 endereco, u16 valor)
 # u16  mem_le16(u64 endereco)
 # Acesso a memória de dispositivo (como a VGA em 0xB8000). Em C isso exigiria

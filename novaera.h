@@ -22,7 +22,7 @@ typedef unsigned long long u64;
 
 /* A versão do NÚCLEO. A do sistema (a "distribuição") fica em sistema.conf,
  * como o /etc/os-release do Linux: o núcleo não sabe qual é a distro. */
-#define NOVAERA_VERSAO     "3.5"
+#define NOVAERA_VERSAO     "3.6"
 #define NOVAERA_ARQUITETURA "x86_64"
 
 /* ---------------------- Chamadas de sistema (int 0x80) -------------------
@@ -47,12 +47,15 @@ typedef unsigned long long u64;
 #define SYS_COPIAR_DE   16   /* (pid, copia_t*)  copia da memória de quem me CHAMOU para a minha */
 #define SYS_AMBIENTE    17   /* (msg*)           entrada, saída padrão e pasta atual */
 #define SYS_PASTA       18   /* (caminho)        muda a pasta atual          */
-#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.5 x86_64" (como o uname) */
+#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.6 x86_64" (como o uname) */
 #define SYS_SINAL       20   /* (pid, sinal)     envia um sinal; pid < 0: ao grupo -pid; 0: ao meu grupo */
 #define SYS_SINAL_TRATAR 21  /* (sinal, sinal_acao_t*) troca o tratador; devolve o antigo na mesma struct */
 #define SYS_SINAL_VOLTAR 22  /* ()               fim do tratador: volta ao ponto interrompido */
 #define SYS_SINAL_MASCARA 23 /* (como, mascara)  bloqueia/desbloqueia sinais; devolve a máscara antiga */
 #define SYS_GRUPO       24   /* (pid, grupo)     grupo de processos; grupo = -1: só consulta */
+#define SYS_IDENTIDADE  25   /* (pid, identidade_t*) quem é o processo (0 = eu) */
+#define SYS_IDENTIDADE_MUDAR 26 /* (pid, identidade_t*) só o root: muda a de um filho,
+                                de um cliente esperando a minha resposta, ou a minha */
 
 #define ERRO_INVALIDO   (-1) /* argumento ou ponteiro inválido */
 #define ERRO_SEM_PERMISSAO (-2)
@@ -81,6 +84,7 @@ typedef unsigned long long u64;
 #define PID_DISCO    7       /* driver de disco (ATA)            */
 #define PID_FAT      8       /* os discos FAT32 montados         */
 #define PID_EXT2     9       /* os discos ext2 montados          */
+#define PID_CONTAS   10      /* usuários e senhas (login, su, sudo, passwd) */
 #define PID_QUALQUER 0xFFFFFFFFu   /* em SYS_RECEBER: aceita de qualquer um */
 
 /* ------------------------------ Mensagem --------------------------------
@@ -119,9 +123,12 @@ typedef struct {
 /* Servidor de arquivos: caminhos ABSOLUTOS em texto */
 #define ARQ_INFO           40    /* resposta: arg[0] = tipo (ARQ_TIPO_*), arg[1] = tamanho */
 #define ARQ_LISTAR         41    /* arg[0] = índice; resposta: texto = nome, arg[0] = tipo, arg[1] = tamanho */
-#define ARQ_ABRIR          42    /* arg[0] = modo (ARQ_MODO_*); resposta: arg[0] = canal */
+#define ARQ_ABRIR          42    /* arg[0] = modo (ARQ_MODO_*), arg[1] = permissões se criar (0 = 0644);
+                                    resposta: arg[0] = canal */
+#define ARQ_PERMISSOES     55    /* arg[0] = o modo novo (o chmod): só o dono ou o root */
+#define ARQ_DONO           56    /* arg[0] = uid, arg[1] = gid (o chown): só o root */
 #define ARQ_FECHAR         43    /* arg[0] = canal */
-#define ARQ_PASTA          44    /* cria uma pasta */
+#define ARQ_PASTA          44    /* cria uma pasta; arg[0] = modo (0 = 0755) */
 #define ARQ_APAGAR         45    /* apaga um arquivo ou uma pasta vazia */
 /* ARQ_INFO e ARQ_LISTAR: no ext2, arg[2] = o modo (permissões, como no
  * Unix: 0644, 0755...) e arg[3] = dono | grupo << 16. No FAT32: 0. */
@@ -193,7 +200,18 @@ typedef struct {
 
 /* O terminal manda o Ctrl+C (SIGINT) ao grupo do "primeiro plano": o
  * comando que o shell está rodando. 0 = nenhum (o shell espera a linha). */
-#define TERM_GRUPO         32    /* arg[0] = grupo do primeiro plano */
+#define TERM_GRUPO         32    /* arg[0] = grupo do primeiro plano; resposta: arg[0] = o anterior */
+#define TERM_ECO           33    /* arg[0] = 0: não mostra o que se digita (senhas); 1: mostra */
+
+/* Servidor de contas (PID_CONTAS). texto = "usuario\0senha\0" (até 31
+ * letras cada). Os arquivos: /etc/passwd, /etc/group e /etc/sombra. */
+#define CONTAS_ENTRAR      70    /* vira o usuário (login, su); o root não precisa da senha.
+                                    resposta: arg[0] = uid, arg[1] = gid, texto = a pasta pessoal */
+#define CONTAS_SUDO        71    /* vira o root; texto = a senha de quem pede (que tem de estar
+                                    no grupo sudo ou wheel) */
+#define CONTAS_CONFERIR    72    /* só confere a senha (o passwd, antes de trocar) */
+#define CONTAS_SENHA       73    /* troca a senha: o root, ou o próprio usuário logo depois
+                                    de um CONTAS_CONFERIR */
 
 #define MSG_OK             99
 #define MSG_ERRO           98    /* arg[0] = -ERRO_* (o código, positivo)   */
@@ -220,6 +238,28 @@ typedef struct {
     u32  reservado;
 } criar_t;
 #define GRUPO_NOVO 0xFFFFFFFFu
+
+/* ------------------------- Usuários e grupos -----------------------------
+ * Cada processo é de um usuário (uid) e de um grupo (gid), e pode estar em
+ * mais alguns grupos. O root (uid 0) pode tudo. Um filho herda a
+ * identidade de quem o cria; só o root a muda (SYS_IDENTIDADE_MUDAR). É o
+ * servidor de contas, que roda como root, quem muda a identidade de um
+ * programa depois de conferir a senha (login, su, sudo).
+ * Os servidores de arquivos perguntam ao núcleo quem é o cliente
+ * (SYS_IDENTIDADE) e conferem as permissões rwx de cada arquivo. */
+#define GRUPOS_MAX 8u
+typedef struct {
+    u32 uid, gid;
+    u32 n;                       /* quantos grupos extras */
+    u32 grupos[GRUPOS_MAX];
+} identidade_t;
+#define UID_ROOT 0u
+
+/* Permissões (como no Unix): 3 grupos de 3 bits, dono / grupo / outros */
+#define PERM_LER       4u
+#define PERM_ESCREVER  2u
+#define PERM_EXECUTAR  1u        /* num arquivo: rodar; numa pasta: entrar */
+#define MODO_STICKY    01000u    /* numa pasta (/tmp): só o dono apaga o que é seu */
 
 /* ------------------------------- Sinais ---------------------------------
  * Um sinal é um aviso assíncrono a um processo: "pare" (Ctrl+C), "morra",

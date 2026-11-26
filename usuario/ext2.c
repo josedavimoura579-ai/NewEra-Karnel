@@ -526,7 +526,22 @@ static int pasta_vazia(u32 n)
     return 1;
 }
 
-/* "/mnt/a/b": o inode de b. Com 'pai', para antes do último pedaço. */
+/* Quem fez o pedido atual (o núcleo diz). */
+static identidade_t quem_id;
+
+static int pode(const u8 *ino, u32 quer)
+{
+    return permite(&quem_id, le16(ino + I_MODO), le16(ino + I_DONO), le16(ino + I_GRUPO), quer);
+}
+
+static int pode_n(u32 n, u32 quer)
+{
+    u8 ino[I_LEN];
+    return inode_ler(n, ino) == 0 && pode(ino, quer);
+}
+
+/* "/mnt/a/b": o inode de b. Com 'pai', para antes do último pedaço.
+ * Para passar por uma pasta, é preciso o x dela. */
 static long resolver(const char *caminho, u32 *n, u32 *pai, const char **ultimo)
 {
     const char *p = caminho + V->ponto_tam;
@@ -542,6 +557,7 @@ static long resolver(const char *caminho, u32 *n, u32 *pai, const char **ultimo)
         u8 ino[I_LEN];
         if (inode_ler(atual, ino) < 0) return ERRO_DISCO;
         if ((le16(ino + I_MODO) & S_TIPO) != S_PASTA) return ERRO_NAO_ACHADO;
+        if (!pode(ino, PERM_EXECUTAR)) return ERRO_SEM_PERMISSAO;
         if (pai && !*q) {
             if (tam > 255) return ERRO_INVALIDO;
             *pai = atual;
@@ -729,6 +745,11 @@ static void pedido(msg_t *m)
 {
     u32 quem = m->origem;
     m->texto[MSG_TEXTO_MAX - 1] = '\0';
+    if (sys_identidade(quem, &quem_id) < 0) { erro(quem, ERRO_PID); return; }
+    if ((m->tipo == SA_MONTAR || m->tipo == SA_DESMONTAR) && quem_id.uid != UID_ROOT) {
+        erro(quem, ERRO_SEM_PERMISSAO);                 /* só o root monta */
+        return;
+    }
 
     if (m->tipo == SA_MONTAR) {
         u32 dev = m->arg[0];
@@ -784,7 +805,7 @@ static void pedido(msg_t *m)
 
     V = volume_de(m->texto);
     if (!V) { V = &volumes[0]; erro(quem, ERRO_NAO_ACHADO); return; }
-    int muda = m->tipo == ARQ_PASTA || m->tipo == ARQ_APAGAR ||
+    int muda = m->tipo == ARQ_PASTA || m->tipo == ARQ_APAGAR || m->tipo == ARQ_PERMISSOES || m->tipo == ARQ_DONO ||
                (m->tipo == ARQ_ABRIR && m->arg[0] != ARQ_MODO_LER);
     if (muda && V->so_ler) { erro(quem, ERRO_SEM_PERMISSAO); return; }
 
@@ -800,10 +821,28 @@ static void pedido(msg_t *m)
         info(quem, ARQ_INFO, n, 0);
         return;
 
+    case ARQ_PERMISSOES:
+    case ARQ_DONO:
+        if ((r = resolver(m->texto, &n, 0, 0)) < 0) { erro(quem, r); return; }
+        if (inode_ler(n, ino) < 0) { erro(quem, ERRO_DISCO); return; }
+        if (m->tipo == ARQ_PERMISSOES) {            /* chmod: o dono ou o root */
+            if (quem_id.uid != UID_ROOT && quem_id.uid != le16(ino + I_DONO)) { erro(quem, ERRO_SEM_PERMISSAO); return; }
+            poe16(ino + I_MODO, (le16(ino + I_MODO) & S_TIPO) | (m->arg[0] & 07777));
+        } else {                                     /* chown: só o root */
+            if (quem_id.uid != UID_ROOT) { erro(quem, ERRO_SEM_PERMISSAO); return; }
+            if (m->arg[0] != 0xFFFFFFFFu) poe16(ino + I_DONO, m->arg[0]);
+            if (m->arg[1] != 0xFFFFFFFFu) poe16(ino + I_GRUPO, m->arg[1]);
+        }
+        inode_gravar(n, ino);
+        descarregar();
+        ok(quem, 0, 0);
+        return;
+
     case ARQ_LISTAR: {
         if ((r = resolver(m->texto, &n, 0, 0)) < 0) { erro(quem, r); return; }
         if (inode_ler(n, ino) < 0) { erro(quem, ERRO_DISCO); return; }
         if ((le16(ino + I_MODO) & S_TIPO) != S_PASTA) { erro(quem, ERRO_NAO_ACHADO); return; }
+        if (!pode(ino, PERM_LER)) { erro(quem, ERRO_SEM_PERMISSAO); return; }
         u32 bl = 0, pos = 0, k = 0;
         while (proximo(ino, &bl, &pos, &e)) {
             if (e.nome[0] == '.' && (e.nome_tam == 1 || (e.nome_tam == 2 && e.nome[1] == '.'))) continue;
@@ -823,16 +862,20 @@ static void pedido(msg_t *m)
             n = e.ino;
             if (inode_ler(n, ino) < 0) { erro(quem, ERRO_DISCO); return; }
             if ((le16(ino + I_MODO) & S_TIPO) == S_PASTA) { erro(quem, ERRO_INVALIDO); return; }
+            if (!pode(ino, modo == ARQ_MODO_LER ? PERM_LER : PERM_ESCREVER)) { erro(quem, ERRO_SEM_PERMISSAO); return; }
             if (modo == ARQ_MODO_ESCREVER && le32(ino + I_TAM)) {
                 truncar(ino);
                 inode_gravar(n, ino);
             }
         } else {
             if (modo == ARQ_MODO_LER) { erro(quem, ERRO_NAO_ACHADO); return; }
+            if (!pode_n(pai, PERM_ESCREVER | PERM_EXECUTAR)) { erro(quem, ERRO_SEM_PERMISSAO); return; }
             n = alocar_inode(grupo_de(pai), 0);
             if (!n) { erro(quem, ERRO_SEM_ESPACO); return; }
             mem_zera(ino, sizeof ino);
-            poe16(ino + I_MODO, S_ARQUIVO | 0644);
+            poe16(ino + I_MODO, S_ARQUIVO | (m->arg[1] ? m->arg[1] & 07777 : 0644));
+            poe16(ino + I_DONO, quem_id.uid);
+            poe16(ino + I_GRUPO, quem_id.gid);
             poe16(ino + I_LINKS, 1);
             inode_gravar(n, ino);
             if ((r = adicionar(pai, ultimo, tam, n, 1)) < 0) { liberar_inode(n, 0); erro(quem, r); return; }
@@ -858,10 +901,13 @@ static void pedido(msg_t *m)
         if ((r = resolver(m->texto, &n, &pai, &ultimo)) < 0) { erro(quem, r); return; }
         u32 tam = str_tam(ultimo);
         if (procura(pai, ultimo, tam, &e)) { erro(quem, ERRO_EXISTE); return; }
+        if (!pode_n(pai, PERM_ESCREVER | PERM_EXECUTAR)) { erro(quem, ERRO_SEM_PERMISSAO); return; }
         n = alocar_inode(grupo_de(pai), 1);
         if (!n) { erro(quem, ERRO_SEM_ESPACO); return; }
         mem_zera(ino, sizeof ino);
-        poe16(ino + I_MODO, S_PASTA | 0755);
+        poe16(ino + I_MODO, S_PASTA | (m->arg[0] ? m->arg[0] & 07777 : 0755));
+        poe16(ino + I_DONO, quem_id.uid);
+        poe16(ino + I_GRUPO, quem_id.gid);
         poe16(ino + I_LINKS, 2);                 /* o nome na pasta de cima e o "." */
         u32 b = bloco_de(ino, n, 0, 1);
         cache_t *q = b ? bloco(b) : 0;
@@ -890,7 +936,13 @@ static void pedido(msg_t *m)
         if ((r = resolver(m->texto, &n, &pai, &ultimo)) < 0) { erro(quem, r); return; }
         if (!procura(pai, ultimo, str_tam(ultimo), &e)) { erro(quem, ERRO_NAO_ACHADO); return; }
         n = e.ino;
-        if (inode_ler(n, ino) < 0) { erro(quem, ERRO_DISCO); return; }
+        {   /* apagar: o w e o x da pasta; numa pasta com sticky (/tmp), só o seu */
+            u8 dp[I_LEN];
+            if (inode_ler(pai, dp) < 0 || !pode(dp, PERM_ESCREVER | PERM_EXECUTAR)) { erro(quem, ERRO_SEM_PERMISSAO); return; }
+            if (inode_ler(n, ino) < 0) { erro(quem, ERRO_DISCO); return; }
+            if ((le16(dp + I_MODO) & MODO_STICKY) && quem_id.uid != UID_ROOT &&
+                quem_id.uid != le16(ino + I_DONO) && quem_id.uid != le16(dp + I_DONO)) { erro(quem, ERRO_SEM_PERMISSAO); return; }
+        }
         int pasta = (le16(ino + I_MODO) & S_TIPO) == S_PASTA;
         if (pasta && !pasta_vazia(n)) { erro(quem, ERRO_INVALIDO); return; }
         for (u32 i = 0; i < MAX_CANAIS; i++)

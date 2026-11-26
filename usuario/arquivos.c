@@ -32,6 +32,8 @@ typedef struct {
     u8  *dados;
     u32  tam;
     u32  cap;                /* 0 = os dados são do initrd (só leitura) */
+    u32  modo;               /* as permissões: 0644, 0755, 01777... */
+    u32  dono, grupo;
 } no_t;
 
 typedef struct {
@@ -43,6 +45,13 @@ typedef struct {
 
 static no_t    nos[MAX_NOS];
 static canal_t canais[MAX_CANAIS];
+
+/* Quem fez o pedido atual (o núcleo diz) e se uma pasta no caminho barrou. */
+static identidade_t quem_id;
+static int negado;
+
+static u32 modo_completo(const no_t *n) { return (n->tipo == ARQ_TIPO_PASTA ? 0x4000u : 0x8000u) | n->modo; }
+static int pode(u32 no, u32 quer) { return permite(&quem_id, modo_completo(&nos[no]), nos[no].dono, nos[no].grupo, quer); }
 
 typedef struct {
     u32  usado;
@@ -100,9 +109,11 @@ static int resolver(const char *caminho, int *pai, const char **ultimo)
             if (tam >= NOME_MAX) return -1;
             *pai = atual;
             *ultimo = ini;
+            if (nos[atual].tipo == ARQ_TIPO_PASTA && !pode((u32)atual, PERM_EXECUTAR)) { negado = 1; return -1; }
             return achar_filho((u32)atual, ini, tam);
         }
         if (nos[atual].tipo != ARQ_TIPO_PASTA) return -1;
+        if (!pode((u32)atual, PERM_EXECUTAR)) { negado = 1; return -1; }   /* entrar: o x da pasta */
         atual = achar_filho((u32)atual, ini, tam);
         if (atual < 0) return -1;
     }
@@ -116,6 +127,7 @@ static int criar_no(u32 pai, const char *nome, u32 tipo)
         nos[i].usado = 1;
         nos[i].tipo  = tipo;
         nos[i].pai   = pai;
+        nos[i].modo  = tipo == ARQ_TIPO_PASTA ? 0755 : 0644;
         u32 k = 0;
         while (nome[k] && nome[k] != '/' && k < NOME_MAX - 1) { nos[i].nome[k] = nome[k]; k++; }
         return (int)i;
@@ -198,6 +210,9 @@ static void carregar_initrd(void)
                 if (f >= 0) {
                     nos[f].dados = (u8 *)(h + 512);             /* direto do initrd */
                     nos[f].tam   = bytes;
+                    const u8 *d = nos[f].dados;                  /* um programa (ELF): rwxr-xr-x */
+                    if (bytes >= 4 && d[0] == 0x7F && d[1] == 'E' && d[2] == 'L' && d[3] == 'F')
+                        nos[f].modo = 0755;
                 }
             }
         }
@@ -251,6 +266,8 @@ static void pedido(msg_t *m)
 {
     u32 quem = m->origem;
     m->texto[MSG_TEXTO_MAX - 1] = '\0';
+    if (sys_identidade(quem, &quem_id) < 0) { erro(quem, ERRO_PID); return; }
+    negado = 0;
 
     if (m->tipo == MSG_LER || m->tipo == MSG_ESCREVER) {
         u32 c = ARQ_CANAL(m->arg[0]);
@@ -308,6 +325,10 @@ static void pedido(msg_t *m)
         erro(quem, ERRO_NAO_ACHADO);
         return;
     }
+    if ((m->tipo == MONT_ADICIONAR || m->tipo == MONT_REMOVER) && quem_id.uid != UID_ROOT) {
+        erro(quem, ERRO_SEM_PERMISSAO);                  /* montar é coisa do root */
+        return;
+    }
     if (m->tipo == MONT_ADICIONAR) {
         /* a pasta tem de existir (aqui, na memória) e não pode estar em uso */
         int alvo = resolver(m->texto, 0, 0);
@@ -354,15 +375,40 @@ static void pedido(msg_t *m)
     int alvo = resolver(m->texto, (m->tipo == ARQ_INFO || m->tipo == ARQ_LISTAR) ? 0 : &pai,
                         &ultimo);
     if (alvo < 0 && m->texto[0] == '/' && m->texto[1] == '\0') alvo = 0;
+    if (negado) { erro(quem, ERRO_SEM_PERMISSAO); return; }
 
     switch (m->tipo) {
-    case ARQ_INFO:
+    case ARQ_INFO: {
         if (alvo < 0) { erro(quem, ERRO_NAO_ACHADO); return; }
-        ok(quem, nos[alvo].tipo, nos[alvo].tam);
+        msg_t r;
+        msg_zera(&r);
+        r.tipo   = MSG_OK;
+        r.arg[0] = nos[alvo].tipo;
+        r.arg[1] = nos[alvo].tam;
+        r.arg[2] = modo_completo(&nos[alvo]);
+        r.arg[3] = nos[alvo].dono | nos[alvo].grupo << 16;
+        sys_responder(quem, &r);
+        return;
+    }
+
+    case ARQ_PERMISSOES:                         /* chmod: o dono ou o root */
+        if (alvo < 0) { erro(quem, ERRO_NAO_ACHADO); return; }
+        if (quem_id.uid != UID_ROOT && quem_id.uid != nos[alvo].dono) { erro(quem, ERRO_SEM_PERMISSAO); return; }
+        nos[alvo].modo = m->arg[0] & 07777;
+        ok(quem, 0, 0);
+        return;
+
+    case ARQ_DONO:                               /* chown: só o root */
+        if (alvo < 0) { erro(quem, ERRO_NAO_ACHADO); return; }
+        if (quem_id.uid != UID_ROOT) { erro(quem, ERRO_SEM_PERMISSAO); return; }
+        if (m->arg[0] != 0xFFFFFFFFu) nos[alvo].dono = m->arg[0];
+        if (m->arg[1] != 0xFFFFFFFFu) nos[alvo].grupo = m->arg[1];
+        ok(quem, 0, 0);
         return;
 
     case ARQ_LISTAR: {
         if (alvo < 0 || nos[alvo].tipo != ARQ_TIPO_PASTA) { erro(quem, ERRO_NAO_ACHADO); return; }
+        if (!pode((u32)alvo, PERM_LER)) { erro(quem, ERRO_SEM_PERMISSAO); return; }
         u32 n = 0;
         for (u32 i = 1; i < MAX_NOS; i++) {
             if (!nos[i].usado || nos[i].pai != (u32)alvo || n++ != m->arg[0]) continue;
@@ -371,6 +417,8 @@ static void pedido(msg_t *m)
             r.tipo   = MSG_OK;
             r.arg[0] = nos[i].tipo;
             r.arg[1] = nos[i].tam;
+            r.arg[2] = modo_completo(&nos[i]);
+            r.arg[3] = nos[i].dono | nos[i].grupo << 16;
             str_copia(r.texto, nos[i].nome, MSG_TEXTO_MAX);
             sys_responder(quem, &r);
             return;
@@ -387,8 +435,15 @@ static void pedido(msg_t *m)
                 erro(quem, ERRO_NAO_ACHADO);
                 return;
             }
+            if (!pode((u32)pai, PERM_ESCREVER | PERM_EXECUTAR)) { erro(quem, ERRO_SEM_PERMISSAO); return; }
             alvo = criar_no((u32)pai, ultimo, ARQ_TIPO_ARQUIVO);
             if (alvo < 0) { erro(quem, ERRO_SEM_MEMORIA); return; }
+            nos[alvo].modo  = m->arg[1] ? m->arg[1] & 07777 : 0644;
+            nos[alvo].dono  = quem_id.uid;
+            nos[alvo].grupo = quem_id.gid;
+        } else if (!pode((u32)alvo, modo == ARQ_MODO_LER ? PERM_LER : PERM_ESCREVER)) {
+            erro(quem, ERRO_SEM_PERMISSAO);
+            return;
         }
         if (nos[alvo].tipo != ARQ_TIPO_ARQUIVO) { erro(quem, ERRO_INVALIDO); return; }
         if (modo == ARQ_MODO_ESCREVER) nos[alvo].tam = 0;
@@ -401,12 +456,22 @@ static void pedido(msg_t *m)
     case ARQ_PASTA:
         if (alvo >= 0) { erro(quem, ERRO_INVALIDO); return; }    /* já existe */
         if (pai < 0 || nos[pai].tipo != ARQ_TIPO_PASTA) { erro(quem, ERRO_NAO_ACHADO); return; }
-        if (criar_no((u32)pai, ultimo, ARQ_TIPO_PASTA) < 0) { erro(quem, ERRO_SEM_MEMORIA); return; }
+        if (!pode((u32)pai, PERM_ESCREVER | PERM_EXECUTAR)) { erro(quem, ERRO_SEM_PERMISSAO); return; }
+        {
+            int f = criar_no((u32)pai, ultimo, ARQ_TIPO_PASTA);
+            if (f < 0) { erro(quem, ERRO_SEM_MEMORIA); return; }
+            nos[f].modo  = m->arg[0] ? m->arg[0] & 07777 : 0755;
+            nos[f].dono  = quem_id.uid;
+            nos[f].grupo = quem_id.gid;
+        }
         ok(quem, 0, 0);
         return;
 
     case ARQ_APAGAR:
         if (alvo <= 0) { erro(quem, alvo == 0 ? ERRO_INVALIDO : ERRO_NAO_ACHADO); return; }
+        if (!pode((u32)pai, PERM_ESCREVER | PERM_EXECUTAR)) { erro(quem, ERRO_SEM_PERMISSAO); return; }
+        if ((nos[pai].modo & MODO_STICKY) && quem_id.uid != UID_ROOT &&       /* /tmp: só o seu */
+            quem_id.uid != nos[alvo].dono && quem_id.uid != nos[pai].dono) { erro(quem, ERRO_SEM_PERMISSAO); return; }
         for (u32 i = 1; i < MAX_NOS; i++)
             if (nos[i].usado && nos[i].pai == (u32)alvo) { erro(quem, ERRO_INVALIDO); return; }
         for (u32 c = 0; c < MAX_CANAIS; c++)
@@ -425,12 +490,21 @@ int main(int argc, char **argv)
 
     nos[0].usado = 1;                            /* a raiz, "/" */
     nos[0].tipo  = ARQ_TIPO_PASTA;
+    nos[0].modo  = 0755;
     carregar_initrd();
     /* /disco: onde o boot monta o disco; /mnt: para montar outros à mão */
     const char *disco = &ARQ_DISCO[1];
     if (achar_filho(0, disco, str_tam(disco)) < 0) criar_no(0, disco, ARQ_TIPO_PASTA);
     if (achar_filho(0, "tmp", 3) < 0) criar_no(0, "tmp", ARQ_TIPO_PASTA);
     if (achar_filho(0, "mnt", 3) < 0) criar_no(0, "mnt", ARQ_TIPO_PASTA);
+    if (achar_filho(0, "home", 4) < 0) criar_no(0, "home", ARQ_TIPO_PASTA);
+    if (achar_filho(0, "root", 4) < 0) criar_no(0, "root", ARQ_TIPO_PASTA);
+    /* as permissões que não são as de sempre (0755 e 0644) */
+    quem_id.uid = UID_ROOT;
+    int x;
+    if ((x = resolver("/tmp", 0, 0)) > 0)        nos[x].modo = 01777;   /* todos escrevem; cada um apaga o seu */
+    if ((x = resolver("/root", 0, 0)) > 0)       nos[x].modo = 0700;
+    if ((x = resolver("/etc/sombra", 0, 0)) > 0) nos[x].modo = 0600;    /* as senhas: só o root */
 
     msg_t m;
     for (;;) {

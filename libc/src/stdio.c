@@ -74,7 +74,7 @@ FILE *fopen(const char *caminho, const char *modo)
 {
     int flags = flags_de(modo);
     if (flags < 0) return NULL;
-    int fd = open(caminho, flags);
+    int fd = open(caminho, flags, 0666);
     if (fd < 0) return NULL;
     FILE *f = fdopen(fd, modo);
     if (!f) close(fd);
@@ -88,7 +88,7 @@ FILE *freopen(const char *caminho, const char *modo, FILE *f)
 {
     esvaziar(f);
     int flags = flags_de(modo);
-    int fd = flags < 0 || !caminho ? -1 : open(caminho, flags);
+    int fd = flags < 0 || !caminho ? -1 : open(caminho, flags, 0666);
     if (f->fd > 2) close(f->fd);
     if (fd < 0) { f->usado = 0; return NULL; }
     int ler = modo[0] == 'r' || strchr(modo, '+');

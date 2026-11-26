@@ -184,7 +184,7 @@ Experimente no shell:
 
 ### O que o NovaEra **ainda não** tem
 
-Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), threads, mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, relógio (a data dos arquivos é 1980), usuários e permissões, rede e interface gráfica. Veja o [Roteiro](#roteiro).
+Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), threads, mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, relógio (a data dos arquivos é 1980), rede e interface gráfica. Veja o [Roteiro](#roteiro).
 
 ### Estrutura do repositório
 
@@ -212,6 +212,7 @@ NewEra-Karnel/
 │   ├── disco.c       #   o driver de disco ATA (PID 7)
 │   ├── fat.c         #   os discos FAT32 (PID 8)
 │   ├── ext2.c        #   os discos ext2, com dono e permissões (PID 9)
+│   ├── contas.c      #   usuários e senhas: login, su, sudo, passwd (PID 10)
 │   └── bin/          #   os comandos: ls, cat, echo, mkdir, rm, novafetch...
 ├── build.sh          # Compila os programas, embute-os e liga o kernel.bin
 ├── libc/             # A libc do NovaEra: include/ (cabeçalhos), src/, crt0.s
@@ -456,6 +457,7 @@ degraus, e cada fase já entrega algo usável. Detalhes em
   - [x] Etapa 1 — sinais e `kill`: **Ctrl+C** para o comando (o pipe inteiro), `kill`, tratadores (`signal`/`sigaction`), SIGSEGV/SIGFPE, SIGPIPE ([livro, capítulo 8](nefs/livro/08-sinais.md))
   - [x] Etapa 2 — até 4 discos (`sda` a `sdd`), partições MBR (`particionar`), `montar`/`desmontar` em qualquer pasta, `discos` ([livro, capítulo 9](nefs/livro/09-discos-particoes-montagens.md))
   - [x] Etapa 3 — **ext2** (o sistema de arquivos do Linux, com dono e permissões): `formatar -t ext2`, `montar` descobre o tipo; o `e2fsck` do Linux aprova ([livro, capítulo 10](nefs/livro/10-o-ext2.md))
+  - [x] Etapa 4 — **usuários e permissões**: `adduser`, `login`, `su`, `sudo`, `passwd`, `chmod`, `chown`, `id`, `whoami`, `ls -l`; senhas com SHA-256 na `/etc/sombra` ([livro, capítulo 11](nefs/livro/11-usuarios-e-permissoes.md))
 - [ ] **Fase 5 — gráficos**: framebuffer em alta resolução, mouse, fontes e um servidor de janelas no anel 3
 - [ ] **Fase 6 — a área de trabalho do NovaEra e o modo pronto**: painel, menu, janelas, gerenciador de arquivos e terminal gráfico (no estilo do XFCE), pacotes e um **instalador estilo Debian/Ubuntu** com a opção "com área de trabalho"
 - [ ] **Fase 7 — rede e o XFCE4 de verdade**: TCP/IP, porte do GCC ou do clang, do X11, do GTK e do **XFCE4**

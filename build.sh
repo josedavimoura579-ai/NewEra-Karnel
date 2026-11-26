@@ -264,6 +264,8 @@ mkdir -p build/initrd/bin build/initrd/etc
     echo "PURO=$PURO"
 } > build/initrd/etc/sistema
 [ -f logo.txt ] && cp logo.txt build/initrd/etc/logo.txt
+# /etc/passwd, /etc/group, /etc/sombra: os usuários (no começo, só o root)
+[ -d etc ] && cp etc/* build/initrd/etc/
 # Os comandos (usuario/bin/) e as ferramentas do NEFS (ferramentas/), que
 # também rodam dentro do NovaEra.
 for fonte in usuario/bin/*.c ferramentas/*.c; do
@@ -371,7 +373,7 @@ for f in kernel.c novaera.h boot.s cpu.s linker.ld build.sh sistema.conf \
          programas.lista logo.txt LICENSE; do
     [ -f "$f" ] && cp "$f" "$SRC/$f"
 done
-for d in usuario libc ferramentas exemplos portes nefs/livro; do
+for d in usuario libc ferramentas exemplos portes nefs/livro etc; do
     [ -d "$d" ] || continue
     find "$d" -type f ! -name '.*' | while read -r f; do
         case "$f" in portes/fontes/*|ferramentas/testes/*) continue ;; esac

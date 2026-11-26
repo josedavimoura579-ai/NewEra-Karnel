@@ -67,13 +67,23 @@ Cada etapa termina com algo testável no QEMU.
     sobrescrever), e um disco feito pelo `mkfs.ext2` do Linux (com
     resize_inode, dir_index, ext_attr) é lido e gravado. Ainda não: criar
     links (`ln`) e links simbólicos; um disco ext3/ext4 é recusado.
-- [ ] **Etapa 4 — usuários e permissões**
+- [x] **Etapa 4 — usuários e permissões** (núcleo 3.6; [livro, capítulo 11](livro/11-usuarios-e-permissoes.md))
   - usuário e grupo de cada processo no núcleo; os servidores de arquivos
     conferem as permissões
   - `/etc/passwd`, `/etc/group`, `/etc/sombra`; `login`, `su`, **`sudo`**,
     `passwd`, `adduser`, `chmod`, `chown`, `id`, `whoami`, `ls -l`
   - *Teste: um usuário comum não lê a `/etc/sombra` nem escreve em `/bin`;
     com `sudo`, escreve.*
+  - Feito: a identidade (uid, gid, até 8 grupos) em cada processo
+    (`SYS_IDENTIDADE`, `SYS_IDENTIDADE_MUDAR` só para o root); sinais só
+    para os próprios processos. O servidor de contas (PID 10) confere as
+    senhas (SHA-256 com sal, 1000 rodadas) e muda a identidade de quem
+    pediu: `login`, `su`, `sudo` (grupo `sudo` ou `wheel`), `passwd`. O
+    ramfs e o ext2 conferem `rwx` (com o x das pastas no caminho e o sticky
+    do `/tmp`); o FAT32 aparece como 0777; disco cru e montar, só o root.
+    Comandos: `adduser`, `chmod`, `chown`, `id`, `whoami`, `ls -l`, e o
+    shell como `/bin/sh`. O terminal esconde a senha (`TERM_ECO`). Os
+    usuários ainda moram no `/etc` da memória: ficam no disco na Etapa 5.
 - [ ] **Etapa 5 — boot pelo disco**
   - o GRUB no disco (`instalar-boot`); a raiz no ext2; um `init` que monta
     os discos (`/etc/montagens`) e chama o `login`
