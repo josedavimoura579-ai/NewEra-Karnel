@@ -3,7 +3,7 @@
  * (como o mount do Linux).
  *
  *   montar                  mostra o que está montado
- *   montar sdb1 /mnt        o FAT32 de sdb1 aparece em /mnt
+ *   montar sdb1 /mnt        o que há em sdb1 (FAT32 ou ext2) aparece em /mnt
  *
  * A pasta tem de existir (mkdir /mnt/usb). Para soltar: desmontar /mnt
  */
@@ -16,8 +16,7 @@ int main(int argc, char **argv)
         char pasta[CAMINHO_MAX], nome[8];
         u32 srv, dev;
         for (u32 i = 0; montagem(i, pasta, &srv, &dev) == 0; i++)
-            printf("%s em %s (%s)\n", dispositivo_nome(dev, nome), pasta,
-                   srv == PID_FAT ? "fat32" : "?");
+            printf("%s em %s (%s)\n", dispositivo_nome(dev, nome), pasta, servidor_tipo(srv));
         return 0;
     }
     if (argc != 3) {
@@ -34,7 +33,7 @@ int main(int argc, char **argv)
     if (caminho_absoluto(argv[2], pasta) < 0) { fprintf(stderr, "montar: caminho inválido\n"); return 1; }
     long r = montar_em((u32)dev, pasta);
     if (r == ERRO_FORMATO)
-        fprintf(stderr, "montar: %s não tem um FAT32 (prepare com: formatar %s)\n", argv[1], argv[1]);
+        fprintf(stderr, "montar: %s não tem FAT32 nem ext2 (prepare com: formatar %s)\n", argv[1], argv[1]);
     else if (r == ERRO_NAO_ACHADO)
         fprintf(stderr, "montar: a pasta %s não existe (crie com: mkdir %s)\n", pasta, pasta);
     else if (r == ERRO_OCUPADO)

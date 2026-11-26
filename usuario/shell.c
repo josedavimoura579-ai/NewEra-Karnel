@@ -45,7 +45,7 @@ static void cmd_ajuda(void)
     escreve("Programas em /bin (veja: ls /bin):\n", COR(COR_CIANO_CLARO));
     escreve("  ls cat echo mkdir rm cp cmp base64 novafetch ola codigo memoria falha filho\n", c);
     escreve("  kill sleep  (sinais: Ctrl+C interrompe o comando; nefs livro 8)\n", c);
-    escreve("  discos particionar formatar montar desmontar  (discos; nefs livro 7 e 9)\n", c);
+    escreve("  discos particionar formatar montar desmontar  (discos; nefs livro 9 e 10)\n", c);
     escreve("  cproc qbe nefs-cpp nefs-as nefs-ld nefs-ar  (o compilador; nefs livro 4)\n", c);
     escreve("  nefs compilar  (em /usr/src/novaera: o NovaEra se compila; nefs livro 6)\n", c);
     escreve("Pipes e arquivos: ", COR(COR_CIANO_CLARO));

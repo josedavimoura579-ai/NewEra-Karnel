@@ -22,7 +22,7 @@ typedef unsigned long long u64;
 
 /* A versão do NÚCLEO. A do sistema (a "distribuição") fica em sistema.conf,
  * como o /etc/os-release do Linux: o núcleo não sabe qual é a distro. */
-#define NOVAERA_VERSAO     "3.4"
+#define NOVAERA_VERSAO     "3.5"
 #define NOVAERA_ARQUITETURA "x86_64"
 
 /* ---------------------- Chamadas de sistema (int 0x80) -------------------
@@ -47,7 +47,7 @@ typedef unsigned long long u64;
 #define SYS_COPIAR_DE   16   /* (pid, copia_t*)  copia da memória de quem me CHAMOU para a minha */
 #define SYS_AMBIENTE    17   /* (msg*)           entrada, saída padrão e pasta atual */
 #define SYS_PASTA       18   /* (caminho)        muda a pasta atual          */
-#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.4 x86_64" (como o uname) */
+#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.5 x86_64" (como o uname) */
 #define SYS_SINAL       20   /* (pid, sinal)     envia um sinal; pid < 0: ao grupo -pid; 0: ao meu grupo */
 #define SYS_SINAL_TRATAR 21  /* (sinal, sinal_acao_t*) troca o tratador; devolve o antigo na mesma struct */
 #define SYS_SINAL_VOLTAR 22  /* ()               fim do tratador: volta ao ponto interrompido */
@@ -80,6 +80,7 @@ typedef unsigned long long u64;
 #define PID_TUBOS    6       /* pipes                            */
 #define PID_DISCO    7       /* driver de disco (ATA)            */
 #define PID_FAT      8       /* os discos FAT32 montados         */
+#define PID_EXT2     9       /* os discos ext2 montados          */
 #define PID_QUALQUER 0xFFFFFFFFu   /* em SYS_RECEBER: aceita de qualquer um */
 
 /* ------------------------------ Mensagem --------------------------------
@@ -122,6 +123,8 @@ typedef struct {
 #define ARQ_FECHAR         43    /* arg[0] = canal */
 #define ARQ_PASTA          44    /* cria uma pasta */
 #define ARQ_APAGAR         45    /* apaga um arquivo ou uma pasta vazia */
+/* ARQ_INFO e ARQ_LISTAR: no ext2, arg[2] = o modo (permissões, como no
+ * Unix: 0644, 0755...) e arg[3] = dono | grupo << 16. No FAT32: 0. */
 #define ARQ_TIPO_ARQUIVO   1
 #define ARQ_TIPO_PASTA     2
 #define ARQ_MODO_LER       1
@@ -162,9 +165,13 @@ typedef struct {
 #define DEV_DISCO(dev)     ((dev) / 8u)
 #define DEV_PARTICAO(dev)  ((dev) % 8u)
 
-/* Servidor FAT32 (PID_FAT): até 4 volumes montados ao mesmo tempo. */
-#define FAT_MONTAR         63    /* arg[0] = dispositivo, texto = pasta */
-#define FAT_DESMONTAR      65    /* texto = pasta; ERRO_OCUPADO se há arquivos abertos */
+/* Servidores de sistemas de arquivos (FAT32, ext2): cada um cuida de até
+ * 4 volumes montados ao mesmo tempo. Quem monta pergunta a um por vez: o
+ * que não reconhece o disco responde ERRO_FORMATO. */
+#define SA_MONTAR          63    /* arg[0] = dispositivo, texto = pasta */
+#define SA_DESMONTAR       65    /* texto = pasta; ERRO_OCUPADO se há arquivos abertos */
+#define FAT_MONTAR         SA_MONTAR
+#define FAT_DESMONTAR      SA_DESMONTAR
 
 /* Tipos de partição (o byte 4 da entrada na MBR) */
 #define PART_FAT32         0x0C  /* FAT32 com LBA */

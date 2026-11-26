@@ -567,31 +567,46 @@ static inline int montado_em(u32 dev, char *pasta)
 {
     u32 s, d;
     for (u32 i = 0; montagem(i, pasta, &s, &d) == 0; i++)
-        if (d == dev && s == PID_FAT) return 1;
+        if (d == dev) return 1;
     return 0;
 }
 
-/* Monta e desmonta: o servidor do sistema de arquivos e a tabela. */
+/* O nome do sistema de arquivos de cada servidor. */
+static inline const char *servidor_tipo(u32 servidor)
+{
+    return servidor == PID_FAT ? "fat32" : servidor == PID_EXT2 ? "ext2" : "?";
+}
+
+/* Monta e desmonta: o servidor do sistema de arquivos e a tabela. Cada
+ * servidor é perguntado; o que não reconhece o disco diz ERRO_FORMATO. */
 static inline long montar_em(u32 dev, const char *pasta)
 {
+    static const u32 servidores[] = { PID_FAT, PID_EXT2 };
     msg_t m;
-    msg_zera(&m);
-    m.tipo   = FAT_MONTAR;
-    m.arg[0] = dev;
-    str_copia(m.texto, pasta, MSG_TEXTO_MAX);
-    if (sys_chamar(PID_FAT, &m) < 0) return ERRO_PID;
-    if (m.tipo == MSG_ERRO) return -(long)m.arg[0];
+    long r = ERRO_FORMATO;
+    u32 srv = 0;
+    for (u32 i = 0; i < sizeof(servidores) / sizeof(servidores[0]); i++) {
+        srv = servidores[i];
+        msg_zera(&m);
+        m.tipo   = SA_MONTAR;
+        m.arg[0] = dev;
+        str_copia(m.texto, pasta, MSG_TEXTO_MAX);
+        if (sys_chamar(srv, &m) < 0) { r = ERRO_PID; continue; }
+        r = m.tipo == MSG_ERRO ? -(long)m.arg[0] : 0;
+        if (r != ERRO_FORMATO) break;
+    }
+    if (r < 0) return r;
     msg_zera(&m);
     m.tipo   = MONT_ADICIONAR;
-    m.arg[0] = PID_FAT;
+    m.arg[0] = srv;
     m.arg[1] = dev;
     str_copia(m.texto, pasta, MSG_TEXTO_MAX);
     if (sys_chamar(PID_ARQUIVOS, &m) < 0 || m.tipo == MSG_ERRO) {
         long e = m.tipo == MSG_ERRO ? -(long)m.arg[0] : ERRO_PID;
         msg_zera(&m);
-        m.tipo = FAT_DESMONTAR;                    /* desfaz */
+        m.tipo = SA_DESMONTAR;                     /* desfaz */
         str_copia(m.texto, pasta, MSG_TEXTO_MAX);
-        sys_chamar(PID_FAT, &m);
+        sys_chamar(srv, &m);
         return e;
     }
     return 0;
@@ -601,7 +616,7 @@ static inline long desmontar_de(u32 servidor, const char *pasta)
 {
     msg_t m;
     msg_zera(&m);
-    m.tipo = FAT_DESMONTAR;
+    m.tipo = SA_DESMONTAR;
     str_copia(m.texto, pasta, MSG_TEXTO_MAX);
     if (sys_chamar(servidor, &m) < 0) return ERRO_PID;
     if (m.tipo == MSG_ERRO && m.arg[0] != (u32)(-ERRO_NAO_ACHADO)) return -(long)m.arg[0];

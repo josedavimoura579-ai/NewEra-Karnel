@@ -51,11 +51,22 @@ Cada etapa termina com algo testável no QEMU.
     `formatar DISPOSITIVO`. Conferido com o Linux: `sfdisk`/`fdisk -l` leem
     a tabela, o `fsck.fat` aprova a partição, e um disco particionado no
     Linux é montado em `/disco` no boot.
-- [ ] **Etapa 3 — o ext2**
+- [x] **Etapa 3 — o ext2** (núcleo 3.5; [livro, capítulo 10](livro/10-o-ext2.md))
   - servidor ext2: pastas, arquivos, links, permissões guardadas no disco
   - `formatar -t ext2` (o mkfs.ext2 do NovaEra)
   - *Teste: o `fsck.ext2` do Linux aprova o que o NovaEra grava, e o
     NovaEra lê um disco feito pelo `mkfs.ext2`.*
+  - Feito: o servidor `ext2` (PID 9) lê e grava blocos de 1, 2 e 4 KiB,
+    inodes de 128 ou 256 bytes, blocos indiretos (até o triplo), pastas,
+    links (a contagem; apagar um nome não apaga o arquivo enquanto houver
+    outro), permissões e dono no inode (`ARQ_INFO` devolve o modo). O
+    `formatar -t ext2` faz o que o `mkfs.ext2` faz (sparse_super,
+    filetype, lost+found). O `montar` pergunta a cada servidor (FAT32,
+    ext2) quem reconhece o disco. Conferido: o `e2fsck -f` aprova sem
+    nenhum erro (blocos de 1 e 4 KiB, arquivos de 800 KB, apagar pastas e
+    sobrescrever), e um disco feito pelo `mkfs.ext2` do Linux (com
+    resize_inode, dir_index, ext_attr) é lido e gravado. Ainda não: criar
+    links (`ln`) e links simbólicos; um disco ext3/ext4 é recusado.
 - [ ] **Etapa 4 — usuários e permissões**
   - usuário e grupo de cada processo no núcleo; os servidores de arquivos
     conferem as permissões

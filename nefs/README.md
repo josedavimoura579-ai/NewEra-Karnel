@@ -84,6 +84,7 @@ A pasta [`livro/`](livro/) tem o Livro 1, em português:
 7. [O disco e a ISO](livro/07-o-disco-e-a-iso.md)
 8. [Sinais: o Ctrl+C e o `kill`](livro/08-sinais.md)
 9. [Discos, partições e montagens](livro/09-discos-particoes-montagens.md)
+10. [O ext2: o disco com dono e permissões](livro/10-o-ext2.md)
 
 ## Construindo a ISO do NEFS
 
