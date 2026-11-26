@@ -451,7 +451,7 @@ O destino é que cada pessoa possa criar o próprio sistema de **dois jeitos**:
 degraus, e cada fase já entrega algo usável. Detalhes em
 [`nefs/ROTEIRO.md`](nefs/ROTEIRO.md).
 
-- [ ] **Fase 4 — base POSIX e o modo manual**: sinais e `kill`, threads, `mmap`, sockets locais, usuários e permissões (`sudo`), e o modo **manual estilo Arch** completo no livro
+- [ ] **Fase 4 — base POSIX e o modo manual** (plano em 9 etapas: [`nefs/FASE4.md`](nefs/FASE4.md)): sinais e `kill`, threads, `mmap`, sockets locais, usuários e permissões (`sudo`), e o modo **manual estilo Arch** completo no livro
 - [ ] **Fase 5 — gráficos**: framebuffer em alta resolução, mouse, fontes e um servidor de janelas no anel 3
 - [ ] **Fase 6 — a área de trabalho do NovaEra e o modo pronto**: painel, menu, janelas, gerenciador de arquivos e terminal gráfico (no estilo do XFCE), pacotes e um **instalador estilo Debian/Ubuntu** com a opção "com área de trabalho"
 - [ ] **Fase 7 — rede e o XFCE4 de verdade**: TCP/IP, porte do GCC ou do clang, do X11, do GTK e do **XFCE4**
