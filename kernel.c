@@ -254,6 +254,10 @@ static u64 quadro_alocar(void)
 static const u8 *initrd;
 static u64       initrd_tam;
 
+/* A linha de comando do boot (o GRUB passa "kernel.bin root=sda1"): o
+ * núcleo não a usa, só guarda para o init saber de onde montar a raiz. */
+static char linha_boot[MSG_TEXTO_MAX];
+
 /* Multiboot: se o bit 0 das flags estiver ligado, mem_upper diz quantos
  * KiB de RAM existem acima de 1 MiB; o bit 3 diz que há módulos. */
 static void memoria_iniciar(u64 mbi_endereco)
@@ -265,6 +269,12 @@ static void memoria_iniciar(u64 mbi_endereco)
         if (mbi[0] & 1) {
             u64 real = 0x100000ull + (u64)mbi[2] * 1024u;
             if (real < fim) fim = real;
+        }
+        if ((mbi[0] & 4) && mbi[4]) {          /* bit 2: há linha de comando */
+            const char *c = (const char *)(u64)mbi[4];
+            u32 i = 0;
+            for (; c[i] && i < MSG_TEXTO_MAX - 1; i++) linha_boot[i] = c[i];
+            linha_boot[i] = '\0';
         }
         if ((mbi[0] & 8) && mbi[5] > 0) {
             /* Cada módulo: [início, fim, texto, reservado]. Usamos o 1º. */
@@ -1578,6 +1588,14 @@ static long syscall_executar(quadro_t *q)
         mem_copia(&nova, (const void *)b, sizeof(nova));
         if (nova.n > GRUPOS_MAX) return ERRO_INVALIDO;
         t->ident = nova;
+        return 0;
+    }
+
+    case SYS_LINHA_BOOT: {
+        if (!usuario_valido(eu, a, sizeof(msg_t))) return ERRO_INVALIDO;
+        msg_t *m = (msg_t *)a;
+        mem_zera(m, sizeof(*m));
+        mem_copia(m->texto, linha_boot, MSG_TEXTO_MAX);
         return 0;
     }
 

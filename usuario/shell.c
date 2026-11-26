@@ -18,6 +18,54 @@
  * Ctrl+D, e ignora o Ctrl+C (que é para os comandos dele). */
 static int do_boot;
 
+/* O sistema instalado num disco: o GRUB passa "root=sda1" na linha de
+ * boot. O shell do boot (PID 3) faz então o papel do "init" do Unix: monta
+ * a raiz (/) daquele disco e chama o /bin/init de lá, que monta o resto
+ * (/etc/montagens) e mostra o login. Se o init terminar, chama de novo:
+ * nunca fica um shell do root aberto sem senha. Sem "root=" (no QEMU com
+ * -kernel e -initrd, ou na ISO), o sistema roda da memória, como sempre. */
+static int raiz_montada(void)
+{
+    char pasta[CAMINHO_MAX];
+    for (u32 i = 0; montagem(i, pasta, 0, 0) == 0; i++)
+        if (str_igual(pasta, "/")) return 1;
+    return 0;
+}
+
+static void modo_init(void)
+{
+    msg_t m;
+    sys_linha_boot(&m);
+    const char *r = m.texto;
+    while (*r && !(r[0] == 'r' && r[1] == 'o' && r[2] == 'o' && r[3] == 't' && r[4] == '=')) r++;
+    if (!raiz_montada()) {
+        if (!*r) return;                             /* sem root=: roda da memória */
+        char nome[16];
+        u32 k = 0;
+        for (r += 5; *r && *r != ' ' && k + 1 < sizeof nome; r++) nome[k++] = *r;
+        nome[k] = '\0';
+        long dev = dispositivo_de(nome);
+        escreve("[init] montando a raiz: ", COR(COR_CINZA_CLARO));
+        escreve(nome, COR(COR_BRANCO));
+        escreve(" em /\n", COR(COR_CINZA_CLARO));
+        long e = dev < 0 ? ERRO_INVALIDO : montar_em((u32)dev, "/");
+        if (e < 0) {
+            escreve("[init] nao consegui montar a raiz: o sistema roda da memoria.\n\n", COR(COR_VERMELHO_CLARO));
+            return;
+        }
+    }
+    for (u32 vezes = 0; ; vezes++) {
+        char *args[] = { "init", 0 };
+        long pid = executar("/bin/init", args, 0, 0, 0, 0);
+        if (pid < 0) {
+            escreve("[init] o disco nao tem /bin/init: abrindo o shell do root.\n\n", COR(COR_VERMELHO_CLARO));
+            return;
+        }
+        sys_esperar((u32)pid);
+        if (vezes > 20) for (u32 t = sys_tempo(); sys_tempo() - t < 100; ) sys_ceder();  /* sem girar à toa */
+    }
+}
+
 /* O nome de um usuário pelo uid (do /etc/passwd); "?" se não achar. */
 static void nome_usuario(u32 uid, char *nome, u32 max)
 {
@@ -66,6 +114,7 @@ static void cmd_ajuda(void)
     escreve("  ls cat echo mkdir rm cp cmp base64 novafetch ola codigo memoria falha filho\n", c);
     escreve("  kill sleep  (sinais: Ctrl+C interrompe o comando; nefs livro 8)\n", c);
     escreve("  adduser login su sudo passwd chmod chown id whoami  (nefs livro 11)\n", c);
+    escreve("  instalar-sistema instalar-boot desligar  (instalar no disco; nefs livro 12)\n", c);
     escreve("  discos particionar formatar montar desmontar  (discos; nefs livro 9 e 10)\n", c);
     escreve("  cproc qbe nefs-cpp nefs-as nefs-ld nefs-ar  (o compilador; nefs livro 4)\n", c);
     escreve("  nefs compilar  (em /usr/src/novaera: o NovaEra se compila; nefs livro 6)\n", c);
@@ -136,6 +185,13 @@ static void cmd_invadir(void)
 
 static void cmd_reboot(void)
 {
+    identidade_t id;
+    if (sys_identidade(0, &id) == 0 && id.uid != UID_ROOT) {
+        escreve("So o root reinicia (use: sudo desligar -r)\n", COR(COR_VERMELHO_CLARO));
+        return;
+    }
+    escreve("Gravando os discos...\n", COR(COR_CINZA_CLARO));
+    discos_sincronizar();
     escreve("Pedindo ao driver de teclado para reiniciar...\n", COR(COR_AMARELO));
     msg_t m;
     msg_zera(&m);
@@ -410,6 +466,8 @@ int main(int argc, char **argv)
     msg_t eu;
     sys_tarefa_info((u32)sys_pid(), &eu);
     u32 reinicios = eu.arg[1], falha = eu.arg[2];
+
+    if (do_boot) modo_init();                 /* instalado num disco? vira o init */
 
     if (!do_boot) {
         sinal_tratar(SINAL_INT, (void (*)(int))SINAL_IGNORAR);   /* o Ctrl+C é para os comandos */

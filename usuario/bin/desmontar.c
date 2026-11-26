@@ -23,9 +23,17 @@ int main(int argc, char **argv)
         fprintf(stderr, "desmontar: caminho inválido\n");
         return 1;
     }
+    if (dev_pedido < 0 && str_igual(alvo, "/")) {
+        fprintf(stderr, "desmontar: a raiz (/) fica montada enquanto o sistema roda\n");
+        return 1;
+    }
     u32 srv, dev;
     for (u32 i = 0; montagem(i, pasta, &srv, &dev) == 0; i++) {
         if (dev_pedido >= 0 ? dev != (u32)dev_pedido : !str_igual(pasta, alvo)) continue;
+        if (str_igual(pasta, "/")) {
+            fprintf(stderr, "desmontar: a raiz (/) fica montada enquanto o sistema roda\n");
+            return 1;
+        }
         long r = desmontar_de(srv, pasta);
         if (r == ERRO_OCUPADO) {
             fprintf(stderr, "desmontar: %s está em uso (há arquivos abertos)\n", pasta);

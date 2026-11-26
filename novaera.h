@@ -22,7 +22,7 @@ typedef unsigned long long u64;
 
 /* A versão do NÚCLEO. A do sistema (a "distribuição") fica em sistema.conf,
  * como o /etc/os-release do Linux: o núcleo não sabe qual é a distro. */
-#define NOVAERA_VERSAO     "3.6"
+#define NOVAERA_VERSAO     "3.7"
 #define NOVAERA_ARQUITETURA "x86_64"
 
 /* ---------------------- Chamadas de sistema (int 0x80) -------------------
@@ -47,7 +47,7 @@ typedef unsigned long long u64;
 #define SYS_COPIAR_DE   16   /* (pid, copia_t*)  copia da memória de quem me CHAMOU para a minha */
 #define SYS_AMBIENTE    17   /* (msg*)           entrada, saída padrão e pasta atual */
 #define SYS_PASTA       18   /* (caminho)        muda a pasta atual          */
-#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.6 x86_64" (como o uname) */
+#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.7 x86_64" (como o uname) */
 #define SYS_SINAL       20   /* (pid, sinal)     envia um sinal; pid < 0: ao grupo -pid; 0: ao meu grupo */
 #define SYS_SINAL_TRATAR 21  /* (sinal, sinal_acao_t*) troca o tratador; devolve o antigo na mesma struct */
 #define SYS_SINAL_VOLTAR 22  /* ()               fim do tratador: volta ao ponto interrompido */
@@ -56,6 +56,8 @@ typedef unsigned long long u64;
 #define SYS_IDENTIDADE  25   /* (pid, identidade_t*) quem é o processo (0 = eu) */
 #define SYS_IDENTIDADE_MUDAR 26 /* (pid, identidade_t*) só o root: muda a de um filho,
                                 de um cliente esperando a minha resposta, ou a minha */
+#define SYS_LINHA_BOOT  27   /* (msg*)           texto = a linha de comando que o GRUB passou
+                                ("/boot/kernel.bin root=sda1"); vazio se não houve */
 
 #define ERRO_INVALIDO   (-1) /* argumento ou ponteiro inválido */
 #define ERRO_SEM_PERMISSAO (-2)
@@ -104,7 +106,8 @@ typedef struct {
 #define MSG_VIDEO_ESCREVER 10    /* arg[0] = cor, texto = string            */
 #define MSG_VIDEO_LIMPAR   11
 #define MSG_TECLA          20    /* teclado -> terminal: arg[0] = caractere */
-#define MSG_REINICIAR      21    /* o driver do teclado controla a linha RESET */
+#define MSG_REINICIAR      21    /* o driver do teclado controla a linha RESET (só o root) */
+#define MSG_DESLIGAR       22    /* desliga a máquina (ACPI do QEMU/VirtualBox; só o root) */
 
 /* Entrada e saída: o MESMO protocolo no terminal, nos pipes e nos arquivos.
  * Um "canal" diz qual pipe ou qual arquivo aberto (no terminal, sempre 0). */

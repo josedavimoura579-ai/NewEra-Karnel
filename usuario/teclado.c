@@ -9,6 +9,8 @@
  *
  *  Protocolo:
  *    MSG_REINICIAR    -> reinicia o computador pela porta 0x64
+ *    MSG_DESLIGAR     -> desliga (o ACPI das máquinas virtuais)
+ *  Os dois, só para o root.
  * ===========================================================================
  */
 #include "ulib.h"
@@ -112,8 +114,17 @@ int main(int argc, char **argv)
         if (m.origem == PID_KERNEL && m.tipo == MSG_IRQ) {
             while (inb(TECLADO_STATUS) & 0x01)
                 scancode(inb(TECLADO_DADOS));
-        } else if (m.tipo == MSG_REINICIAR) {
-            reiniciar();
+        } else if (m.tipo == MSG_REINICIAR || m.tipo == MSG_DESLIGAR) {
+            identidade_t id;
+            if (sys_identidade(m.origem, &id) == 0 && id.uid == UID_ROOT) {
+                if (m.tipo == MSG_REINICIAR) reiniciar();
+                /* "desligar" pelo ACPI: cada máquina virtual tem a sua porta
+                 * (QEMU novo, QEMU antigo/Bochs, VirtualBox). Num PC de
+                 * verdade seria preciso ler as tabelas ACPI. */
+                outw(0x604, 0x2000);
+                outw(0xB004, 0x2000);
+                outw(0x4004, 0x3400);
+            }
         }
         entregar_teclas();
     }

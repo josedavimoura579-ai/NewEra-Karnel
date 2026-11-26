@@ -86,6 +86,7 @@ A pasta [`livro/`](livro/) tem o Livro 1, em português:
 9. [Discos, partições e montagens](livro/09-discos-particoes-montagens.md)
 10. [O ext2: o disco com dono e permissões](livro/10-o-ext2.md)
 11. [Usuários, senhas e permissões](livro/11-usuarios-e-permissoes.md)
+12. [Instalando o NovaEra no disco](livro/12-instalando-no-disco.md)
 
 ## Construindo a ISO do NEFS
 

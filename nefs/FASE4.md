@@ -84,10 +84,21 @@ Cada etapa termina com algo testável no QEMU.
     Comandos: `adduser`, `chmod`, `chown`, `id`, `whoami`, `ls -l`, e o
     shell como `/bin/sh`. O terminal esconde a senha (`TERM_ECO`). Os
     usuários ainda moram no `/etc` da memória: ficam no disco na Etapa 5.
-- [ ] **Etapa 5 — boot pelo disco**
+- [x] **Etapa 5 — boot pelo disco** (núcleo 3.7; [livro, capítulo 12](livro/12-instalando-no-disco.md))
   - o GRUB no disco (`instalar-boot`); a raiz no ext2; um `init` que monta
     os discos (`/etc/montagens`) e chama o `login`
   - *Teste: o sistema instalado no disco dá boot sem a ISO.*
+  - Feito: o núcleo guarda a linha de boot (`SYS_LINHA_BOOT`); com
+    `root=sdXN`, o shell do boot monta aquela partição em `/` (o servidor
+    de arquivos aceita montagem na raiz) e chama o `/bin/init`, que monta o
+    `/etc/montagens` e repete o `login`. `instalar-sistema` (copia
+    `/bin`, `/etc`, `/usr`, `/boot`; o `kernel.bin` agora vai no initrd) e
+    `instalar-boot` (o `boot.img` na MBR, o `disco.img` do GRUB nos setores
+    1 a 2047, o `grub.cfg`). `desligar` (grava, desmonta e desliga pelo
+    ACPI; `-r` reinicia). Conferido: instalar num disco vazio, ligar só
+    pelo disco, criar usuário, religar e ele continua lá; o `e2fsck` vê o
+    disco "clean". Corrigido no ext2: sobrescrever um arquivo grande
+    reaproveitava um bloco ainda no cache sem zerar.
 - [ ] **Etapa 6 — threads e mutex**
   - threads no núcleo (o mesmo espaço de memória); espera/acorda
   - nlibc: `pthread_create`, `pthread_join`, `pthread_mutex_*`

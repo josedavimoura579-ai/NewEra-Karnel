@@ -70,6 +70,14 @@ outb:
     ret
 
 # void ins16(u16 porta, void *buf, u64 n)   - lê n palavras de 16 bits da porta
+# void outw(u16 porta, u16 valor)   - só drivers (IOPL 3)
+.globl outw
+outw:
+    movw %di, %dx
+    movw %si, %ax
+    outw %ax, %dx
+    ret
+
 # void outs16(u16 porta, const void *buf, u64 n) - escreve n palavras na porta
 # (o disco ATA entrega e recebe os setores assim: 256 palavras cada)
 .globl ins16

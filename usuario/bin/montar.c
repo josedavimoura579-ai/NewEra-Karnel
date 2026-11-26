@@ -36,6 +36,10 @@ int main(int argc, char **argv)
     }
     char pasta[CAMINHO_MAX];
     if (caminho_absoluto(argv[2], pasta) < 0) { fprintf(stderr, "montar: caminho inválido\n"); return 1; }
+    if (arq_info(pasta, 0) != ARQ_TIPO_PASTA) {
+        fprintf(stderr, "montar: a pasta %s não existe (crie com: mkdir %s)\n", pasta, pasta);
+        return 1;
+    }
     long r = montar_em((u32)dev, pasta);
     if (r == ERRO_FORMATO)
         fprintf(stderr, "montar: %s não tem FAT32 nem ext2 (prepare com: formatar %s)\n", argv[1], argv[1]);

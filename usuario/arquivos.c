@@ -69,6 +69,10 @@ static int montagem_de(const char *c)
     for (u32 i = 0; i < MONT_MAX; i++) {
         montagem_t *x = &montagens[i];
         if (!x->usado) continue;
+        if (x->tam == 1) {                       /* montado em "/": tudo cai nele */
+            if (melhor < 0) melhor = (int)i;
+            continue;
+        }
         u32 k = 0;
         while (k < x->tam && c[k] == x->pasta[k]) k++;
         if (k < x->tam || (c[k] != '\0' && c[k] != '/')) continue;
@@ -330,11 +334,14 @@ static void pedido(msg_t *m)
         return;
     }
     if (m->tipo == MONT_ADICIONAR) {
-        /* a pasta tem de existir (aqui, na memória) e não pode estar em uso */
-        int alvo = resolver(m->texto, 0, 0);
-        if (alvo <= 0 || nos[alvo].tipo != ARQ_TIPO_PASTA || montagem_de(m->texto) >= 0) {
-            erro(quem, alvo <= 0 ? ERRO_NAO_ACHADO : ERRO_OCUPADO);
-            return;
+        /* a pasta não pode estar em uso; se ela é daqui (da memória), tem de
+         * existir. Dentro de outro disco montado, quem confere é o montar. */
+        for (u32 i = 0; i < MONT_MAX; i++)
+            if (montagens[i].usado && str_igual(montagens[i].pasta, m->texto)) { erro(quem, ERRO_OCUPADO); return; }
+        if (montagem_de(m->texto) < 0) {
+            int alvo = resolver(m->texto, 0, 0);
+            if (alvo < 0 && str_igual(m->texto, "/")) alvo = 0;
+            if (alvo < 0 || nos[alvo].tipo != ARQ_TIPO_PASTA) { erro(quem, ERRO_NAO_ACHADO); return; }
         }
         for (u32 i = 0; i < MONT_MAX; i++)
             if (montagens[i].usado && montagens[i].dev == m->arg[1] &&
@@ -353,6 +360,7 @@ static void pedido(msg_t *m)
         return;
     }
     if (m->tipo == MONT_REMOVER) {
+        if (str_igual(m->texto, "/")) { erro(quem, ERRO_OCUPADO); return; }   /* a raiz fica */
         for (u32 i = 0; i < MONT_MAX; i++) {
             if (!montagens[i].usado || !str_igual(montagens[i].pasta, m->texto)) continue;
             montagens[i].usado = 0;

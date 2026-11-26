@@ -35,6 +35,7 @@ static inline long sys_initrd(msg_t *m)                 { return syscall2(SYS_IN
 static inline long sys_ambiente(msg_t *m)               { return syscall2(SYS_AMBIENTE, (u64)m, 0); }
 static inline long sys_pasta(const char *caminho)       { return syscall2(SYS_PASTA, (u64)caminho, 0); }
 static inline long sys_nucleo(msg_t *m)                 { return syscall2(SYS_NUCLEO, (u64)m, 0); }
+static inline long sys_linha_boot(msg_t *m)             { return syscall2(SYS_LINHA_BOOT, (u64)m, 0); }
 
 /* Sinais. pid > 0: um processo; pid < 0: o grupo -pid; 0: o meu grupo. */
 void __sinal_volta(void);                                /* sys.s: o restaurador */
@@ -105,6 +106,7 @@ static inline long sys_copiar_de(u32 pid, void *meu, u64 dele, u64 bytes)
 /* ----------------- Portas de E/S (só para drivers, IOPL 3) --------------- */
 
 void outb(u16 porta, u8 valor);       /* sys.s */
+void outw(u16 porta, u16 valor);
 u8   inb(u16 porta);
 
 /* Memória de dispositivo (sys.s). O cproc ainda não suporta "volatile":
@@ -730,6 +732,26 @@ static inline long desmontar_de(u32 servidor, const char *pasta)
     str_copia(m.texto, pasta, MSG_TEXTO_MAX);
     if (sys_chamar(PID_ARQUIVOS, &m) < 0) return ERRO_PID;
     return m.tipo == MSG_ERRO ? -(long)m.arg[0] : 0;
+}
+
+/* Antes de desligar: grava tudo nos discos e os desmonta (a raiz por
+ * último: o servidor dela grava e marca "desmontado direito"). */
+static inline void discos_sincronizar(void)
+{
+    char pasta[CAMINHO_MAX], raiz_pasta[CAMINHO_MAX];
+    u32 srv, dev, srv_raiz = 0;
+    for (u32 i = 0; montagem(i, pasta, &srv, &dev) == 0; ) {
+        if (str_igual(pasta, "/")) { srv_raiz = srv; i++; continue; }
+        if (desmontar_de(srv, pasta) < 0) i++;     /* em uso: fica, e vai o próximo */
+    }
+    if (srv_raiz) {
+        msg_t m;
+        msg_zera(&m);
+        m.tipo = SA_DESMONTAR;
+        str_copia(raiz_pasta, "/", sizeof raiz_pasta);
+        str_copia(m.texto, raiz_pasta, MSG_TEXTO_MAX);
+        sys_chamar(srv_raiz, &m);
+    }
 }
 
 /* ------------------------------ Ponto de entrada -------------------------

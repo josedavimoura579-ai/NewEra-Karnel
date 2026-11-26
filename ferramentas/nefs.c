@@ -797,6 +797,9 @@ static void cmd_compilar(int argc, char **argv)
     tar_arvore("usr/share/nefs/exemplos", "exemplos", NULL);
     tar_arvore("usr/share/nefs/livro", "nefs/livro", NULL);
     if (existe(GRUB_ELTORITO)) tar_arquivo("usr/lib/nefs/grub/eltorito.img", GRUB_ELTORITO, 0);
+    if (existe("ferramentas/grub/boot.img")) tar_arquivo("usr/lib/nefs/grub/boot.img", "ferramentas/grub/boot.img", 0);
+    if (existe("ferramentas/grub/disco.img")) tar_arquivo("usr/lib/nefs/grub/disco.img", "ferramentas/grub/disco.img", 0);
+    tar_arquivo("boot/kernel.bin", "build/kernel.bin", 0);     /* para o instalar-sistema */
     for (int i = 0; i < receitas.n; i++) {
         const char *ex = var(&portes[i].v, "EXEMPLOS", NULL);
         if (ex && portes[i].fonte) {

@@ -147,7 +147,14 @@ static cache_t *pegar(u32 b, int ler)
 {
     cache_t *livre = &V->cache[0];
     for (u32 i = 0; i < NCACHE; i++) {
-        if (V->cache[i].bloco == b) { V->cache[i].uso = ++relogio; return &V->cache[i]; }
+        if (V->cache[i].bloco == b) {
+            V->cache[i].uso = ++relogio;
+            if (!ler) {                    /* um bloco novo: o que estava no cache é velho */
+                mem_zera(V->cache[i].d, V->bs);
+                V->cache[i].sujo = 1;
+            }
+            return &V->cache[i];
+        }
         if (V->cache[i].uso < livre->uso) livre = &V->cache[i];
     }
     if (cache_descarregar(livre) < 0) return 0;
