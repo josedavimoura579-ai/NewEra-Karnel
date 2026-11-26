@@ -22,7 +22,7 @@ memória compartilhada e sockets.
 
 Cada etapa termina com algo testável no QEMU.
 
-- [ ] **Etapa 1 — sinais e `kill`**
+- [x] **Etapa 1 — sinais e `kill`** (núcleo 3.3; [livro, capítulo 8](livro/08-sinais.md))
   - sinais no núcleo: enviar, tratar (função do programa, com volta pelo
     núcleo), ignorar; o padrão encerra o processo
   - grupos de processos: **Ctrl+C** encerra o comando do primeiro plano
@@ -31,6 +31,14 @@ Cada etapa termina com algo testável no QEMU.
   - comando `kill`; o shell mostra quem foi interrompido
   - *Teste: Ctrl+C num programa em laço e num pipe travado; um tratador de
     SIGINT roda e o programa continua.*
+  - Feito: `SYS_SINAL`, `SYS_SINAL_TRATAR`, `SYS_SINAL_VOLTAR`,
+    `SYS_SINAL_MASCARA`, `SYS_GRUPO`; o quadro do sinal (registradores, FPU,
+    máscara, siginfo) vai na pilha do programa; o terminal manda o SIGINT ao
+    grupo do primeiro plano (`TERM_GRUPO`); `kill` e `sleep`; o `testelibc`
+    ganhou 22 testes de sinais (inclusive sinais no meio de contas com
+    vírgula). Quem espera a resposta de um servidor não é interrompido por
+    um tratador (o sinal espera a resposta, como o `SA_RESTART`); ainda não
+    há `SIGSTOP`/`SIGCONT` de verdade (controle de tarefas).
 - [ ] **Etapa 2 — discos, partições e montagens**
   - o driver ATA com os quatro discos dos dois canais; partições MBR
   - `particionar` (o fdisk do NovaEra), `montar` e `desmontar`

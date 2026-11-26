@@ -7,6 +7,7 @@
  */
 #include <errno.h>
 #include <limits.h>
+#include <signal.h>
 #include <spawn.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -286,8 +287,117 @@ static void testa_processos(char *eu)
             "4 processos com ponto flutuante ao mesmo tempo (FPU salva na troca)");
 }
 
+/* -------------------------------- Sinais ---------------------------------- */
+
+static int    recebidos, ultimo;
+static double no_tratador;
+int *nulo;                              /* global (não static): o compilador não sabe que é 0 */
+
+static void tratador(int s)
+{
+    recebidos++;
+    ultimo = s;
+    no_tratador = contas(1000);         /* mexe na FPU: o núcleo tem de devolvê-la */
+}
+
+static void tratador_segv(int s)
+{
+    (void)s;
+    _exit(42);                          /* voltar refaria a mesma leitura */
+}
+
+static int filho(char *eu, const char *modo)
+{
+    char *args[] = { eu, (char *)modo, NULL };
+    pid_t pid;
+    if (posix_spawnp(&pid, eu, NULL, NULL, args, NULL) != 0) return -1;
+    return pid;
+}
+
+static int espera(pid_t pid)
+{
+    int status = -1;
+    if (pid <= 0 || waitpid(pid, &status, 0) != pid) return -1;
+    return status;
+}
+
+static void testa_sinais(char *eu)
+{
+    double antes = contas(2000);
+    confere(signal(SIGUSR1, tratador) == SIG_DFL, "signal devolve o tratador antigo (SIG_DFL)");
+    confere(raise(SIGUSR1) == 0 && recebidos == 1 && ultimo == SIGUSR1, "raise chama o tratador");
+    confere(bits_iguais(antes, contas(2000)) && no_tratador > 0, "a FPU volta intacta depois do tratador");
+    confere(signal(SIGUSR1, tratador) == tratador, "signal devolve o tratador instalado");
+
+    sigset_t m;
+    sigemptyset(&m);
+    sigaddset(&m, SIGUSR1);
+    sigprocmask(SIG_BLOCK, &m, NULL);
+    raise(SIGUSR1);
+    confere(recebidos == 1, "sinal bloqueado fica pendente");
+    sigprocmask(SIG_UNBLOCK, &m, NULL);
+    confere(recebidos == 2, "desbloqueado, ele chega");
+
+    signal(SIGUSR2, SIG_IGN);
+    confere(raise(SIGUSR2) == 0, "sinal ignorado não encerra");
+    signal(SIGCHLD, SIG_DFL);
+
+    int fds[2];
+    signal(SIGPIPE, SIG_IGN);
+    pipe(fds);
+    close(fds[0]);
+    errno = 0;
+    confere(write(fds[1], "x", 1) == -1 && errno == EPIPE, "pipe sem leitor: EPIPE (com SIGPIPE ignorado)");
+    close(fds[1]);
+    signal(SIGPIPE, SIG_DFL);
+
+    int st = espera(filho(eu, "--pipe"));
+    confere(st != -1 && WIFSIGNALED(st) && WTERMSIG(st) == SIGPIPE, "pipe sem leitor: SIGPIPE encerra");
+    st = espera(filho(eu, "--falha"));
+    confere(st != -1 && WIFSIGNALED(st) && WTERMSIG(st) == SIGSEGV, "ler o endereço 0: SIGSEGV");
+    st = espera(filho(eu, "--trata-falha"));
+    confere(st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 42, "tratador de SIGSEGV roda");
+    st = espera(filho(eu, "--abort"));
+    confere(st != -1 && WIFSIGNALED(st) && WTERMSIG(st) == SIGABRT, "abort: SIGABRT");
+
+    pid_t p = filho(eu, "--laco");
+    confere(p > 0 && kill(p, 0) == 0, "kill(pid, 0): o filho existe");
+    confere(p > 0 && getpgid(p) == getpgrp(), "o filho herda o grupo");
+    confere(kill(p, SIGTERM) == 0, "kill SIGTERM");
+    st = espera(p);
+    confere(st != -1 && WIFSIGNALED(st) && WTERMSIG(st) == SIGTERM, "WIFSIGNALED e WTERMSIG");
+    confere(kill(p, SIGTERM) == -1 && errno == ESRCH, "kill num processo que acabou: ESRCH");
+
+    /* Sinais no meio de uma conta: o filho é interrompido em qualquer ponto
+     * e a conta tem de dar o mesmo resultado (a FPU é salva no sinal). */
+    p = filho(eu, "--fpu-sinal");
+    for (int i = 0; i < 5; i++) { usleep(30000); kill(p, SIGUSR1); }
+    st = espera(p);
+    confere(st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 0, "sinais no meio de contas com vírgula");
+    signal(SIGUSR1, SIG_DFL);
+}
+
 int main(int argc, char **argv)
 {
+    if (argc == 2 && !strcmp(argv[1], "--laco")) for (;;) ;
+    if (argc == 2 && !strcmp(argv[1], "--falha")) return *nulo;
+    if (argc == 2 && !strcmp(argv[1], "--trata-falha")) { signal(SIGSEGV, tratador_segv); return *nulo; }
+    if (argc == 2 && !strcmp(argv[1], "--abort")) abort();
+    if (argc == 2 && !strcmp(argv[1], "--fpu-sinal")) {
+        signal(SIGUSR1, tratador);
+        double e = contas(200000);
+        while (recebidos < 5) {                 /* getpid(): obriga a reler 'recebidos' */
+            if (getpid() <= 0 || !bits_iguais(contas(200000), e)) return 1;
+        }
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--pipe")) {
+        int fds[2];
+        pipe(fds);
+        close(fds[0]);
+        write(fds[1], "x", 1);
+        return 0;
+    }
     if (argc > 2 && !strcmp(argv[1], "--contas")) {
         /* filho do teste de FPU: a conta tem de dar o que o pai calculou */
         return bits_iguais(contas(3000000), strtod(argv[2], NULL)) ? 0 : 1;
@@ -301,6 +411,7 @@ int main(int argc, char **argv)
     testa_arquivos();
     testa_getopt();
     testa_processos(argv[0]);
+    testa_sinais(argv[0]);
     printf("%s: %d de %d testes passaram\n", falhas ? "FALHAS" : "OK", total - falhas, total);
     return falhas;
 }

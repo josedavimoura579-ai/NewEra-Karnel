@@ -93,7 +93,13 @@ ssize_t write(int fd, const void *buf, size_t n)
     nfd_t *f = __fd(fd);
     if (!f) return -1;
     long r = escreve_em(f->servidor, f->canal, buf, n, COR(COR_BRANCO));
-    if (r < 0) { errno = e_tubo(f) ? EPIPE : EIO; return -1; }
+    if (r == ERRO_INTERROMPIDO) { errno = EINTR; return -1; }
+    if (r < 0 && e_tubo(f)) {                   /* ninguém mais lê: SIGPIPE, como no Unix */
+        errno = EPIPE;
+        if (r == ERRO_TUBO) raise(SIGPIPE);
+        return -1;
+    }
+    if (r < 0) { errno = EIO; return -1; }
     return r;
 }
 
@@ -255,7 +261,6 @@ int isatty(int fd)
 
 pid_t getpid(void) { return (pid_t)sys_pid(); }
 
-int kill(pid_t pid, int sinal) { (void)pid; (void)sinal; errno = ENOSYS; return -1; }
 
 static char *ambiente_vazio[1];
 char **environ = ambiente_vazio;
@@ -281,7 +286,6 @@ ssize_t readlink(const char *caminho, char *buf, size_t tam)
     errno = EINVAL;
     return -1;
 }
-sighandler_t signal(int sinal, sighandler_t f) { (void)sinal; (void)f; return SIG_DFL; }
 
 int mkstemp(char *modelo)
 {
@@ -380,14 +384,15 @@ pid_t waitpid(pid_t pid, int *status, int opcoes)
     pid_t quem = pid;
     if (pid <= 0) {                             /* qualquer filho */
         r = sys_esperar(0);
-        if (r < 0) { errno = ECHILD; return -1; }
+        if (r < 0) { errno = r == ERRO_INTERROMPIDO ? EINTR : ECHILD; return -1; }
         quem = (pid_t)(r >> 16);
         r &= 0xFFFF;
     } else {
         r = sys_esperar((u32)pid);
-        if (r < 0) { errno = ECHILD; return -1; }
+        if (r < 0) { errno = r == ERRO_INTERROMPIDO ? EINTR : ECHILD; return -1; }
     }
-    if (status) *status = (int)((r & 0xFF) << 8);
+    /* encerrado por um sinal: o sinal nos bits 0-6; senão, o código nos 8-15 */
+    if (status) *status = SAIDA_FOI_SINAL(r) ? (int)(r & 0x7F) : (int)((r & 0xFF) << 8);
     return quem;
 }
 

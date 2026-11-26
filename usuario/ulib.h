@@ -36,6 +36,35 @@ static inline long sys_ambiente(msg_t *m)               { return syscall2(SYS_AM
 static inline long sys_pasta(const char *caminho)       { return syscall2(SYS_PASTA, (u64)caminho, 0); }
 static inline long sys_nucleo(msg_t *m)                 { return syscall2(SYS_NUCLEO, (u64)m, 0); }
 
+/* Sinais. pid > 0: um processo; pid < 0: o grupo -pid; 0: o meu grupo. */
+void __sinal_volta(void);                                /* sys.s: o restaurador */
+static inline long sys_sinal(long pid, u32 sinal)       { return syscall2(SYS_SINAL, (u64)pid, sinal); }
+static inline long sys_sinal_tratar(u32 sinal, sinal_acao_t *a) { return syscall2(SYS_SINAL_TRATAR, sinal, (u64)a); }
+static inline long sys_sinal_mascara(u32 como, u32 m)   { return syscall2(SYS_SINAL_MASCARA, como, m); }
+static inline long sys_grupo(u32 pid, long grupo)       { return syscall2(SYS_GRUPO, pid, (u64)grupo); }
+
+/* O nome de cada sinal, sem o "SIG" ("INT", "KILL"...); 0 se não existe. */
+static inline const char *sinal_nome(u32 s)
+{
+    static const char *const nomes[SINAL_MAX] = {
+        0, "HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS", "FPE", "KILL", "USR1",
+        "SEGV", "USR2", "PIPE", "ALRM", "TERM", "STKFLT", "CHLD", "CONT", "STOP", "TSTP",
+        "TTIN", "TTOU", "URG", "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "IO", "PWR", "SYS"
+    };
+    return s < SINAL_MAX ? nomes[s] : 0;
+}
+
+/* Instala uma função como tratador do sinal (ou SINAL_PADRAO/SINAL_IGNORAR). */
+static inline long sinal_tratar(u32 sinal, void (*f)(int))
+{
+    sinal_acao_t a;
+    a.tratador    = (u64)f;
+    a.restaurador = (u64)__sinal_volta;
+    a.mascara     = 0;
+    a.mudar       = 1;
+    return sys_sinal_tratar(sinal, &a);
+}
+
 /* Aumenta o heap em 'bytes'; devolve o início da área nova (ou erro < 0). */
 static inline long sys_sbrk(u64 bytes)                  { return syscall2(SYS_SBRK, bytes, 0); }
 
@@ -241,7 +270,10 @@ static inline long escreve_em(u32 servidor, u32 canal, const char *dados, u64 n,
         u32 i = 0;
         while (total < n && i < MSG_TEXTO_MAX - 1) m.texto[i++] = dados[total++];
         m.arg[2] = i;
-        if (sys_chamar(servidor, &m) < 0 || m.tipo == MSG_ERRO) return ERRO_INVALIDO;
+        long r = sys_chamar(servidor, &m);
+        if (r == ERRO_INTERROMPIDO) return r;
+        if (r < 0) return ERRO_INVALIDO;
+        if (m.tipo == MSG_ERRO) return m.arg[0] == (u32)(-ERRO_TUBO) ? ERRO_TUBO : ERRO_INVALIDO;
     }
     return (long)total;
 }
@@ -274,7 +306,8 @@ static inline long ler_de(u32 servidor, u32 canal, char *buf, u32 max)
     m.arg[0] = canal;
     m.arg[1] = max;
     m.arg[2] = (u32)(u64)buf;          /* os endereços do usuário cabem em 32 bits */
-    if (sys_chamar(servidor, &m) < 0) return ERRO_PID;
+    long r = sys_chamar(servidor, &m);
+    if (r < 0) return r == ERRO_INTERROMPIDO ? r : ERRO_PID;
     if (m.tipo == MSG_ERRO) return -(long)m.arg[0];
     return m.arg[0];
 }
@@ -452,8 +485,10 @@ static inline void tubo_fechar(u32 canal, u32 ponta) { tubo_pedido(TUBO_FECHAR, 
  * Lê o ELF do servidor de arquivos e pede ao núcleo um processo novo com
  * ele. entrada/saida = 0: o filho herda as minhas. Devolve o PID.        */
 
-static inline long executar(const char *caminho, char **argv,
-                            u32 entrada, u32 entrada_canal, u32 saida, u32 saida_canal)
+/* Como executar(), escolhendo o grupo do filho (0 = o meu; GRUPO_NOVO =
+ * um grupo novo, com o número do filho; ou um grupo que já existe). */
+static inline long executar_grupo(const char *caminho, char **argv, u32 entrada, u32 entrada_canal,
+                                  u32 saida, u32 saida_canal, u32 grupo)
 {
     u32 tam;
     u8 *imagem = arq_carregar(caminho, &tam);
@@ -466,9 +501,17 @@ static inline long executar(const char *caminho, char **argv,
     c.entrada_canal = entrada_canal;
     c.saida         = saida;
     c.saida_canal   = saida_canal;
+    c.grupo         = grupo;
+    c.reservado     = 0;
     long pid = sys_criar(&c);
     ufree(imagem);                       /* o núcleo já copiou o programa */
     return pid;
+}
+
+static inline long executar(const char *caminho, char **argv,
+                            u32 entrada, u32 entrada_canal, u32 saida, u32 saida_canal)
+{
+    return executar_grupo(caminho, argv, entrada, entrada_canal, saida, saida_canal, 0);
 }
 
 /* ------------------------------ Ponto de entrada -------------------------

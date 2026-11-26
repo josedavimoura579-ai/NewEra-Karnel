@@ -22,6 +22,16 @@ syscall2:
     popq %rbx
     ret
 
+# void __sinal_volta(void)
+# O "restaurador": o tratador de sinal volta (ret) para cá, e o núcleo
+# devolve os registradores de antes do sinal (SYS_SINAL_VOLTAR = 22).
+# Não retorna.
+.globl __sinal_volta
+__sinal_volta:
+    movl $22, %eax
+    int $0x80
+    hlt                              # nunca chega aqui (e daria GPF no anel 3)
+
 # void mem_escreve16(u64 endereco, u16 valor)
 # u16  mem_le16(u64 endereco)
 # Acesso a memória de dispositivo (como a VGA em 0xB8000). Em C isso exigiria

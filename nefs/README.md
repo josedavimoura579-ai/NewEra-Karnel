@@ -82,6 +82,7 @@ A pasta [`livro/`](livro/) tem o Livro 1, em português:
 5. [A identidade do seu sistema](livro/05-a-identidade-do-seu-sistema.md)
 6. [O NovaEra se compila sozinho](livro/06-o-novaera-se-compila.md)
 7. [O disco e a ISO](livro/07-o-disco-e-a-iso.md)
+8. [Sinais: o Ctrl+C e o `kill`](livro/08-sinais.md)
 
 ## Construindo a ISO do NEFS
 

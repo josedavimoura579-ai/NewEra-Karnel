@@ -142,7 +142,7 @@ Estado atual: **NovaEra Microkernel v3.2** (alfa).
 | **Disco** (PIDs 7 e 8) | `disco`: driver ATA no anel 3 (portas de E/S, sem interrupção). `fat`: o sistema de arquivos **FAT32** em `/disco`, com nomes longos; o mesmo protocolo dos outros arquivos. `formatar` prepara o disco |
 | **Pipes** (PID 6) | Servidor no anel 3: tubos de 4 KiB; escrever num tubo cheio e ler de um vazio só adiam a resposta. O mesmo protocolo (`MSG_LER`/`MSG_ESCREVER`) vale para terminal, pipes e arquivos |
 | **Escalonador** | Preemptivo, *round-robin*, com o timer PIT a **100 Hz** (IRQ 0) |
-| **Chamadas de sistema** | `int 0x80` (única porta da IDT com DPL 3): `ENVIAR`, `RECEBER`, `CHAMAR`, `RESPONDER`, `CEDER`, `IRQ_ASSINAR`, `TEMPO`, `TAREFA_INFO`, `MEMORIA`, `SAIR`, `CRIAR`, `ESPERAR`, `SBRK`, `PID`, `INITRD`, `COPIAR_PARA`, `COPIAR_DE` (um servidor copia dados direto da/para a memória de quem o chamou e espera a resposta), `AMBIENTE`, `PASTA`, `NUCLEO` (como o `uname`). Todo ponteiro recebido é conferido nas tabelas de página antes de o núcleo tocar nele |
+| **Chamadas de sistema** | `int 0x80` (única porta da IDT com DPL 3): `ENVIAR`, `RECEBER`, `CHAMAR`, `RESPONDER`, `CEDER`, `IRQ_ASSINAR`, `TEMPO`, `TAREFA_INFO`, `MEMORIA`, `SAIR`, `CRIAR`, `ESPERAR`, `SBRK`, `PID`, `INITRD`, `COPIAR_PARA`, `COPIAR_DE` (um servidor copia dados direto da/para a memória de quem o chamou e espera a resposta), `AMBIENTE`, `PASTA`, `NUCLEO` (como o `uname`), `SINAL`, `SINAL_TRATAR`, `SINAL_VOLTAR`, `SINAL_MASCARA` e `GRUPO` (sinais, como no Unix: o Ctrl+C, o `kill`, tratadores que rodam no anel 3 e voltam pelo núcleo; uma exceção da CPU vira SIGSEGV/SIGFPE/SIGILL). Todo ponteiro recebido é conferido nas tabelas de página antes de o núcleo tocar nele |
 | **IPC** | Síncrono, por mensagens de 80 bytes copiadas pelo núcleo entre espaços de endereçamento (estilo L4/MINIX). `RESPONDER` nunca bloqueia, para que um servidor não fique refém de um cliente |
 | **Interrupções** | IRQ 0 é do núcleo. As outras viram **mensagens `MSG_IRQ`** para o driver que as assinou; o PIC só libera uma IRQ quando alguém a assina |
 | **Drivers** | No anel 3 com IOPL 3 (podem usar `in`/`out`). **Vídeo**: o único processo com `0xB8000` mapeado. Converte UTF-8 para CP437 (os acentos do português aparecem). **Teclado**: PS/2 *set 1*, layout US, Shift, Ctrl e Caps Lock; entrega as teclas ao terminal e faz o `reboot` pela porta `0x64` |
@@ -184,7 +184,7 @@ Experimente no shell:
 
 ### O que o NovaEra **ainda não** tem
 
-Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), sinais (`kill`), threads, mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, relógio (a data dos arquivos é 1980), usuários e permissões, rede e interface gráfica. Veja o [Roteiro](#roteiro).
+Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), threads, mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, relógio (a data dos arquivos é 1980), usuários e permissões, rede e interface gráfica. Veja o [Roteiro](#roteiro).
 
 ### Estrutura do repositório
 
@@ -452,6 +452,7 @@ degraus, e cada fase já entrega algo usável. Detalhes em
 [`nefs/ROTEIRO.md`](nefs/ROTEIRO.md).
 
 - [ ] **Fase 4 — base POSIX e o modo manual** (plano em 9 etapas: [`nefs/FASE4.md`](nefs/FASE4.md)): sinais e `kill`, threads, `mmap`, sockets locais, usuários e permissões (`sudo`), e o modo **manual estilo Arch** completo no livro
+  - [x] Etapa 1 — sinais e `kill`: **Ctrl+C** para o comando (o pipe inteiro), `kill`, tratadores (`signal`/`sigaction`), SIGSEGV/SIGFPE, SIGPIPE ([livro, capítulo 8](nefs/livro/08-sinais.md))
 - [ ] **Fase 5 — gráficos**: framebuffer em alta resolução, mouse, fontes e um servidor de janelas no anel 3
 - [ ] **Fase 6 — a área de trabalho do NovaEra e o modo pronto**: painel, menu, janelas, gerenciador de arquivos e terminal gráfico (no estilo do XFCE), pacotes e um **instalador estilo Debian/Ubuntu** com a opção "com área de trabalho"
 - [ ] **Fase 7 — rede e o XFCE4 de verdade**: TCP/IP, porte do GCC ou do clang, do X11, do GTK e do **XFCE4**

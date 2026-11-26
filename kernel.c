@@ -592,6 +592,15 @@ typedef struct {
     u32        entregar;       /* 1 = copiar a caixa para o usuário ao retomar */
     u32        irqs;           /* IRQs assinadas (bits) */
     u32        irqs_pendentes;
+
+    /* Sinais (bit s = sinal s) */
+    u32        grupo;          /* grupo de processos: o Ctrl+C vai para o grupo todo */
+    u32        sinais;         /* pendentes: chegaram e ainda não foram entregues */
+    u32        bloqueados;     /* a máscara: esperam até serem desbloqueados */
+    u64        tratador[SINAL_MAX];      /* SINAL_PADRAO, SINAL_IGNORAR ou a função */
+    u32        trat_mascara[SINAL_MAX];  /* bloqueados durante o tratador */
+    u64        restaurador;    /* para onde o tratador volta (__sinal_volta) */
+    u64        falha_endereco; /* o CR2 (ou o RIP) da última exceção: vai no siginfo */
 } tarefa_t;
 
 static tarefa_t tarefas[MAX_TAREFAS];
@@ -812,6 +821,11 @@ static long processo_carregar(u32 pid, const args_t *a)
     t->entregar       = 0;
     t->irqs           = 0;
     t->irqs_pendentes = 0;
+    t->sinais         = 0;           /* programa novo: todos os sinais no padrão */
+    t->bloqueados     = 0;
+    t->restaurador    = 0;
+    mem_zera(t->tratador, sizeof(t->tratador));
+    mem_zera(t->trat_mascara, sizeof(t->trat_mascara));
     return 0;
 }
 
@@ -824,6 +838,7 @@ static int processo_criar(u32 pid, const char *nome, const u8 *ini, const u8 *fi
     t->imagem     = ini;
     t->imagem_tam = (u64)(fim - ini);
     t->pai        = PID_KERNEL;
+    t->grupo      = (u32)(t - tarefas);     /* cada servidor é o seu próprio grupo */
     t->entrada = t->saida = PID_TERMINAL;   /* o terminal é a tela e o teclado */
     t->pasta[0] = '/';
 
@@ -1024,7 +1039,7 @@ static void processo_encerrar(u32 pid, long codigo, int falhou, u64 vetor)
     espaco_destruir(t->diretorio);
     t->diretorio = 0;
     t->estado = ESTADO_MORTO;
-    if (falhou) t->ultima_falha = (u32)vetor;
+    t->ultima_falha = falhou ? (u32)vetor : FALHA_NENHUMA;
 
     if (t->irqs) {                          /* ninguém mais atende essas IRQs */
         pic_mascara |= (u16)t->irqs;
@@ -1057,9 +1072,12 @@ static void processo_encerrar(u32 pid, long codigo, int falhou, u64 vetor)
     }
     if (t->flags & T_REINICIAR) return;     /* servidor desistiu: fica MORTO */
 
-    /* O pai está esperando? Entrega o código. Senão, vira zumbi. */
+    /* O pai está esperando? Entrega o código. Senão, vira zumbi. E, se o
+     * pai tem um tratador de SIGCHLD, ele fica sabendo. */
     t->codigo_saida = codigo;
     tarefa_t *pai = &tarefas[t->pai];
+    if (pid_vivo(t->pai) && pai->tratador[SINAL_CHLD] > SINAL_IGNORAR)
+        pai->sinais |= 1u << SINAL_CHLD;
     if (t->pai != PID_KERNEL && pai->estado == ESTADO_ESPERANDO && pai->alvo == pid) {
         acordar(pai, codigo);
         t->estado = ESTADO_LIVRE;
@@ -1109,7 +1127,8 @@ static long processo_executar(tarefa_t *eu, u64 pedido)
     t->imagem_tam    = c.tamanho;
     t->pai           = atual;
     t->reinicios     = 0;
-    t->ultima_falha  = 0;
+    t->ultima_falha  = FALHA_NENHUMA;
+    t->grupo         = c.grupo == GRUPO_NOVO ? pid : c.grupo ? c.grupo : eu->grupo;
     t->entrada       = c.entrada ? c.entrada       : eu->entrada;
     t->entrada_canal = c.entrada ? c.entrada_canal : eu->entrada_canal;
     t->saida         = c.saida   ? c.saida         : eu->saida;
@@ -1151,6 +1170,208 @@ static long copiar_cliente(tarefa_t *eu, u64 pid, u64 pedido, int para_ele)
         n    -= cabe;
     }
     return (long)c.bytes;
+}
+
+/* ===========================================================================
+ *  Sinais
+ *
+ *  Enviar um sinal só marca um bit (t->sinais). A entrega acontece quando
+ *  o processo vai voltar ao anel 3 (no fim de interrupt_dispatch): o núcleo
+ *  guarda o quadro, a FPU e a máscara na pilha do programa, empilha o
+ *  endereço do restaurador e faz o iretq cair no tratador, com RDI = sinal.
+ *  Quando o tratador volta, o restaurador chama SYS_SINAL_VOLTAR e o
+ *  núcleo põe tudo de volta, como se nada tivesse acontecido.
+ *
+ *  A ação padrão (encerrar) é feita logo no envio, mesmo que o alvo esteja
+ *  bloqueado num IPC: é assim que o Ctrl+C solta um pipe travado. Com
+ *  tratador, o alvo que dorme em SYS_ESPERAR ou na fila de um ENVIAR acorda
+ *  com ERRO_INTERROMPIDO (o EINTR). Quem espera a RESPOSTA de um servidor
+ *  não é interrompido (o servidor responderia depois, para a pergunta
+ *  errada): o sinal espera a resposta chegar, como o SA_RESTART do Unix.
+ * =========================================================================== */
+
+/* O que a entrega empilha no programa (o "sigframe"). A FPU vem primeiro:
+ * o FXSAVE quer 16 bytes de alinhamento. */
+typedef struct {
+    u8       fpu[512];
+    quadro_t quadro;           /* os registradores no momento do sinal */
+    u64      mascara;          /* a máscara de antes do tratador */
+    u8       info[128];        /* o siginfo_t: sinal, código, endereço */
+} sinal_quadro_t;
+
+#define BIT(s) (1u << (s))
+
+/* Sinais cuja ação padrão é não fazer nada. */
+static int sinal_padrao_ignora(u32 s)
+{
+    return s == SINAL_CHLD || s == SINAL_CONT || s == SINAL_URG || s == SINAL_WINCH ||
+           s == SINAL_STOP || s == SINAL_TSTP || s == SINAL_TTIN || s == SINAL_TTOU;
+}
+
+/* A exceção da CPU que vira cada sinal. */
+static u32 sinal_da_excecao(u64 vetor)
+{
+    switch (vetor) {
+    case 0: case 16: case 19: return SINAL_FPE;    /* divisão, x87, SIMD */
+    case 6:                   return SINAL_ILL;    /* opcode inválido */
+    case 1: case 3:           return SINAL_TRAP;   /* debug, breakpoint */
+    case 17:                  return SINAL_BUS;    /* alinhamento */
+    }
+    return SINAL_SEGV;                             /* GPF, falha de página... */
+}
+
+/* O alvo dorme numa espera que pode ser interrompida? */
+static void sinal_interromper(tarefa_t *t)
+{
+    if (t->estado == ESTADO_ESPERANDO || t->estado == ESTADO_ENVIANDO) {
+        t->chamando = 0;
+        acordar(t, ERRO_INTERROMPIDO);
+    }
+}
+
+/* Envia o sinal s ao processo pid. */
+static long sinal_enviar(u32 pid, u32 s)
+{
+    if (!pid_vivo(pid)) return ERRO_PID;
+    tarefa_t *t = &tarefas[pid];
+    if (t->flags & T_REINICIAR) return ERRO_SEM_PERMISSAO;   /* os servidores do boot, não */
+    if (s == 0) return 0;                                    /* kill(pid, 0): "existe?" */
+
+    u64 h = s == SINAL_KILL ? SINAL_PADRAO : t->tratador[s];
+    if (h == SINAL_IGNORAR || (h == SINAL_PADRAO && sinal_padrao_ignora(s))) return 0;
+    if (h == SINAL_PADRAO && (s == SINAL_KILL || !(t->bloqueados & BIT(s)))) {
+        processo_encerrar(pid, SAIDA_SINAL(s), 0, 0);        /* a ação padrão: fim */
+        return 0;
+    }
+    t->sinais |= BIT(s);
+    if (!(t->bloqueados & BIT(s))) sinal_interromper(t);
+    return 0;
+}
+
+/* SYS_SINAL: pid > 0 é um processo; pid < 0, o grupo -pid; 0, o meu grupo. */
+static long sinal_kill(long pid, u64 s)
+{
+    if (s >= SINAL_MAX) return ERRO_INVALIDO;
+    if (pid > 0) return pid < MAX_TAREFAS ? sinal_enviar((u32)pid, (u32)s) : ERRO_PID;
+
+    u32 g = pid == 0 ? tarefas[atual].grupo : (u32)(-pid);
+    int achou = 0;
+    for (u32 i = 1; i < MAX_TAREFAS; i++) {
+        if (!pid_vivo(i) || tarefas[i].grupo != g || (tarefas[i].flags & T_REINICIAR)) continue;
+        achou = 1;
+        sinal_enviar(i, (u32)s);
+    }
+    return achou ? 0 : ERRO_PID;
+}
+
+/* Monta o quadro do sinal na pilha do programa e desvia para o tratador.
+ * Roda no fim de interrupt_dispatch, com o CR3 e a FPU do próprio t.
+ * Devolve 0 se o processo teve de ser encerrado. */
+static int sinal_preparar(tarefa_t *t)
+{
+    quadro_t *q = t->quadro;
+    if (atual == 0 || (q->cs & 3) != 3) return 1;
+
+    for (;;) {
+        u32 prontos = t->sinais & ~t->bloqueados;
+        if (!prontos) return 1;
+        u32 s = 1;
+        while (!(prontos & BIT(s))) s++;
+        t->sinais &= ~BIT(s);
+
+        u64 h = t->tratador[s];
+        if (h == SINAL_IGNORAR || (h == SINAL_PADRAO && sinal_padrao_ignora(s))) continue;
+        if (h == SINAL_PADRAO) {                 /* estava bloqueado e foi liberado */
+            processo_encerrar(atual, SAIDA_SINAL(s), 0, 0);
+            return 0;
+        }
+
+        /* Abaixo da "zona vermelha" (128 bytes que a ABI deixa a função
+         * usar sem mexer no RSP), alinhado em 16, e o endereço de volta. */
+        u64 base = ((q->rsp - 128) - sizeof(sinal_quadro_t)) & ~15ull;
+        u64 sp   = base - 8;
+        if (q->rsp < USUARIO_BASE + 4096 || !usuario_valido(t, sp, sizeof(sinal_quadro_t) + 8)) {
+            processo_encerrar(atual, SAIDA_SINAL(SINAL_SEGV), 0, 0);   /* pilha estragada */
+            return 0;
+        }
+        sinal_quadro_t *f = (sinal_quadro_t *)base;
+        cpu_fpu_salvar((u64)t->fpu);             /* os registradores são os dele */
+        mem_copia(f->fpu, t->fpu, 512);
+        mem_copia(&f->quadro, q, sizeof(quadro_t));
+        f->mascara = t->bloqueados;
+        mem_zera(f->info, sizeof(f->info));
+        *(u32 *)(f->info + 0) = s;               /* si_signo */
+        if (s == SINAL_SEGV || s == SINAL_FPE || s == SINAL_ILL || s == SINAL_BUS || s == SINAL_TRAP)
+            *(u64 *)(f->info + 16) = t->falha_endereco;   /* si_addr */
+        *(u64 *)sp = t->restaurador;
+
+        cpu_fpu_restaurar((u64)fpu_inicial);     /* o tratador começa com a FPU limpa */
+        t->bloqueados |= (BIT(s) | t->trat_mascara[s]) & ~BIT(SINAL_KILL);
+        q->rip    = h;
+        q->rsp    = sp;
+        q->rdi    = s;
+        q->rsi    = base + 512 + sizeof(quadro_t) + 8;   /* &f->info */
+        q->rdx    = 0;
+        q->rax    = 0;
+        q->rflags &= ~0x500ull;                  /* DF e TF desligados, como a ABI quer */
+        return 1;
+    }
+}
+
+/* SYS_SINAL_VOLTAR: o tratador terminou; o quadro está onde o RSP aponta. */
+static long sinal_voltar(tarefa_t *t, quadro_t *q)
+{
+    u64 base = q->rsp;
+    if (!usuario_valido(t, base, sizeof(sinal_quadro_t))) {
+        processo_encerrar(atual, SAIDA_SINAL(SINAL_SEGV), 0, 0);
+        return 0;
+    }
+    sinal_quadro_t *f = (sinal_quadro_t *)base;
+    quadro_t salvo;
+    mem_copia(&salvo, &f->quadro, sizeof(salvo));
+    /* Nada de voltar para o núcleo nem para um endereço não canônico: o
+     * iretq falharia no anel 0. */
+    if (salvo.rip >= USUARIO_FIM || salvo.rsp > USUARIO_FIM) {
+        processo_encerrar(atual, SAIDA_SINAL(SINAL_SEGV), 0, 0);
+        return 0;
+    }
+    u64 cs = q->cs, ss = q->ss, vetor = q->vetor;
+    mem_copia(q, &salvo, sizeof(salvo));
+    q->cs = cs; q->ss = ss; q->vetor = vetor;
+    q->rflags = (salvo.rflags & 0xCD5ull) | 0x202 | ((t->flags & T_DRIVER) ? 0x3000u : 0);
+
+    mem_copia(t->fpu, f->fpu, 512);
+    u32 m = *(u32 *)(fpu_inicial + 28);          /* MXCSR_MASK: bits que a CPU aceita */
+    *(u32 *)(t->fpu + 24) &= m ? m : 0xFFBF;     /* senão o FXRSTOR daria GPF no núcleo */
+    t->fpu_limpa  = 1;                           /* restaurada no fim do despacho */
+    t->bloqueados = (u32)f->mascara & ~BIT(SINAL_KILL);
+    return (long)salvo.rax;                      /* o RAX de antes do sinal */
+}
+
+/* SYS_SINAL_TRATAR */
+static long sinal_tratar(tarefa_t *eu, u64 s, u64 pedido)
+{
+    if (s == 0 || s >= SINAL_MAX || !usuario_valido(eu, pedido, sizeof(sinal_acao_t)))
+        return ERRO_INVALIDO;
+    sinal_acao_t *a = (sinal_acao_t *)pedido;
+    sinal_acao_t novo = *a;
+    if (novo.mudar) {
+        if (s == SINAL_KILL || s == SINAL_STOP) return ERRO_INVALIDO;
+        if (novo.tratador > SINAL_IGNORAR &&
+            (novo.tratador < USUARIO_BASE || novo.tratador >= USUARIO_FIM ||
+             novo.restaurador < USUARIO_BASE || novo.restaurador >= USUARIO_FIM))
+            return ERRO_INVALIDO;
+    }
+    a->tratador    = eu->tratador[s];
+    a->restaurador = eu->restaurador;
+    a->mascara     = eu->trat_mascara[s];
+    if (novo.mudar) {
+        eu->tratador[s]     = novo.tratador;
+        eu->trat_mascara[s] = novo.mascara;
+        if (novo.tratador > SINAL_IGNORAR) eu->restaurador = novo.restaurador;
+        if (novo.tratador == SINAL_IGNORAR) eu->sinais &= ~BIT(s);
+    }
+    return 0;
 }
 
 /* ===========================================================================
@@ -1218,8 +1439,8 @@ static long syscall_executar(quadro_t *q)
     case SYS_MEMORIA:
         return (long)(((quadros_livres * 4) << 32) | (quadros_total * 4));
 
-    case SYS_SAIR:
-        processo_encerrar(atual, (long)a, 0, 0);
+    case SYS_SAIR:                                   /* o código vai de 0 a 255 */
+        processo_encerrar(atual, (long)(a & 0xFF), 0, 0);
         return 0;
 
     case SYS_CRIAR:
@@ -1304,6 +1525,34 @@ static long syscall_executar(quadro_t *q)
         return 0;
     }
 
+    case SYS_SINAL:
+        return sinal_kill((long)a, b);
+
+    case SYS_SINAL_TRATAR:
+        return sinal_tratar(eu, a, b);
+
+    case SYS_SINAL_VOLTAR:
+        return sinal_voltar(eu, q);
+
+    case SYS_SINAL_MASCARA: {
+        u32 antiga = eu->bloqueados, m = (u32)b & ~BIT(SINAL_KILL) & ~BIT(SINAL_STOP);
+        if      (a == SINAL_BLOQUEAR)    eu->bloqueados |= m;
+        else if (a == SINAL_DESBLOQUEAR) eu->bloqueados &= ~m;
+        else if (a == SINAL_DEFINIR)     eu->bloqueados = m;
+        else return ERRO_INVALIDO;
+        return antiga;                     /* os liberados chegam na volta ao anel 3 */
+    }
+
+    case SYS_GRUPO: {                      /* o setpgid / getpgid */
+        u64 pid = a ? a : atual;
+        if (pid >= MAX_TAREFAS || !pid_vivo(pid)) return ERRO_PID;
+        if ((long)b == -1) return tarefas[pid].grupo;
+        if (pid != atual && tarefas[pid].pai != atual) return ERRO_SEM_PERMISSAO;
+        if (b >= 0x80000000ull) return ERRO_INVALIDO;
+        tarefas[pid].grupo = b ? (u32)b : (u32)pid;
+        return 0;
+    }
+
     case SYS_NUCLEO: {
         if (!usuario_valido(eu, a, sizeof(msg_t))) return ERRO_INVALIDO;
         msg_t *m = (msg_t *)a;
@@ -1366,8 +1615,16 @@ quadro_t *interrupt_dispatch(quadro_t *q)
             kernel_panico(q);                    /* o núcleo falhou: fim */
         if (q->vetor == 14 && pilha_crescer(&tarefas[atual], cpu_ler_cr2())) {
             /* só faltava pilha: a página nova já está lá, tenta de novo */
-        } else {                                 /* o usuário falhou: isola */
-            processo_encerrar(atual, SAIDA_FALHA_BASE + (long)q->vetor, 1, q->vetor);
+        } else {                                 /* o usuário falhou: vira um sinal */
+            tarefa_t *t = &tarefas[atual];
+            u32 sinal = sinal_da_excecao(q->vetor);
+            t->falha_endereco = q->vetor == 14 ? cpu_ler_cr2() : q->rip;
+            if (t->tratador[sinal] > SINAL_IGNORAR && !(t->bloqueados & BIT(sinal))) {
+                t->sinais |= BIT(sinal);         /* o tratador decide (no fim do despacho) */
+                t->ultima_falha = (u32)q->vetor;
+            } else {                             /* sem tratador: o processo acaba, o sistema não */
+                processo_encerrar(atual, SAIDA_SINAL(sinal), 1, q->vetor);
+            }
         }
     } else if (q->vetor < 48) {
         u32 irq = q->vetor - 32;
@@ -1393,33 +1650,38 @@ quadro_t *interrupt_dispatch(quadro_t *q)
             trocar = 1;
     }
 
-    if (trocar || tarefas[atual].estado != ESTADO_PRONTO)
-        escalonar();
+    for (;;) {
+        if (trocar || tarefas[atual].estado != ESTADO_PRONTO)
+            escalonar();
 
-    tarefa_t *t = &tarefas[atual];
-    if ((u64)t->diretorio != cr3_atual) {
-        cr3_atual = (u64)t->diretorio;
-        cpu_carregar_cr3(cr3_atual);
-    }
-    if (t->pilha_nucleo)
-        tss_definir_rsp0((u64)t->pilha_nucleo + PILHA_NUCLEO_TAM);
+        tarefa_t *t = &tarefas[atual];
+        if ((u64)t->diretorio != cr3_atual) {
+            cr3_atual = (u64)t->diretorio;
+            cpu_carregar_cr3(cr3_atual);
+        }
+        if (t->pilha_nucleo)
+            tss_definir_rsp0((u64)t->pilha_nucleo + PILHA_NUCLEO_TAM);
 
-    /* Ponto flutuante: o núcleo não usa a FPU nem o SSE, então os
-     * registradores continuam sendo do processo que rodou por último.
-     * Só na troca é preciso guardar os dele e trazer os do próximo. */
-    tarefa_t *ant = &tarefas[anterior];
-    if (atual != anterior && ant->fpu && !ant->fpu_limpa)
-        cpu_fpu_salvar((u64)ant->fpu);
-    if (t->fpu && (atual != anterior || t->fpu_limpa)) {
-        cpu_fpu_restaurar((u64)t->fpu);
-        t->fpu_limpa = 0;
-    }
+        /* Ponto flutuante: o núcleo não usa a FPU nem o SSE, então os
+         * registradores continuam sendo do processo que rodou por último.
+         * Só na troca é preciso guardar os dele e trazer os do próximo. */
+        tarefa_t *ant = &tarefas[anterior];
+        if (atual != anterior && ant->fpu && !ant->fpu_limpa)
+            cpu_fpu_salvar((u64)ant->fpu);
+        if (t->fpu && (atual != anterior || t->fpu_limpa)) {
+            cpu_fpu_restaurar((u64)t->fpu);
+            t->fpu_limpa = 0;
+        }
 
-    if (t->entregar) {                           /* última etapa do IPC */
-        mem_copia((void *)t->msg_usuario, &t->caixa, sizeof(msg_t));
-        t->entregar = 0;
+        if (t->entregar) {                       /* última etapa do IPC */
+            mem_copia((void *)t->msg_usuario, &t->caixa, sizeof(msg_t));
+            t->entregar = 0;
+        }
+        if (sinal_preparar(t))                   /* um sinal pendente? desvia para o tratador */
+            return t->quadro;
+        anterior = atual;        /* foi encerrado por ele: a FPU é a dele, escolhe outro */
+        trocar   = 1;
     }
-    return t->quadro;
 }
 
 /* ------------------------------- Mensagem ------------------------------- */

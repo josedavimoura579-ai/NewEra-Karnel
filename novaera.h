@@ -22,7 +22,7 @@ typedef unsigned long long u64;
 
 /* A versão do NÚCLEO. A do sistema (a "distribuição") fica em sistema.conf,
  * como o /etc/os-release do Linux: o núcleo não sabe qual é a distro. */
-#define NOVAERA_VERSAO     "3.2"
+#define NOVAERA_VERSAO     "3.3"
 #define NOVAERA_ARQUITETURA "x86_64"
 
 /* ---------------------- Chamadas de sistema (int 0x80) -------------------
@@ -47,7 +47,12 @@ typedef unsigned long long u64;
 #define SYS_COPIAR_DE   16   /* (pid, copia_t*)  copia da memória de quem me CHAMOU para a minha */
 #define SYS_AMBIENTE    17   /* (msg*)           entrada, saída padrão e pasta atual */
 #define SYS_PASTA       18   /* (caminho)        muda a pasta atual          */
-#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.2 x86_64" (como o uname) */
+#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.3 x86_64" (como o uname) */
+#define SYS_SINAL       20   /* (pid, sinal)     envia um sinal; pid < 0: ao grupo -pid; 0: ao meu grupo */
+#define SYS_SINAL_TRATAR 21  /* (sinal, sinal_acao_t*) troca o tratador; devolve o antigo na mesma struct */
+#define SYS_SINAL_VOLTAR 22  /* ()               fim do tratador: volta ao ponto interrompido */
+#define SYS_SINAL_MASCARA 23 /* (como, mascara)  bloqueia/desbloqueia sinais; devolve a máscara antiga */
+#define SYS_GRUPO       24   /* (pid, grupo)     grupo de processos; grupo = -1: só consulta */
 
 #define ERRO_INVALIDO   (-1) /* argumento ou ponteiro inválido */
 #define ERRO_SEM_PERMISSAO (-2)
@@ -59,6 +64,8 @@ typedef unsigned long long u64;
 #define ERRO_EXISTE     (-8) /* o arquivo ou a pasta já existe */
 #define ERRO_DISCO      (-9) /* erro de leitura ou escrita no disco */
 #define ERRO_SEM_ESPACO (-10) /* o disco está cheio */
+#define ERRO_INTERROMPIDO (-11) /* a espera foi interrompida por um sinal (o EINTR) */
+#define ERRO_TUBO       (-12) /* escrever num pipe que ninguém mais lê (o EPIPE) */
 
 /* --------------------------- Processos fixos ----------------------------
  * O NovaEra ainda não tem um servidor de nomes: cada servidor tem um
@@ -146,6 +153,10 @@ typedef struct {
  * ele mesmo fecha as pontas depois que os filhos terminam. */
 #define CANAL_DONO         0x80000000u
 
+/* O terminal manda o Ctrl+C (SIGINT) ao grupo do "primeiro plano": o
+ * comando que o shell está rodando. 0 = nenhum (o shell espera a linha). */
+#define TERM_GRUPO         32    /* arg[0] = grupo do primeiro plano */
+
 #define MSG_OK             99
 #define MSG_ERRO           98    /* arg[0] = -ERRO_* (o código, positivo)   */
 
@@ -167,7 +178,65 @@ typedef struct {
     u64  argv;                   /* char *argv[], terminado em 0 */
     u32  entrada, entrada_canal; /* servidor e canal da entrada padrão */
     u32  saida, saida_canal;     /* servidor e canal da saída padrão  */
+    u32  grupo;                  /* 0 = o de quem cria; GRUPO_NOVO = um grupo só dele */
+    u32  reservado;
 } criar_t;
+#define GRUPO_NOVO 0xFFFFFFFFu
+
+/* ------------------------------- Sinais ---------------------------------
+ * Um sinal é um aviso assíncrono a um processo: "pare" (Ctrl+C), "morra",
+ * "seu filho terminou", "você leu memória que não é sua". Os números são
+ * os do Linux (o "kill -9" é o mesmo em toda parte).
+ *
+ * Cada sinal tem um destino: o padrão (quase todos encerram o processo;
+ * SIGCHLD, SIGCONT, SIGURG e SIGWINCH são ignorados), ignorar, ou uma
+ * função do programa (o tratador). O tratador roda no anel 3, na pilha do
+ * programa; quando ele volta, cai no "restaurador" (um int 0x80 com
+ * SYS_SINAL_VOLTAR) e o núcleo devolve tudo como estava.
+ *
+ * Quem é encerrado por um sinal sai com o código SAIDA_SINAL(s); um código
+ * normal (SYS_SAIR) vai de 0 a 255, como no Unix. */
+#define SINAL_HUP     1
+#define SINAL_INT     2      /* Ctrl+C */
+#define SINAL_QUIT    3
+#define SINAL_ILL     4      /* instrução inválida */
+#define SINAL_TRAP    5
+#define SINAL_ABRT    6      /* abort() */
+#define SINAL_BUS     7
+#define SINAL_FPE     8      /* divisão por zero */
+#define SINAL_KILL    9      /* não pode ser tratado nem ignorado */
+#define SINAL_USR1   10
+#define SINAL_SEGV   11      /* memória inválida (falha de página, GPF) */
+#define SINAL_USR2   12
+#define SINAL_PIPE   13      /* escreveu num pipe sem leitor */
+#define SINAL_ALRM   14
+#define SINAL_TERM   15      /* o padrão do "kill" */
+#define SINAL_CHLD   17      /* um filho terminou (ignorado por padrão) */
+#define SINAL_CONT   18
+#define SINAL_STOP   19      /* (ainda sem controle de tarefas: ignorados) */
+#define SINAL_TSTP   20
+#define SINAL_TTIN   21
+#define SINAL_TTOU   22
+#define SINAL_URG    23
+#define SINAL_WINCH  28
+#define SINAL_MAX    32      /* sinais de 1 a 31 */
+
+#define SINAL_PADRAO  0ull   /* tratador = 0: a ação padrão */
+#define SINAL_IGNORAR 1ull   /* tratador = 1: ignorar        */
+
+typedef struct {
+    u64  tratador;           /* SINAL_PADRAO, SINAL_IGNORAR ou o endereço da função */
+    u64  restaurador;        /* para onde o tratador volta (o __sinal_volta da ulib) */
+    u32  mascara;            /* sinais bloqueados enquanto o tratador roda */
+    u32  mudar;              /* 0 = só consulta; a resposta vem na mesma struct */
+} sinal_acao_t;
+
+#define SINAL_BLOQUEAR    0  /* SYS_SINAL_MASCARA: como o SIG_BLOCK   */
+#define SINAL_DESBLOQUEAR 1  /*                    SIG_UNBLOCK         */
+#define SINAL_DEFINIR     2  /*                    SIG_SETMASK         */
+
+#define SAIDA_SINAL(s)     (0x100 | (s))
+#define SAIDA_FOI_SINAL(c) (((c) & 0x100) != 0)
 
 /* Estados de processo. SYS_TAREFA_INFO devolve: arg[0] = estado,
  * arg[1] = reinícios, arg[2] = exceção da última falha, arg[3] = PID do pai. */
@@ -179,9 +248,11 @@ typedef struct {
 #define ESTADO_ESPERANDO  5      /* em SYS_ESPERAR, aguardando um filho    */
 #define ESTADO_ZUMBI      6      /* terminou; o pai ainda não leu o código */
 
-/* Código de saída de quem foi encerrado por uma exceção: 128 + vetor
- * (o mesmo costume do Unix). Ex.: falha de página (14) = 142. */
-#define SAIDA_FALHA_BASE  128
+/* Uma exceção da CPU num programa vira um sinal: falha de página e GPF
+ * viram SIGSEGV, divisão por zero vira SIGFPE, opcode inválido vira
+ * SIGILL. Sem tratador, o processo sai com SAIDA_SINAL(sinal), e
+ * SYS_TAREFA_INFO guarda o vetor em arg[2] (FALHA_NENHUMA se não houve). */
+#define FALHA_NENHUMA     0xFFFFFFFFu
 
 /* ------------------------- Mapa de memória virtual ----------------------
  * 0x00000000 - 0x3FFFFFFF  núcleo (1 GiB, mapeado igual à memória física,

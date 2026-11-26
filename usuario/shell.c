@@ -44,6 +44,7 @@ static void cmd_ajuda(void)
     escreve("  reboot   ", c); escreve("reinicia o computador\n", d);
     escreve("Programas em /bin (veja: ls /bin):\n", COR(COR_CIANO_CLARO));
     escreve("  ls cat echo mkdir rm cp cmp base64 novafetch ola codigo memoria falha filho\n", c);
+    escreve("  kill sleep  (sinais: Ctrl+C interrompe o comando; nefs livro 8)\n", c);
     escreve("  formatar  (prepara o disco, que aparece em /disco; nefs livro 7)\n", c);
     escreve("  cproc qbe nefs-cpp nefs-as nefs-ld nefs-ar  (o compilador; nefs livro 4)\n", c);
     escreve("  nefs compilar  (em /usr/src/novaera: o NovaEra se compila; nefs livro 6)\n", c);
@@ -205,16 +206,29 @@ static int interno(comando_t *c)
     return 1;
 }
 
-static void avisar_fim(const char *nome, long codigo)
+/* 'falha' = a exceção da CPU (SYS_TAREFA_INFO arg[2]), ou FALHA_NENHUMA. */
+static void avisar_fim(const char *nome, long codigo, u32 falha)
 {
-    if (codigo >= SAIDA_FALHA_BASE && codigo < SAIDA_FALHA_BASE + 32) {
-        u32 v = (u32)(codigo - SAIDA_FALHA_BASE);
-        escreve("[nucleo] ", COR(COR_VERMELHO_CLARO));
-        escreve(nome, COR(COR_BRANCO));
-        escreve(" foi encerrado: ", COR(COR_VERMELHO_CLARO));
-        escreve(v < sizeof(EXCECOES) / sizeof(EXCECOES[0]) ? EXCECOES[v] : "excecao",
-                COR(COR_BRANCO));
-        escreve(". O sistema continua de pe.\n", COR(COR_VERMELHO_CLARO));
+    if (SAIDA_FOI_SINAL(codigo)) {
+        u32 s = (u32)codigo & 0xFF;
+        const char *sn = sinal_nome(s);
+        if (s == SINAL_PIPE) return;                 /* "| head": normal, como no bash */
+        if (falha < sizeof(EXCECOES) / sizeof(EXCECOES[0])) {
+            escreve("[nucleo] ", COR(COR_VERMELHO_CLARO));
+            escreve(nome, COR(COR_BRANCO));
+            escreve(" foi encerrado: ", COR(COR_VERMELHO_CLARO));
+            escreve(EXCECOES[falha], COR(COR_BRANCO));
+            escreve(" (SIG", COR(COR_CINZA_CLARO));
+            escreve(sn ? sn : "?", COR(COR_CINZA_CLARO));
+            escreve("). O sistema continua de pe.\n", COR(COR_VERMELHO_CLARO));
+            return;
+        }
+        escreve("[", COR(COR_CINZA_CLARO));
+        escreve(nome, COR(COR_CINZA_CLARO));
+        escreve(s == SINAL_INT ? " interrompido (SIG" : " encerrado pelo sinal SIG", COR(COR_CINZA_CLARO));
+        if (sn) escreve(sn, COR(COR_BRANCO));
+        else escreve_num(s, COR(COR_BRANCO));
+        escreve(s == SINAL_INT ? ")]\n" : "]\n", COR(COR_CINZA_CLARO));
     } else if (codigo != 0) {
         escreve("[", COR(COR_CINZA_CLARO));
         escreve(nome, COR(COR_CINZA_CLARO));
@@ -222,6 +236,16 @@ static void avisar_fim(const char *nome, long codigo)
         escreve_num((u32)codigo, COR(COR_BRANCO));
         escreve("]\n", COR(COR_CINZA_CLARO));
     }
+}
+
+/* Diz ao terminal quem recebe o Ctrl+C. */
+static void primeiro_plano(u32 grupo)
+{
+    msg_t m;
+    msg_zera(&m);
+    m.tipo   = TERM_GRUPO;
+    m.arg[0] = grupo;
+    sys_chamar(PID_TERMINAL, &m);
 }
 
 static void erro_arquivo(const char *texto, const char *arquivo)
@@ -236,6 +260,7 @@ static void rodar(comando_t *cmds, u32 n)
 {
     long pids[MAX_COMANDOS], tubos[MAX_COMANDOS], abertos[2 * MAX_COMANDOS];
     u32 n_abertos = 0;
+    u32 grupo = 0;          /* a linha toda é um grupo: o do primeiro processo */
     for (u32 i = 0; i < n; i++) pids[i] = tubos[i] = -1;
 
     for (u32 i = 0; i < n; i++) {
@@ -273,7 +298,12 @@ static void rodar(comando_t *cmds, u32 n)
             str_copia(caminho + 5, nome, sizeof(caminho) - 5);
         }
 
-        pids[i] = executar(caminho, c->argv, ent, ent_c, sai, sai_c);
+        pids[i] = executar_grupo(caminho, c->argv, ent, ent_c, sai, sai_c,
+                                 grupo ? grupo : GRUPO_NOVO);
+        if (pids[i] >= 0 && !grupo) {
+            grupo = (u32)pids[i];
+            primeiro_plano(grupo);              /* o Ctrl+C agora vai para eles */
+        }
         if (pids[i] < 0) {
             escreve(pids[i] == ERRO_NAO_ACHADO ? "Comando desconhecido: "
                     : pids[i] == ERRO_FORMATO   ? "Nao e um programa ELF valido: "
@@ -295,12 +325,20 @@ static void rodar(comando_t *cmds, u32 n)
      * quando quem lê termina, fecha a leitura, e o pipe é liberado. Os
      * avisos só aparecem no fim, para não se misturar com a saída. */
     long codigos[MAX_COMANDOS];
+    u32 falhas[MAX_COMANDOS];
     for (u32 i = 0; i < n; i++) {
-        codigos[i] = pids[i] >= 0 ? sys_esperar((u32)pids[i]) : 0;
+        codigos[i] = 0;
+        falhas[i]  = FALHA_NENHUMA;
+        if (pids[i] >= 0) {
+            codigos[i] = sys_esperar((u32)pids[i]);
+            msg_t m;                                /* qual exceção, se foi uma */
+            if (sys_tarefa_info((u32)pids[i], &m) == 0) falhas[i] = m.arg[2];
+        }
         if (tubos[i] >= 0) tubo_fechar((u32)tubos[i], TUBO_ESCRITA);
         if (i > 0 && tubos[i - 1] >= 0) tubo_fechar((u32)tubos[i - 1], TUBO_LEITURA);
     }
-    for (u32 i = 0; i < n; i++) if (pids[i] >= 0) avisar_fim(cmds[i].argv[0], codigos[i]);
+    if (grupo) primeiro_plano(0);
+    for (u32 i = 0; i < n; i++) if (pids[i] >= 0) avisar_fim(cmds[i].argv[0], codigos[i], falhas[i]);
     for (u32 i = 0; i < n_abertos; i++) arq_fechar((u32)abertos[i]);
 }
 
@@ -326,6 +364,7 @@ int main(int argc, char **argv)
     u32 reinicios = eu.arg[1], falha = eu.arg[2];
 
     if (reinicios) {
+        primeiro_plano(0);          /* o anterior pode ter morrido com um comando rodando */
         escreve("\n[nucleo] O shell anterior foi encerrado: ", COR(COR_VERMELHO_CLARO));
         escreve(falha < sizeof(EXCECOES) / sizeof(EXCECOES[0]) ? EXCECOES[falha] : "excecao",
                 COR(COR_BRANCO));

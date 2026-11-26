@@ -1,5 +1,6 @@
 /* nlibc - errno, strerror, perror, assert */
 #include <errno.h>
+#include <signal.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,15 +21,39 @@ int __erro_c(long e)
     case ERRO_EXISTE:        return EEXIST;
     case ERRO_DISCO:         return EIO;
     case ERRO_SEM_ESPACO:    return ENOSPC;
+    case ERRO_INTERROMPIDO:  return EINTR;
+    case ERRO_TUBO:          return EPIPE;
     }
     return EIO;
 }
 
+const char *const sys_siglist[NSIG] = {
+    "Sinal 0", "Desligou (SIGHUP)", "Interrompido (SIGINT)", "Saiu (SIGQUIT)",
+    "Instrucao invalida (SIGILL)", "Armadilha (SIGTRAP)", "Abortado (SIGABRT)",
+    "Erro de barramento (SIGBUS)", "Erro aritmetico (SIGFPE)", "Morto (SIGKILL)",
+    "Sinal do usuario 1 (SIGUSR1)", "Falha de segmentacao (SIGSEGV)",
+    "Sinal do usuario 2 (SIGUSR2)", "Pipe sem leitor (SIGPIPE)", "Alarme (SIGALRM)",
+    "Terminado (SIGTERM)", "Falha da pilha (SIGSTKFLT)", "Filho terminou (SIGCHLD)",
+    "Continuar (SIGCONT)", "Parado (SIGSTOP)", "Parado pelo teclado (SIGTSTP)",
+    "Parado: le o terminal (SIGTTIN)", "Parado: escreve no terminal (SIGTTOU)",
+    "Dados urgentes (SIGURG)", "Limite de CPU (SIGXCPU)", "Limite de arquivo (SIGXFSZ)",
+    "Alarme virtual (SIGVTALRM)", "Alarme de perfil (SIGPROF)",
+    "Janela mudou (SIGWINCH)", "E/S possivel (SIGIO)", "Energia (SIGPWR)",
+    "Chamada invalida (SIGSYS)"
+};
+
 char *strsignal(int s)
 {
     static char buf[24];
-    snprintf(buf, sizeof buf, "sinal %d", s);
+    if (s > 0 && s < NSIG) return (char *)sys_siglist[s];
+    snprintf(buf, sizeof buf, "Sinal desconhecido %d", s);
     return buf;
+}
+
+void psignal(int s, const char *texto)
+{
+    if (texto && *texto) fprintf(stderr, "%s: %s\n", texto, strsignal(s));
+    else fprintf(stderr, "%s\n", strsignal(s));
 }
 
 char *strerror(int e)

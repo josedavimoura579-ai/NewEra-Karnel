@@ -22,7 +22,7 @@ nenhum Linux por baixo.
 
 O que quase todo programa de Unix espera do sistema:
 
-- sinais e `kill` (hoje um programa travado num pipe trava quem lê dele)
+- sinais e `kill` (feito: o Ctrl+C para o comando, mesmo um pipe travado)
 - threads e mutex
 - `mmap` e memória compartilhada
 - sockets locais (`AF_UNIX`), a base do X11, do Wayland e do D-Bus

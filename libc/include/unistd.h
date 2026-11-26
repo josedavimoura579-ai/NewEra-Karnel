@@ -17,6 +17,15 @@ int     chdir(const char *caminho);
 char   *getcwd(char *buf, size_t tam);
 int     isatty(int fd);
 pid_t   getpid(void);
+pid_t   getppid(void);
+_Noreturn void _exit(int codigo);
+int     setpgid(pid_t pid, pid_t grupo);
+pid_t   getpgid(pid_t pid);
+pid_t   getpgrp(void);
+pid_t   setsid(void);
+unsigned sleep(unsigned segundos);
+int     usleep(unsigned microssegundos);
+int     pause(void);
 ssize_t readlink(const char *caminho, char *buf, size_t tam);
 extern char **environ;               /* o NovaEra ainda não tem variáveis de ambiente */
 int     access(const char *caminho, int modo);
