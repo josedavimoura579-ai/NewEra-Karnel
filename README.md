@@ -1,5 +1,10 @@
 <div align="center">
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="arte/logo-horizontal-escuro.svg">
+  <img src="arte/logo-horizontal-claro.svg" alt="NovaEra" width="480">
+</picture>
+
 # NovaEra Microkernel
 
 ### A Nova Era Começou
@@ -193,7 +198,8 @@ NewEra-Karnel/
 ├── novaera.h         # A ABI: syscalls, mensagens, PIDs, mapa de memória
 ├── sistema.conf      # Nome, versão, lema e prompt do sistema
 ├── programas.lista   # Os servidores que o núcleo inicia no boot
-├── logo.txt          # O logo do sistema (o novafetch mostra)
+├── logo.txt          # O logo do sistema em texto (o novafetch mostra)
+├── arte/             # A logo (SVG): o sol nascendo, a "nova era"
 ├── boot.s            # Multiboot, GDT/TSS, stubs, int 0x80, troca de contexto
 ├── cpu.s             # Instruções especiais da CPU como funções
 ├── kernel.c          # O microkernel: memória, paginação, processos, ELF, IPC (C puro)

@@ -1,0 +1,23 @@
+<!-- A logo do NovaEra: um sol nascendo (a "nova era") sobre as linhas de um terminal. Cores: azul-noite #0B1E3F, laranja #FF6A00, amarelo #FFC94A, ciano #2EC4D6. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="ceu" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0B1E3F"/><stop offset="1" stop-color="#1B3A6B"/>
+    </linearGradient>
+    <linearGradient id="sol" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#FF6A00"/><stop offset="1" stop-color="#FFC94A"/>
+    </linearGradient>
+    <clipPath id="acima"><rect x="0" y="0" width="256" height="168"/></clipPath>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#ceu)"/>
+  <g clip-path="url(#acima)"><circle cx="128" cy="168" r="62" fill="url(#sol)"/></g>
+  <g stroke="#FFC94A" stroke-width="10" stroke-linecap="round">
+    <line x1="128" y1="60" x2="128" y2="84"/>
+    <line x1="60" y1="98" x2="76" y2="112"/>
+    <line x1="196" y1="98" x2="180" y2="112"/>
+  </g>
+  <rect x="40" y="166" width="176" height="10" rx="5" fill="#2EC4D6"/>
+  <rect x="72" y="190" width="112" height="8" rx="4" fill="#2EC4D6" opacity=".55"/>
+  <rect x="100" y="210" width="56" height="6" rx="3" fill="#2EC4D6" opacity=".3"/>
+  <path d="M206 40 l5 13 13 5 -13 5 -5 13 -5 -13 -13 -5 13 -5z" fill="#FFFFFF"/>
+</svg>
