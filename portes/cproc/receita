@@ -1,0 +1,14 @@
+# Receita do porte do cproc, o compilador de C do NEFS (lida por
+# portes/baixar.sh e pelo build.sh). Vem do git, num commit fixo: o
+# mesmo que a ISO do NEFS usa, testado com o QBE 1.3.
+NOME=cproc
+VERSAO=d1c53dd
+GIT=https://git.sr.ht/~mcf/cproc
+COMMIT=d1c53ddf56571573a7025324c8dd5c6d547a4d1f
+PASTA=cproc-d1c53dd
+# O driver (cproc) chama, em sequência: nefs-cpp, cproc-qbe, qbe, nefs-as
+# e nefs-ld (veja config.h).
+PROGRAMAS="cproc cproc-qbe"
+FONTES_cproc="driver.c util.c"
+FONTES_cproc_qbe="attr.c decl.c eval.c expr.c init.c main.c map.c pp.c scan.c
+        scope.c stmt.c targ.c token.c tree.c type.c utf.c util.c qbe.c"

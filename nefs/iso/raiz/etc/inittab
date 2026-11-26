@@ -1,0 +1,6 @@
+# NEFS - /etc/inittab (init do BusyBox)
+# Um terminal na tela (tty1) e outro na porta serial (ttyS0).
+tty1::respawn:-/bin/sh
+ttyS0::respawn:-/bin/sh
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/umount -a -r

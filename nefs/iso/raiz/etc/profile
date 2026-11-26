@@ -1,0 +1,8 @@
+# NEFS - /etc/profile (lido por todo terminal que abre)
+export PATH=/usr/bin:/usr/sbin:/bin:/sbin
+export HOME=/root
+export TERM="${TERM:-linux}"
+export EDITOR=vi
+export PS1='nefs:\w# '
+cd "$HOME"
+cat /etc/motd

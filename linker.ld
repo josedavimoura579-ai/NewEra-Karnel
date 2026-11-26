@@ -1,5 +1,7 @@
-/* NovaEra Kernel - linker.ld (reconstruído a partir da especificação do README)
- * Carrega o kernel em 1 MiB; .multiboot precisa ficar nos primeiros 8 KiB. */
+/* NovaEra Microkernel - linker.ld
+ * Carrega o kernel em 1 MiB; .multiboot precisa ficar nos primeiros 8 KiB.
+ * O kernel.bin é um binário puro: o arquivo é a memória a partir de 1 MiB,
+ * e o cabeçalho Multiboot diz onde ele termina (_carga_fim, _kernel_fim). */
 ENTRY(_start)
 
 SECTIONS
@@ -17,12 +19,22 @@ SECTIONS
 
     .data ALIGN(4K) : {
         *(.data .data.*)
+        /* O QBE (compilador do NEFS) acessa símbolos externos pela GOT, uma
+         * tabela de endereços. O ligador a preenche ou a dispensa; se ela
+         * existir, precisa ficar DENTRO do binário. */
+        *(.got .got.*)
     }
 
+    _carga_fim = .;
+
     .bss ALIGN(4K) : {
+        _bss_ini = .;
         *(COMMON)
         *(.bss .bss.*)
     }
+
+    /* Daqui para cima, a RAM é do gerenciador de memória física. */
+    _kernel_fim = .;
 
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
 }
