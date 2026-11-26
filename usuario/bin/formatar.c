@@ -1,13 +1,15 @@
 /*
- * usuario/bin/formatar.c - prepara o disco inteiro com o sistema de
- * arquivos FAT32 (como o mkfs.fat do Linux). APAGA TUDO o que havia nele.
+ * usuario/bin/formatar.c - prepara um disco ou uma partição com o sistema
+ * de arquivos FAT32 (como o mkfs.fat do Linux). APAGA TUDO o que havia lá.
  *
- *   formatar          pergunta antes ("sim" para continuar)
- *   formatar -sim     sem perguntar
+ *   formatar               o disco de /disco (ou o sda, se nada estiver lá)
+ *   formatar sdb1          uma partição (veja: discos)
+ *   formatar -sim sdb1     sem perguntar
  *
- * O disco fica sem tabela de partições (como um pendrive formatado no
- * Linux com "mkfs.fat -F 32 /dev/sdb"): o setor 0 já é o do FAT32. O
- * Windows, o Linux e o mtools leem assim.
+ * Um disco inteiro fica sem tabela de partições (como um pendrive
+ * formatado no Linux com "mkfs.fat -F 32 /dev/sdb"): o setor 0 já é o do
+ * FAT32. Numa partição, o setor 0 dela. O Windows, o Linux e o mtools leem
+ * os dois. Se estava montado, desmonta antes e monta de novo depois.
  *
  * As contas seguem a especificação da Microsoft ("FAT: General Overview
  * of On-Disk Format"): tamanho do cluster pela tabela de tamanhos do
@@ -24,6 +26,8 @@ static u8 zeros[64 * SETOR];
 static void poe16(u8 *p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); }
 static void poe32(u8 *p, u32 v) { poe16(p, v); poe16(p + 2, v >> 16); }
 
+static u32 dev;
+
 static int grava(u32 lba, u32 n, const void *buf)
 {
     while (n) {
@@ -34,6 +38,7 @@ static int grava(u32 lba, u32 n, const void *buf)
         m.arg[0] = lba;
         m.arg[1] = k;
         m.arg[2] = (u32)(u64)buf;
+        m.arg[3] = dev;
         if (sys_chamar(PID_DISCO, &m) < 0 || m.tipo == MSG_ERRO) return -1;
         lba += k;
         n -= k;
@@ -44,22 +49,66 @@ static int grava(u32 lba, u32 n, const void *buf)
 
 int main(int argc, char **argv)
 {
+    int sim = 0, i = 1;
+    for (; i < argc && argv[i][0] == '-'; i++) {
+        if (!strcmp(argv[i], "-sim")) sim = 1;
+        else if (!strcmp(argv[i], "-t") && i + 1 < argc) {
+            if (strcmp(argv[++i], "fat32")) {
+                fprintf(stderr, "formatar: só sei fazer fat32 (o ext2 vem na próxima etapa)\n");
+                return 1;
+            }
+        } else { fprintf(stderr, "uso: formatar [-sim] [-t fat32] [DISPOSITIVO]\n"); return 1; }
+    }
+
+    /* qual: o pedido, o que está em /disco, ou o sda */
+    char pasta[CAMINHO_MAX], nome[8];
+    int montado = 0, padrao = i >= argc;
+    if (!padrao) {
+        long d = dispositivo_de(argv[i]);
+        if (d < 0) { fprintf(stderr, "formatar: dispositivo inválido: %s (ex.: sdb1; veja: discos)\n", argv[i]); return 1; }
+        dev = (u32)d;
+    } else {
+        u32 srv, d;
+        dev = DISCO_DEV(0, 0);
+        int achou = 0;
+        for (u32 k = 0; montagem(k, pasta, &srv, &d) == 0; k++)
+            if (str_igual(pasta, ARQ_DISCO)) { dev = d; achou = 1; }
+        msg_t p;
+        for (u32 k = 1; !achou && k <= 4; k++)     /* sda particionado: a 1ª partição FAT */
+            if (disco_info(DISCO_DEV(0, k), &p) && (p.arg[2] == PART_FAT32 || p.arg[2] == 0x0B)) {
+                dev = DISCO_DEV(0, k);
+                achou = 1;
+            }
+    }
+    dispositivo_nome(dev, nome);
     msg_t m;
-    msg_zera(&m);
-    m.tipo = DISCO_INFO;
-    if (sys_chamar(PID_DISCO, &m) < 0 || m.tipo != MSG_OK || m.arg[0] == 0) {
-        fprintf(stderr, "formatar: não há disco (no QEMU: -drive file=disco.img,format=raw)\n");
+    u32 total = disco_info(dev, &m);
+    u32 inicio = m.arg[1];
+    if (!total) {
+        if (padrao) fprintf(stderr, "formatar: não há disco (no QEMU: -drive file=disco.img,format=raw)\n");
+        else fprintf(stderr, "formatar: %s não existe (veja: discos)\n", nome);
         return 1;
     }
-    u32 total = m.arg[0];
+    if (DEV_PARTICAO(dev) == 0) {                /* um disco com partições: formate uma delas */
+        msg_t p;
+        for (u32 k = 1; k <= 4; k++) {
+            if (disco_info(DISCO_DEV(DEV_DISCO(dev), k), &p)) {
+                fprintf(stderr, "formatar: %s tem partições; formate uma delas (%s%u) ou apague a "
+                        "tabela com: particionar %s limpar\n", nome, nome, k, nome);
+                return 1;
+            }
+        }
+    } else if (m.arg[2] != PART_FAT32 && m.arg[2] != 0x0B) {
+        printf("Aviso: o tipo de %s na tabela é %02x, não FAT32 (0c).\n", nome, m.arg[2]);
+    }
     u64 mib = (u64)total * SETOR / (1024 * 1024);
     if (total < 66600) {                     /* o FAT32 precisa de 65525 clusters */
         fprintf(stderr, "formatar: o disco tem %lu MiB; o FAT32 precisa de pelo menos 33 MiB\n",
                 (unsigned long)mib);
         return 1;
     }
-    if (argc < 2 || strcmp(argv[1], "-sim") != 0) {
-        printf("Isto APAGA TUDO no disco (%lu MiB). Digite sim para continuar: ", (unsigned long)mib);
+    if (!sim) {
+        printf("Isto APAGA TUDO em %s (%lu MiB). Digite sim para continuar: ", nome, (unsigned long)mib);
         fflush(stdout);
         char r[16];
         if (!fgets(r, sizeof r, stdin) || strncmp(r, "sim", 3) != 0) {
@@ -109,8 +158,16 @@ int main(int argc, char **argv)
     poe32(fsi + 492, 3);                                   /* procure a partir do 3 */
     poe32(fsi + 508, 0xAA550000u);
 
-    printf("Formatando: %lu MiB, clusters de %u bytes, %u clusters...\n",
-           (unsigned long)mib, spc * SETOR, clusters);
+    /* montado? solta antes (o servidor não pode gravar o cache por cima) */
+    montado = montado_em(dev, pasta);
+    if (montado && desmontar_de(PID_FAT, pasta) < 0) {
+        fprintf(stderr, "formatar: %s está em uso em %s (há arquivos abertos)\n", nome, pasta);
+        return 1;
+    }
+    poe32(b + 28, inicio);                                 /* setores antes da partição */
+
+    printf("Formatando %s: %lu MiB, clusters de %u bytes, %u clusters...\n",
+           nome, (unsigned long)mib, spc * SETOR, clusters);
     int r = grava(0, reservados, zeros);
     r |= grava(0, 1, b) | grava(1, 1, fsi) | grava(6, 1, b) | grava(7, 1, fsi);
     /* as duas FATs, zeradas; o começo: as entradas 0 e 1 e a raiz (fim de cadeia) */
@@ -132,13 +189,16 @@ int main(int argc, char **argv)
     r |= grava(raiz, 1, rot);
     if (r) { fprintf(stderr, "formatar: erro ao escrever no disco\n"); return 1; }
 
-    /* o servidor do disco lê tudo de novo */
-    msg_zera(&m);
-    m.tipo = FAT_MONTAR;
-    if (sys_chamar(PID_FAT, &m) < 0 || m.tipo != MSG_OK) {
-        fprintf(stderr, "formatar: o disco foi formatado, mas não montou\n");
+    /* monta de novo onde estava (ou em /disco, se foi o padrão) */
+    if (!montado && !padrao) {
+        printf("Pronto. Para usar: montar %s /mnt\n", nome);
+        return 0;
+    }
+    if (!montado) str_copia(pasta, ARQ_DISCO, sizeof pasta);
+    if (montar_em(dev, pasta) < 0) {
+        fprintf(stderr, "formatar: %s foi formatado, mas não montou em %s\n", nome, pasta);
         return 1;
     }
-    printf("Pronto: o disco está em %s\n", ARQ_DISCO);
+    printf("Pronto: %s está em %s\n", nome, pasta);
     return 0;
 }

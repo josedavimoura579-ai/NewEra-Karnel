@@ -1,13 +1,16 @@
 /*
  * ===========================================================================
  *  NovaEra - usuario/fat.c   (PID 8, anel 3)
- *  O disco, em /disco: o sistema de arquivos FAT32, o mesmo de pendrives e
- *  cartões de memória. Um disco do NovaEra abre no Windows, no Linux, no
- *  celular (e com o mtools: mdir, mcopy).
+ *  Os discos FAT32: o sistema de arquivos de pendrives e cartões de
+ *  memória. Um disco do NovaEra abre no Windows, no Linux, no celular (e
+ *  com o mtools: mdir, mcopy).
  *
  *  Fala o mesmo protocolo do servidor de arquivos (ARQ_*, MSG_LER e
- *  MSG_ESCREVER): a ulib manda para cá todo caminho que começa em /disco.
- *  Os setores vêm do driver de disco (PID_DISCO).
+ *  MSG_ESCREVER). Cuida de até 4 volumes montados ao mesmo tempo (um disco
+ *  inteiro ou uma partição cada: FAT_MONTAR / FAT_DESMONTAR); o servidor de
+ *  arquivos manda para cá os caminhos que caem neles. No boot, monta o
+ *  primeiro FAT32 que achar em /disco. Os setores vêm do driver de disco
+ *  (PID_DISCO), que já conta a partir do começo da partição.
  *
  *  Como o FAT32 guarda as coisas:
  *    - o disco é dividido em "clusters" (blocos de 512 bytes a 32 KiB)
@@ -33,17 +36,56 @@
 #define NCACHE       4u
 #define CLUSTER_MAX  (64u * SETOR)
 
-/* ------------------------------- O disco --------------------------------- */
+#define MAX_VOLUMES  4u
 
-static int montado;
-static u32 part_ini;          /* o setor onde o FAT32 começa (partição) */
-static u32 spc;               /* setores por cluster */
-static u32 tam_cl;            /* bytes por cluster */
-static u32 reservados, nfats, fat_tam, raiz, fsinfo;
-static u32 dados_ini;         /* o setor do cluster 2 */
-static u32 nclusters;         /* clusters de dados: 2 .. nclusters+1 */
-static u32 dica = 2;          /* onde procurar um cluster livre */
-static int fsinfo_ok;         /* o FSInfo já foi marcado como "não sei" */
+/* ------------------------------ Os volumes ------------------------------- */
+
+typedef struct {
+    u32 cl;                   /* 0 = vazio */
+    int sujo;
+    u32 uso;
+    u8  d[CLUSTER_MAX];
+} cache_t;
+
+/* Tudo o que se sabe de um FAT32 montado. O código abaixo foi escrito para
+ * um volume só: os #define fazem cada nome apontar para o volume atual (V),
+ * escolhido no começo de cada pedido. */
+typedef struct {
+    int  usado;
+    u32  dev;                 /* o dispositivo (novaera.h: DISCO_DEV) */
+    char ponto[CAMINHO_MAX];  /* onde está montado ("/disco") */
+    u32  ponto_tam;
+    u32  v_spc;               /* setores por cluster */
+    u32  v_tam_cl;            /* bytes por cluster */
+    u32  v_reservados, v_nfats, v_fat_tam, v_raiz, v_fsinfo;
+    u32  v_dados_ini;         /* o setor do cluster 2 */
+    u32  v_nclusters;         /* clusters de dados: 2 .. nclusters+1 */
+    u32  v_dica;              /* onde procurar um cluster livre */
+    int  v_fsinfo_ok;         /* o FSInfo já foi marcado como "não sei" */
+    u8   v_fbuf[SETOR];       /* um setor da FAT */
+    u32  v_fbuf_setor;
+    int  v_fbuf_sujo;
+    cache_t v_cache[NCACHE];  /* os últimos clusters usados */
+} vol_t;
+
+static vol_t  volumes[MAX_VOLUMES];
+static vol_t *V = &volumes[0];
+
+#define spc        (V->v_spc)
+#define tam_cl     (V->v_tam_cl)
+#define reservados (V->v_reservados)
+#define nfats      (V->v_nfats)
+#define fat_tam    (V->v_fat_tam)
+#define raiz       (V->v_raiz)
+#define fsinfo     (V->v_fsinfo)
+#define dados_ini  (V->v_dados_ini)
+#define nclusters  (V->v_nclusters)
+#define dica       (V->v_dica)
+#define fsinfo_ok  (V->v_fsinfo_ok)
+#define fbuf       (V->v_fbuf)
+#define fbuf_setor (V->v_fbuf_setor)
+#define fbuf_sujo  (V->v_fbuf_sujo)
+#define cache      (V->v_cache)
 
 static u16 le16(const u8 *p) { return (u16)(p[0] | p[1] << 8); }
 static u32 le32(const u8 *p) { return (u32)p[0] | (u32)p[1] << 8 | (u32)p[2] << 16 | (u32)p[3] << 24; }
@@ -61,6 +103,7 @@ static int disco(u32 tipo, u32 lba, u32 n, void *buf)
         m.arg[0] = lba;
         m.arg[1] = k;
         m.arg[2] = (u32)(u64)b;
+        m.arg[3] = V->dev;
         if (sys_chamar(PID_DISCO, &m) < 0 || m.tipo == MSG_ERRO) return -1;
         lba += k;
         n -= k;
@@ -71,15 +114,12 @@ static int disco(u32 tipo, u32 lba, u32 n, void *buf)
 
 /* ------------------------------ A FAT ------------------------------------ */
 
-static u8  fbuf[SETOR];
-static u32 fbuf_setor = 0xFFFFFFFFu;
-static int fbuf_sujo;
 
 static int fat_descarregar(void)
 {
     if (!fbuf_sujo) return 0;
     for (u32 k = 0; k < nfats; k++)              /* todas as cópias da FAT */
-        if (disco(DISCO_ESCREVER, part_ini + reservados + k * fat_tam + fbuf_setor, 1, fbuf) < 0) return -1;
+        if (disco(DISCO_ESCREVER, reservados + k * fat_tam + fbuf_setor, 1, fbuf) < 0) return -1;
     fbuf_sujo = 0;
     return 0;
 }
@@ -89,7 +129,7 @@ static int fat_carregar(u32 setor)
     if (setor == fbuf_setor) return 0;
     if (fat_descarregar() < 0) return -1;
     fbuf_setor = 0xFFFFFFFFu;
-    if (disco(DISCO_LER, part_ini + reservados + setor, 1, fbuf) < 0) return -1;
+    if (disco(DISCO_LER, reservados + setor, 1, fbuf) < 0) return -1;
     fbuf_setor = setor;
     return 0;
 }
@@ -114,9 +154,9 @@ static void fsinfo_invalidar(void)
 {
     if (fsinfo_ok || !fsinfo) return;
     u8 s[SETOR];
-    if (disco(DISCO_LER, part_ini + fsinfo, 1, s) == 0 && le32(s) == 0x41615252u) {
+    if (disco(DISCO_LER, fsinfo, 1, s) == 0 && le32(s) == 0x41615252u) {
         poe32(s + 488, 0xFFFFFFFFu);
-        disco(DISCO_ESCREVER, part_ini + fsinfo, 1, s);
+        disco(DISCO_ESCREVER, fsinfo, 1, s);
     }
     fsinfo_ok = 1;
 }
@@ -149,17 +189,9 @@ static void liberar(u32 c)
 
 /* ------------------------- Cache de clusters ----------------------------- */
 
-typedef struct {
-    u32 cl;                   /* 0 = vazio */
-    int sujo;
-    u32 uso;
-    u8  d[CLUSTER_MAX];
-} cache_t;
-
-static cache_t cache[NCACHE];
 static u32 relogio;
 
-static u32 cl_lba(u32 c) { return part_ini + dados_ini + (c - 2) * spc; }
+static u32 cl_lba(u32 c) { return dados_ini + (c - 2) * spc; }
 
 static int cache_descarregar(cache_t *e)
 {
@@ -342,11 +374,12 @@ static void raiz_ent(ent_t *e)
 
 static u32 cl_pasta(const ent_t *e) { return e->cluster ? e->cluster : raiz; }
 
-/* "/disco/a/b": e = o registro de b. Com 'pai', para antes do último pedaço:
+/* "/disco/a/b" (com o volume montado em /disco): e = o registro de b.
+ * Com 'pai', para antes do último pedaço:
  * pai = a pasta onde ele está, *ultimo = o nome. */
 static long resolver(const char *caminho, ent_t *e, u32 *pai, const char **ultimo)
 {
-    const char *p = caminho + str_tam(ARQ_DISCO);
+    const char *p = caminho + V->ponto_tam;
     raiz_ent(e);
     for (;;) {
         while (*p == '/') p++;
@@ -549,30 +582,17 @@ static int pasta_vazia(u32 pasta)
 
 /* -------------------------------- Montar --------------------------------- */
 
+/* Lê o setor 0 do dispositivo de V (o setor de boot do FAT32). */
 static int montar(void)
 {
-    montado = 0;
     fsinfo_ok = 0;
     fbuf_setor = 0xFFFFFFFFu;
     fbuf_sujo = 0;
     for (u32 i = 0; i < NCACHE; i++) cache[i].cl = 0;
 
-    msg_t m;
-    msg_zera(&m);
-    m.tipo = DISCO_INFO;
-    if (sys_chamar(PID_DISCO, &m) < 0 || m.tipo != MSG_OK || m.arg[0] == 0) return -1;
-
     u8 s[SETOR];
-    part_ini = 0;
     if (disco(DISCO_LER, 0, 1, s) < 0 || s[510] != 0x55 || s[511] != 0xAA) return -1;
-    if (!mem_igual(s + 82, "FAT32", 5)) {
-        /* uma tabela de partições (MBR): a 1ª partição FAT32 */
-        for (u32 k = 0; k < 4; k++) {
-            const u8 *p = s + 446 + 16 * k;
-            if (p[4] == 0x0B || p[4] == 0x0C) { part_ini = le32(p + 8); break; }
-        }
-        if (!part_ini || disco(DISCO_LER, part_ini, 1, s) < 0 || !mem_igual(s + 82, "FAT32", 5)) return -1;
-    }
+    if (!mem_igual(s + 82, "FAT32", 5)) return -1;
     if (le16(s + 11) != SETOR) return -1;
     spc        = s[13];
     reservados = le16(s + 14);
@@ -588,14 +608,29 @@ static int montar(void)
     nclusters  = (total - dados_ini) / spc;
     if (nclusters > fat_tam * 128 - 2) nclusters = fat_tam * 128 - 2;
     dica = 2;
-    montado = 1;
     return 0;
+}
+
+/* O volume onde o caminho está (o ponto de montagem mais longo); 0 = nenhum. */
+static vol_t *volume_de(const char *c)
+{
+    vol_t *melhor = 0;
+    for (u32 i = 0; i < MAX_VOLUMES; i++) {
+        vol_t *v = &volumes[i];
+        if (!v->usado) continue;
+        u32 k = 0;
+        while (k < v->ponto_tam && c[k] == v->ponto[k]) k++;
+        if (k < v->ponto_tam || (c[k] != '\0' && c[k] != '/')) continue;
+        if (!melhor || v->ponto_tam > melhor->ponto_tam) melhor = v;
+    }
+    return melhor;
 }
 
 /* -------------------------------- Canais --------------------------------- */
 
 typedef struct {
     int usado;
+    vol_t *vol;                /* em qual volume */
     u32 dono;
     u32 pasta, reg;            /* o registro do arquivo */
     u32 primeiro, tam, pos;
@@ -641,8 +676,11 @@ static u32 cluster_de(canal_t *c, u32 i, int cresce)
 static void fechar(canal_t *c)
 {
     if (!c->usado) return;
+    vol_t *antes = V;
+    V = c->vol;
     atualizar_reg(c->pasta, c->reg, c->primeiro, c->tam);
     descarregar_tudo();
+    V = antes;
     c->usado = 0;
 }
 
@@ -714,16 +752,46 @@ static void pedido(msg_t *m)
     m->texto[MSG_TEXTO_MAX - 1] = '\0';
 
     if (m->tipo == FAT_MONTAR) {
-        for (u32 i = 0; i < MAX_CANAIS; i++) canais[i].usado = 0;
-        if (montar() < 0) erro(quem, ERRO_NAO_ACHADO); else ok(quem, nclusters, tam_cl);
+        u32 dev = m->arg[0];
+        if (m->texto[0] != '/' || volume_de(m->texto)) { erro(quem, ERRO_OCUPADO); return; }
+        vol_t *livre = 0;
+        for (u32 i = 0; i < MAX_VOLUMES; i++) {
+            if (volumes[i].usado && volumes[i].dev == dev) { erro(quem, ERRO_OCUPADO); return; }
+            if (!volumes[i].usado && !livre) livre = &volumes[i];
+        }
+        if (!livre) { erro(quem, ERRO_LOTADO); return; }
+        V = livre;
+        V->dev = dev;
+        if (montar() < 0) { erro(quem, ERRO_FORMATO); return; }    /* não é FAT32 */
+        str_copia(V->ponto, m->texto, CAMINHO_MAX);
+        V->ponto_tam = str_tam(V->ponto);
+        if (V->ponto_tam == 1) V->ponto_tam = 0;                 /* montado em "/" */
+        V->usado = 1;
+        ok(quem, nclusters, tam_cl);
         return;
     }
-    if (!montado && montar() < 0) { erro(quem, ERRO_NAO_ACHADO); return; }
+    if (m->tipo == FAT_DESMONTAR) {
+        vol_t *v = 0;
+        for (u32 i = 0; i < MAX_VOLUMES; i++)
+            if (volumes[i].usado && str_igual(volumes[i].ponto, m->texto)) v = &volumes[i];
+        if (!v) { erro(quem, ERRO_NAO_ACHADO); return; }
+        for (u32 i = 0; i < MAX_CANAIS; i++) {
+            if (!canais[i].usado || canais[i].vol != v) continue;
+            if (vivo(canais[i].dono)) { erro(quem, ERRO_OCUPADO); return; }
+            fechar(&canais[i]);                         /* quem abriu já morreu */
+        }
+        V = v;
+        descarregar_tudo();
+        v->usado = 0;
+        ok(quem, 0, 0);
+        return;
+    }
 
     if (m->tipo == MSG_LER || m->tipo == MSG_ESCREVER || m->tipo == ARQ_FECHAR) {
         u32 n = ARQ_CANAL(m->arg[0]);
         if (n >= MAX_CANAIS || !canais[n].usado) { erro(quem, ERRO_INVALIDO); return; }
         canal_t *c = &canais[n];
+        V = c->vol;
         if (m->tipo == MSG_LER) canal_ler(quem, c, m->arg[1], m->arg[2]);
         else if (m->tipo == MSG_ESCREVER) canal_escrever(quem, c, m);
         else { fechar(c); ok(quem, 0, 0); }
@@ -734,6 +802,9 @@ static void pedido(msg_t *m)
     u32 pai;
     const char *ultimo;
     long r;
+
+    V = volume_de(m->texto);
+    if (!V) { V = &volumes[0]; erro(quem, ERRO_NAO_ACHADO); return; }
 
     switch (m->tipo) {
     case ARQ_INFO:
@@ -786,6 +857,7 @@ static void pedido(msg_t *m)
         canal_t *c = &canais[n];
         mem_zera(c, sizeof *c);
         c->usado = 1;
+        c->vol = V;
         c->dono = quem;
         c->pasta = e.pasta;
         c->reg = e.reg;
@@ -846,11 +918,55 @@ static void pedido(msg_t *m)
     erro(quem, ERRO_INVALIDO);
 }
 
+/* No boot: o primeiro FAT32 dos discos (o disco inteiro ou uma partição
+ * FAT) vai para /disco, e o servidor de arquivos fica sabendo. */
+static void montar_no_boot(void)
+{
+    for (u32 d = 0; d < DISCOS_MAX; d++) {
+        for (u32 p = 0; p <= 4; p++) {
+            msg_t m;
+            msg_zera(&m);
+            m.tipo   = DISCO_INFO;
+            m.arg[3] = DISCO_DEV(d, p);
+            if (sys_chamar(PID_DISCO, &m) < 0 || m.tipo != MSG_OK || !m.arg[0]) {
+                if (p == 0) break;                      /* não há este disco */
+                continue;
+            }
+            if (p && m.arg[2] != 0x0B && m.arg[2] != PART_FAT32) continue;
+            V = &volumes[0];
+            V->dev = DISCO_DEV(d, p);
+            if (montar() < 0) continue;
+            str_copia(V->ponto, ARQ_DISCO, CAMINHO_MAX);
+            V->ponto_tam = str_tam(V->ponto);
+            V->usado = 1;
+            msg_zera(&m);
+            m.tipo   = MONT_ADICIONAR;
+            m.arg[0] = PID_FAT;
+            m.arg[1] = V->dev;
+            str_copia(m.texto, ARQ_DISCO, MSG_TEXTO_MAX);
+            if (sys_chamar(PID_ARQUIVOS, &m) < 0 || m.tipo != MSG_OK) V->usado = 0;
+            return;
+        }
+    }
+}
+
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
-    montar();                                   /* sem disco, tenta de novo a cada pedido */
     msg_t m;
+    /* Reiniciado depois de uma falha? As montagens antigas eram minhas. */
+    for (u32 i = 0; ; i++) {
+        msg_zera(&m);
+        m.tipo   = MONT_LISTAR;
+        m.arg[0] = i;
+        if (sys_chamar(PID_ARQUIVOS, &m) < 0 || m.tipo != MSG_OK) break;
+        if (m.arg[0] != PID_FAT) continue;
+        msg_t r = m;
+        r.tipo = MONT_REMOVER;
+        sys_chamar(PID_ARQUIVOS, &r);
+        i--;
+    }
+    montar_no_boot();
     for (;;) {
         sys_receber(PID_QUALQUER, &m);
         pedido(&m);

@@ -68,7 +68,7 @@ int close(int fd)
     nfd_t *f = __fd(fd);
     if (!f) return -1;
     if (f->dono && e_tubo(f)) tubo_fechar(f->canal, f->ponta);
-    else if (f->dono && (f->servidor == PID_ARQUIVOS || f->servidor == PID_FAT)) arq_fechar(f->canal);
+    else if (f->dono && SERVIDOR_DE_ARQUIVOS(f->servidor)) arq_fechar(f->canal);
     f->usado = 0;
     return 0;
 }

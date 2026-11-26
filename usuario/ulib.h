@@ -249,7 +249,7 @@ static inline long escreve_em(u32 servidor, u32 canal, const char *dados, u64 n,
 {
     msg_t m;
     u64 total = 0;
-    if (servidor == PID_ARQUIVOS || servidor == PID_FAT) {
+    if (SERVIDOR_DE_ARQUIVOS(servidor)) {
         while (total < n) {
             u64 k = n - total > ESCRITA_MAX ? ESCRITA_MAX : n - total;
             msg_zera(&m);
@@ -360,28 +360,25 @@ static inline int caminho_absoluto(const char *rel, char *saida)
 
 /* -------------------------------- Arquivos -------------------------------- */
 
-/* Quem cuida de um caminho absoluto: /disco é o disco (FAT32); o resto,
- * o servidor de arquivos da memória. */
-static inline u32 arq_servidor_de(const char *abs)
-{
-    const char *d = ARQ_DISCO;
-    u32 i = 0;
-    while (d[i] && abs[i] == d[i]) i++;
-    return !d[i] && (abs[i] == '\0' || abs[i] == '/') ? PID_FAT : PID_ARQUIVOS;
-}
-
-/* Pedido ao servidor de arquivos com um caminho; devolve a resposta em m
- * (em m->origem fica quem respondeu). */
+/* Pedido com um caminho; devolve a resposta em m (em m->origem fica quem
+ * respondeu). Todo caminho começa no servidor de arquivos, que é a raiz;
+ * se ele cair num disco montado, a resposta diz quem cuida dele
+ * (ARQ_OUTRO_SERVIDOR) e o pedido vai de novo, para lá. */
 static inline long arq_pedido(u32 tipo, const char *caminho, msg_t *m)
 {
     char abs[CAMINHO_MAX];
     if (caminho_absoluto(caminho, abs) < 0) return ERRO_INVALIDO;
-    u32 a0 = m->arg[0], srv = arq_servidor_de(abs);
-    msg_zera(m);
-    m->tipo   = tipo;
-    m->arg[0] = a0;
-    str_copia(m->texto, abs, MSG_TEXTO_MAX);
-    if (sys_chamar(srv, m) < 0) return ERRO_PID;
+    u32 a0 = m->arg[0], srv = PID_ARQUIVOS;
+    for (int tentativa = 0; ; tentativa++) {
+        msg_zera(m);
+        m->tipo   = tipo;
+        m->arg[0] = a0;
+        str_copia(m->texto, abs, MSG_TEXTO_MAX);
+        if (sys_chamar(srv, m) < 0) return ERRO_PID;
+        if (m->tipo != ARQ_OUTRO_SERVIDOR) break;
+        if (tentativa || m->arg[0] == srv) return ERRO_NAO_ACHADO;   /* um só desvio */
+        srv = m->arg[0];
+    }
     m->origem = srv;
     if (m->tipo == MSG_ERRO) return -(long)m->arg[0];
     return 0;
@@ -512,6 +509,107 @@ static inline long executar(const char *caminho, char **argv,
                             u32 entrada, u32 entrada_canal, u32 saida, u32 saida_canal)
 {
     return executar_grupo(caminho, argv, entrada, entrada_canal, saida, saida_canal, 0);
+}
+
+/* -------------------------- Discos e montagens ---------------------------
+ * Os nomes dos dispositivos são os do Linux: sda (o disco inteiro), sda1
+ * a sda4 (as partições), sdb, sdc, sdd. "/dev/sda1" também vale. */
+static inline long dispositivo_de(const char *nome)
+{
+    const char *p = nome;
+    if (p[0] == '/' && p[1] == 'd' && p[2] == 'e' && p[3] == 'v' && p[4] == '/') p += 5;
+    if (p[0] != 's' || p[1] != 'd' || p[2] < 'a' || p[2] >= 'a' + (int)DISCOS_MAX) return ERRO_INVALIDO;
+    u32 d = (u32)(p[2] - 'a'), part = 0;
+    if (p[3]) {
+        if (p[3] < '1' || p[3] > '4' || p[4]) return ERRO_INVALIDO;
+        part = (u32)(p[3] - '0');
+    }
+    return DISCO_DEV(d, part);
+}
+
+/* "sda1" (buf com pelo menos 5 bytes). */
+static inline char *dispositivo_nome(u32 dev, char *buf)
+{
+    buf[0] = 's'; buf[1] = 'd'; buf[2] = (char)('a' + DEV_DISCO(dev));
+    u32 i = 3;
+    if (DEV_PARTICAO(dev)) buf[i++] = (char)('0' + DEV_PARTICAO(dev));
+    buf[i] = '\0';
+    return buf;
+}
+
+/* Setores do dispositivo (0 = não existe); m recebe o resto da resposta
+ * (arg[1] = início no disco, arg[2] = tipo da partição, texto = modelo). */
+static inline u32 disco_info(u32 dev, msg_t *m)
+{
+    msg_zera(m);
+    m->tipo   = DISCO_INFO;
+    m->arg[3] = dev;
+    if (sys_chamar(PID_DISCO, m) < 0 || m->tipo != MSG_OK) return 0;
+    return m->arg[0];
+}
+
+/* A montagem número i: 0 = existe, < 0 = acabou a lista. */
+static inline long montagem(u32 i, char *pasta, u32 *servidor, u32 *dev)
+{
+    msg_t m;
+    msg_zera(&m);
+    m.tipo   = MONT_LISTAR;
+    m.arg[0] = i;
+    if (sys_chamar(PID_ARQUIVOS, &m) < 0 || m.tipo != MSG_OK) return ERRO_NAO_ACHADO;
+    if (pasta) str_copia(pasta, m.texto, CAMINHO_MAX);
+    if (servidor) *servidor = m.arg[0];
+    if (dev) *dev = m.arg[1];
+    return 0;
+}
+
+/* Onde o dispositivo está montado (0 = em nenhum lugar). */
+static inline int montado_em(u32 dev, char *pasta)
+{
+    u32 s, d;
+    for (u32 i = 0; montagem(i, pasta, &s, &d) == 0; i++)
+        if (d == dev && s == PID_FAT) return 1;
+    return 0;
+}
+
+/* Monta e desmonta: o servidor do sistema de arquivos e a tabela. */
+static inline long montar_em(u32 dev, const char *pasta)
+{
+    msg_t m;
+    msg_zera(&m);
+    m.tipo   = FAT_MONTAR;
+    m.arg[0] = dev;
+    str_copia(m.texto, pasta, MSG_TEXTO_MAX);
+    if (sys_chamar(PID_FAT, &m) < 0) return ERRO_PID;
+    if (m.tipo == MSG_ERRO) return -(long)m.arg[0];
+    msg_zera(&m);
+    m.tipo   = MONT_ADICIONAR;
+    m.arg[0] = PID_FAT;
+    m.arg[1] = dev;
+    str_copia(m.texto, pasta, MSG_TEXTO_MAX);
+    if (sys_chamar(PID_ARQUIVOS, &m) < 0 || m.tipo == MSG_ERRO) {
+        long e = m.tipo == MSG_ERRO ? -(long)m.arg[0] : ERRO_PID;
+        msg_zera(&m);
+        m.tipo = FAT_DESMONTAR;                    /* desfaz */
+        str_copia(m.texto, pasta, MSG_TEXTO_MAX);
+        sys_chamar(PID_FAT, &m);
+        return e;
+    }
+    return 0;
+}
+
+static inline long desmontar_de(u32 servidor, const char *pasta)
+{
+    msg_t m;
+    msg_zera(&m);
+    m.tipo = FAT_DESMONTAR;
+    str_copia(m.texto, pasta, MSG_TEXTO_MAX);
+    if (sys_chamar(servidor, &m) < 0) return ERRO_PID;
+    if (m.tipo == MSG_ERRO && m.arg[0] != (u32)(-ERRO_NAO_ACHADO)) return -(long)m.arg[0];
+    msg_zera(&m);
+    m.tipo = MONT_REMOVER;
+    str_copia(m.texto, pasta, MSG_TEXTO_MAX);
+    if (sys_chamar(PID_ARQUIVOS, &m) < 0) return ERRO_PID;
+    return m.tipo == MSG_ERRO ? -(long)m.arg[0] : 0;
 }
 
 /* ------------------------------ Ponto de entrada -------------------------

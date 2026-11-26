@@ -10,6 +10,12 @@
  *
  *  Um arquivo que veio do initrd é lido direto de lá; na primeira escrita
  *  ele ganha uma cópia própria no heap ("cópia na escrita").
+ *
+ *  Ele também é a RAIZ de tudo: guarda a tabela de montagens. Um caminho
+ *  que cai dentro de um disco montado (/disco/fotos, /mnt/a.txt) não é
+ *  dele: a resposta é ARQ_OUTRO_SERVIDOR, com o PID de quem cuida, e a ulib
+ *  refaz o pedido lá. Ler e escrever não passam por aqui: o canal já diz
+ *  qual servidor abriu o arquivo.
  * ===========================================================================
  */
 #include "ulib.h"
@@ -37,6 +43,30 @@ typedef struct {
 
 static no_t    nos[MAX_NOS];
 static canal_t canais[MAX_CANAIS];
+
+typedef struct {
+    u32  usado;
+    char pasta[CAMINHO_MAX];
+    u32  tam;                /* str_tam(pasta) */
+    u32  servidor, dev;
+} montagem_t;
+
+static montagem_t montagens[MONT_MAX];
+
+/* O ponto de montagem que contém o caminho (o mais longo); -1 se nenhum. */
+static int montagem_de(const char *c)
+{
+    int melhor = -1;
+    for (u32 i = 0; i < MONT_MAX; i++) {
+        montagem_t *x = &montagens[i];
+        if (!x->usado) continue;
+        u32 k = 0;
+        while (k < x->tam && c[k] == x->pasta[k]) k++;
+        if (k < x->tam || (c[k] != '\0' && c[k] != '/')) continue;
+        if (melhor < 0 || x->tam > montagens[melhor].tam) melhor = (int)i;
+    }
+    return melhor;
+}
 
 /* ------------------------------ A árvore ------------------------------- */
 
@@ -261,6 +291,64 @@ static void pedido(msg_t *m)
         return;
     }
 
+    /* ----- a tabela de montagens ----- */
+    if (m->tipo == MONT_LISTAR) {
+        u32 n = 0;
+        for (u32 i = 0; i < MONT_MAX; i++) {
+            if (!montagens[i].usado || n++ != m->arg[0]) continue;
+            msg_t r;
+            msg_zera(&r);
+            r.tipo   = MSG_OK;
+            r.arg[0] = montagens[i].servidor;
+            r.arg[1] = montagens[i].dev;
+            str_copia(r.texto, montagens[i].pasta, MSG_TEXTO_MAX);
+            sys_responder(quem, &r);
+            return;
+        }
+        erro(quem, ERRO_NAO_ACHADO);
+        return;
+    }
+    if (m->tipo == MONT_ADICIONAR) {
+        /* a pasta tem de existir (aqui, na memória) e não pode estar em uso */
+        int alvo = resolver(m->texto, 0, 0);
+        if (alvo <= 0 || nos[alvo].tipo != ARQ_TIPO_PASTA || montagem_de(m->texto) >= 0) {
+            erro(quem, alvo <= 0 ? ERRO_NAO_ACHADO : ERRO_OCUPADO);
+            return;
+        }
+        for (u32 i = 0; i < MONT_MAX; i++)
+            if (montagens[i].usado && montagens[i].dev == m->arg[1] &&
+                montagens[i].servidor == m->arg[0]) { erro(quem, ERRO_OCUPADO); return; }
+        for (u32 i = 0; i < MONT_MAX; i++) {
+            if (montagens[i].usado) continue;
+            montagens[i].usado    = 1;
+            str_copia(montagens[i].pasta, m->texto, CAMINHO_MAX);
+            montagens[i].tam      = str_tam(montagens[i].pasta);
+            montagens[i].servidor = m->arg[0];
+            montagens[i].dev      = m->arg[1];
+            ok(quem, 0, 0);
+            return;
+        }
+        erro(quem, ERRO_LOTADO);
+        return;
+    }
+    if (m->tipo == MONT_REMOVER) {
+        for (u32 i = 0; i < MONT_MAX; i++) {
+            if (!montagens[i].usado || !str_igual(montagens[i].pasta, m->texto)) continue;
+            montagens[i].usado = 0;
+            ok(quem, montagens[i].servidor, montagens[i].dev);
+            return;
+        }
+        erro(quem, ERRO_NAO_ACHADO);
+        return;
+    }
+
+    /* ----- um caminho dentro de um disco montado: não é comigo ----- */
+    int mt = montagem_de(m->texto);
+    if (mt >= 0) {
+        responder(quem, ARQ_OUTRO_SERVIDOR, montagens[mt].servidor, 0);
+        return;
+    }
+
     int pai = -1;
     const char *ultimo = 0;
     int alvo = resolver(m->texto, (m->tipo == ARQ_INFO || m->tipo == ARQ_LISTAR) ? 0 : &pai,
@@ -338,10 +426,11 @@ int main(int argc, char **argv)
     nos[0].usado = 1;                            /* a raiz, "/" */
     nos[0].tipo  = ARQ_TIPO_PASTA;
     carregar_initrd();
-    /* /disco: o lugar onde o disco aparece (quem cuida dele é o PID_FAT) */
+    /* /disco: onde o boot monta o disco; /mnt: para montar outros à mão */
     const char *disco = &ARQ_DISCO[1];
     if (achar_filho(0, disco, str_tam(disco)) < 0) criar_no(0, disco, ARQ_TIPO_PASTA);
     if (achar_filho(0, "tmp", 3) < 0) criar_no(0, "tmp", ARQ_TIPO_PASTA);
+    if (achar_filho(0, "mnt", 3) < 0) criar_no(0, "mnt", ARQ_TIPO_PASTA);
 
     msg_t m;
     for (;;) {

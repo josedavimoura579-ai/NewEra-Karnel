@@ -1,0 +1,45 @@
+/*
+ * usuario/bin/montar.c - liga um disco (ou uma partição) a uma pasta
+ * (como o mount do Linux).
+ *
+ *   montar                  mostra o que está montado
+ *   montar sdb1 /mnt        o FAT32 de sdb1 aparece em /mnt
+ *
+ * A pasta tem de existir (mkdir /mnt/usb). Para soltar: desmontar /mnt
+ */
+#include <stdio.h>
+#include "ulib.h"
+
+int main(int argc, char **argv)
+{
+    if (argc == 1) {
+        char pasta[CAMINHO_MAX], nome[8];
+        u32 srv, dev;
+        for (u32 i = 0; montagem(i, pasta, &srv, &dev) == 0; i++)
+            printf("%s em %s (%s)\n", dispositivo_nome(dev, nome), pasta,
+                   srv == PID_FAT ? "fat32" : "?");
+        return 0;
+    }
+    if (argc != 3) {
+        fprintf(stderr, "uso: montar [DISPOSITIVO PASTA]      ex.: montar sdb1 /mnt\n");
+        return 1;
+    }
+    long dev = dispositivo_de(argv[1]);
+    msg_t m;
+    if (dev < 0 || !disco_info((u32)dev, &m)) {
+        fprintf(stderr, "montar: %s não existe (veja: discos)\n", argv[1]);
+        return 1;
+    }
+    char pasta[CAMINHO_MAX];
+    if (caminho_absoluto(argv[2], pasta) < 0) { fprintf(stderr, "montar: caminho inválido\n"); return 1; }
+    long r = montar_em((u32)dev, pasta);
+    if (r == ERRO_FORMATO)
+        fprintf(stderr, "montar: %s não tem um FAT32 (prepare com: formatar %s)\n", argv[1], argv[1]);
+    else if (r == ERRO_NAO_ACHADO)
+        fprintf(stderr, "montar: a pasta %s não existe (crie com: mkdir %s)\n", pasta, pasta);
+    else if (r == ERRO_OCUPADO)
+        fprintf(stderr, "montar: %s ou %s já está montado\n", argv[1], pasta);
+    else if (r < 0)
+        fprintf(stderr, "montar: não deu (erro %ld)\n", -r);
+    return r < 0;
+}

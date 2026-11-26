@@ -39,10 +39,18 @@ Cada etapa termina com algo testável no QEMU.
     vírgula). Quem espera a resposta de um servidor não é interrompido por
     um tratador (o sinal espera a resposta, como o `SA_RESTART`); ainda não
     há `SIGSTOP`/`SIGCONT` de verdade (controle de tarefas).
-- [ ] **Etapa 2 — discos, partições e montagens**
+- [x] **Etapa 2 — discos, partições e montagens** (núcleo 3.4; [livro, capítulo 9](livro/09-discos-particoes-montagens.md))
   - o driver ATA com os quatro discos dos dois canais; partições MBR
   - `particionar` (o fdisk do NovaEra), `montar` e `desmontar`
   - *Teste: um disco com duas partições, uma FAT32 montada onde se quiser.*
+  - Feito: o driver acha os 4 discos (sda a sdd) e lê a MBR; o dispositivo
+    é disco × 8 + partição e o LBA conta do começo da partição. O servidor
+    de arquivos é a raiz e guarda a tabela de montagens (responde
+    `ARQ_OUTRO_SERVIDOR`); o servidor FAT32 cuida de até 4 volumes.
+    Comandos: `discos`, `particionar`, `montar`, `desmontar`, e o
+    `formatar DISPOSITIVO`. Conferido com o Linux: `sfdisk`/`fdisk -l` leem
+    a tabela, o `fsck.fat` aprova a partição, e um disco particionado no
+    Linux é montado em `/disco` no boot.
 - [ ] **Etapa 3 — o ext2**
   - servidor ext2: pastas, arquivos, links, permissões guardadas no disco
   - `formatar -t ext2` (o mkfs.ext2 do NovaEra)

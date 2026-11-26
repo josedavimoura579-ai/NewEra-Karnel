@@ -22,7 +22,7 @@ typedef unsigned long long u64;
 
 /* A versão do NÚCLEO. A do sistema (a "distribuição") fica em sistema.conf,
  * como o /etc/os-release do Linux: o núcleo não sabe qual é a distro. */
-#define NOVAERA_VERSAO     "3.3"
+#define NOVAERA_VERSAO     "3.4"
 #define NOVAERA_ARQUITETURA "x86_64"
 
 /* ---------------------- Chamadas de sistema (int 0x80) -------------------
@@ -47,7 +47,7 @@ typedef unsigned long long u64;
 #define SYS_COPIAR_DE   16   /* (pid, copia_t*)  copia da memória de quem me CHAMOU para a minha */
 #define SYS_AMBIENTE    17   /* (msg*)           entrada, saída padrão e pasta atual */
 #define SYS_PASTA       18   /* (caminho)        muda a pasta atual          */
-#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.3 x86_64" (como o uname) */
+#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.4 x86_64" (como o uname) */
 #define SYS_SINAL       20   /* (pid, sinal)     envia um sinal; pid < 0: ao grupo -pid; 0: ao meu grupo */
 #define SYS_SINAL_TRATAR 21  /* (sinal, sinal_acao_t*) troca o tratador; devolve o antigo na mesma struct */
 #define SYS_SINAL_VOLTAR 22  /* ()               fim do tratador: volta ao ponto interrompido */
@@ -66,6 +66,7 @@ typedef unsigned long long u64;
 #define ERRO_SEM_ESPACO (-10) /* o disco está cheio */
 #define ERRO_INTERROMPIDO (-11) /* a espera foi interrompida por um sinal (o EINTR) */
 #define ERRO_TUBO       (-12) /* escrever num pipe que ninguém mais lê (o EPIPE) */
+#define ERRO_OCUPADO    (-13) /* em uso (desmontar com arquivos abertos: o EBUSY) */
 
 /* --------------------------- Processos fixos ----------------------------
  * O NovaEra ainda não tem um servidor de nomes: cada servidor tem um
@@ -78,7 +79,7 @@ typedef unsigned long long u64;
 #define PID_TERMINAL 5       /* terminal: entrada e saída padrão */
 #define PID_TUBOS    6       /* pipes                            */
 #define PID_DISCO    7       /* driver de disco (ATA)            */
-#define PID_FAT      8       /* o disco, em /disco (FAT32)       */
+#define PID_FAT      8       /* os discos FAT32 montados         */
 #define PID_QUALQUER 0xFFFFFFFFu   /* em SYS_RECEBER: aceita de qualquer um */
 
 /* ------------------------------ Mensagem --------------------------------
@@ -126,19 +127,49 @@ typedef struct {
 #define ARQ_MODO_LER       1
 #define ARQ_MODO_ESCREVER  2     /* cria ou apaga o conteúdo */
 #define ARQ_MODO_ANEXAR    3     /* cria ou escreve no fim  */
-/* Os caminhos que começam em /disco vão para o PID_FAT; o resto, para o
- * PID_ARQUIVOS. O canal que a ulib entrega leva o servidor nos bits 8-15
- * (ARQ_SERVIDOR); o servidor só olha os bits 0-7. */
-#define ARQ_DISCO          "/disco"
+/* Montagens (como o /etc/fstab e o mount do Linux). O servidor de
+ * arquivos (PID_ARQUIVOS) é a raiz e guarda a tabela: um pedido com um
+ * caminho que fica dentro de um ponto de montagem (o mais longo vence)
+ * é respondido com ARQ_OUTRO_SERVIDOR, e a ulib refaz o pedido lá. O canal
+ * que a ulib entrega leva o servidor nos bits 8-15 (ARQ_SERVIDOR); o
+ * servidor só olha os bits 0-7. */
+#define ARQ_OUTRO_SERVIDOR 46    /* resposta: arg[0] = o servidor que cuida do caminho */
+#define MONT_ADICIONAR     47    /* texto = pasta, arg[0] = servidor, arg[1] = dispositivo */
+#define MONT_REMOVER       48    /* texto = pasta; resposta: arg[0] = servidor, arg[1] = dispositivo */
+#define MONT_LISTAR        49    /* arg[0] = índice; resposta: texto = pasta, arg[0] = servidor, arg[1] = dispositivo */
+#define MONT_MAX           8u
+#define ARQ_DISCO          "/disco"    /* onde o boot monta o primeiro FAT32 que achar */
 #define ARQ_SERVIDOR(c)    (((u32)(c) >> 8) & 0xFFu)
 #define ARQ_CANAL(c)       ((u32)(c) & 0xFFu)
+/* Quem guarda arquivos (e não é o terminal nem um pipe)? */
+#define SERVIDOR_DE_ARQUIVOS(s) ((s) != PID_TERMINAL && (s) != PID_TUBOS)
 
-/* Driver de disco (ATA, setores de 512 bytes, até 128 por pedido) */
-#define DISCO_INFO         60    /* resposta: arg[0] = setores (0 = sem disco) */
-#define DISCO_LER          61    /* arg[0] = setor (LBA), arg[1] = quantos, arg[2] = endereço do buffer */
+/* Driver de disco (ATA: até 4 discos, nos dois canais IDE; setores de 512
+ * bytes, até 128 por pedido). Um DISPOSITIVO é disco * 8 + partição:
+ * partição 0 é o disco inteiro, 1 a 4 são as primárias da tabela MBR. Os
+ * nomes são os do Linux: sda = 0, sda1 = 1, sdb = 8, sdb2 = 10...
+ * O LBA de cada pedido conta a partir do começo do dispositivo. */
+#define DISCO_INFO         60    /* arg[3] = dispositivo; resposta: arg[0] = setores (0 = não existe),
+                                    arg[1] = onde começa no disco, arg[2] = tipo da partição (MBR),
+                                    texto = o modelo do disco */
+#define DISCO_LER          61    /* arg[0] = setor (LBA), arg[1] = quantos, arg[2] = endereço do buffer,
+                                    arg[3] = dispositivo */
 #define DISCO_ESCREVER     62    /* idem, os dados vêm do buffer de quem chamou */
+#define DISCO_RELER        64    /* arg[3] = dispositivo: lê a tabela de partições de novo */
 #define DISCO_SETOR        512u
-#define FAT_MONTAR         63    /* ao PID_FAT: lê o disco de novo (depois do formatar) */
+#define DISCOS_MAX         4u
+#define DISCO_DEV(d, p)    ((d) * 8u + (p))
+#define DEV_DISCO(dev)     ((dev) / 8u)
+#define DEV_PARTICAO(dev)  ((dev) % 8u)
+
+/* Servidor FAT32 (PID_FAT): até 4 volumes montados ao mesmo tempo. */
+#define FAT_MONTAR         63    /* arg[0] = dispositivo, texto = pasta */
+#define FAT_DESMONTAR      65    /* texto = pasta; ERRO_OCUPADO se há arquivos abertos */
+
+/* Tipos de partição (o byte 4 da entrada na MBR) */
+#define PART_FAT32         0x0C  /* FAT32 com LBA */
+#define PART_LINUX         0x83  /* ext2 (e qualquer sistema de arquivos do Linux) */
+#define PART_SWAP          0x82
 
 /* Pipes. Cada ponta (leitura, escrita) conta quantas referências abertas
  * ela tem. Sem escritores, quem lê recebe o fim; sem leitores, quem escreve
