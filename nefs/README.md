@@ -145,8 +145,10 @@ e gera a ISO. Os fontes ficam guardados em `nefs/iso/fontes/`.
 - [x] **Autossuficiência**: dentro do NovaEra, `nefs compilar` recompila o
       sistema inteiro (núcleo, libc, programas, QBE e cproc)
 - [x] Disco persistente (FAT32 em /disco) para guardar os projetos
-- [x] **A ISO do NEFS sem Linux** (`iso/novaera-iso.sh`): o NovaEra puro, com
-      o compilador, o `nefs`, o código e o livro; `nefs iso` gera ISOs lá dentro
+- [x] **A ISO sem Linux** (o NovaEra puro, com o compilador, o `nefs`, o código
+      e o livro; `nefs iso` gera ISOs lá dentro). Desde a 0.3 ela é o
+      lançamento do **sistema NovaEra** (`ferramentas/novaera-iso.sh`, tags
+      `novaera-v*`), separado do NEFS: o NEFS é só a oficina.
 - [ ] Site do NEFS
 - [ ] Livro 2: sistema de arquivos, memória compartilhada, drivers de disco
 

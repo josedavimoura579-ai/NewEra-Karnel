@@ -16,15 +16,16 @@ comando é uma peça, e no fim você sabe exatamente o que tem no seu disco.
 
 ## Do que você precisa
 
-- A ISO `nefs-novaera-<versão>-x86_64.iso` (na página de lançamentos do
-  GitHub do NovaEra), ou o NovaEra compilado (`bash run.sh`).
+- A ISO do sistema, `novaera-<versão>-x86_64.iso` (o lançamento
+  **NovaEra**, na página de lançamentos do GitHub), ou o NovaEra compilado
+  (`bash run.sh`).
 - Um disco para instalar. **Tudo o que estiver nele será apagado.**
 
 No QEMU (Linux, Termux, Windows), o disco é um arquivo:
 
 ```
 truncate -s 256M disco.img
-qemu-system-x86_64 -cdrom nefs-novaera-0.3-x86_64.iso -boot d -m 256M \
+qemu-system-x86_64 -cdrom novaera-4.2-x86_64.iso -boot d -m 256M \
     -drive file=disco.img,format=raw,index=0,media=disk
 ```
 

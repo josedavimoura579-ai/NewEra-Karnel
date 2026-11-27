@@ -76,11 +76,15 @@ qemu-system-x86_64 -cdrom meu.iso -m 256M
 Funciona também num PC de verdade (gravada num CD, ou num pendrive com um
 programa como o Ventoy).
 
-## A ISO do NEFS sem Linux
+## A ISO do NovaEra
 
-A própria ISO do NEFS agora é assim: o NovaEra puro, sem nenhum Linux por
-baixo, com o compilador, o `nefs`, o código e este livro
-(`nefs/iso/novaera-iso.sh`). Você liga, formata o disco e começa a criar.
+O NovaEra puro, sem nenhum Linux por baixo, também tem a sua ISO: o
+sistema pronto, com o compilador, o `nefs`, o código e este livro
+(`ferramentas/novaera-iso.sh`, o lançamento **NovaEra**). Dá para criar
+dentro dele também: você liga, formata o disco e começa.
+
+Mas lembre a diferença: essa é a ISO de um **sistema**. A oficina, a da
+tela preta, para montar o seu, é a ISO do **NEFS**.
 
 Este é o fim do Livro 1. Os próximos volumes vão tratar de sinais e
 processos, usuários e permissões, gráficos e de como montar uma área de

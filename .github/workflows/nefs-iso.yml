@@ -1,10 +1,15 @@
-# NEFS - constrói a ISO e a publica como Release do GitHub.
+# NEFS - constrói a ISO do NEFS e a publica como Release do GitHub.
 #
-# Dispara quando uma tag "nefs-v*" é criada (ex.: nefs-v0.2), por git push
-# ou pela página "Draft a new release" do GitHub. Duas ISOs, construídas do
-# zero a partir do código da tag e anexadas à Release com o SHA-256:
-#   nefs-novaera-*.iso  o NovaEra puro, sem Linux (nefs/iso/novaera-iso.sh)
-#   nefs-*.iso          a oficina com um Linux mínimo (nefs/iso/construir.sh)
+# O NEFS é a OFICINA, no estilo do Linux From Scratch: uma tela preta com
+# comandos e o livro, para montar o seu próprio sistema operacional sobre o
+# NovaEra. (O sistema NovaEra pronto, com janelas, tem o lançamento dele:
+# .github/workflows/novaera-iso.yml, tags "novaera-v*".)
+#
+# Dispara quando uma tag "nefs-v*" é criada (ex.: nefs-v0.4), por git push
+# ou pela página "Draft a new release" do GitHub. A ISO é construída do
+# zero a partir do código da tag e anexada à Release com o SHA-256:
+#   nefs-*.iso   a oficina: um Linux mínimo com o compilador, o nefs e o
+#                livro (nefs/iso/construir.sh)
 name: ISO do NEFS
 
 on:
@@ -22,10 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Construir a ISO sem Linux (o NovaEra puro)
-        run: sh nefs/iso/novaera-iso.sh
-
-      - name: Construir a ISO com o Linux mínimo
+      - name: Construir a ISO do NEFS (a oficina)
         run: sudo bash nefs/iso/construir.sh
 
       - name: Conferir as ISOs
@@ -45,66 +47,25 @@ jobs:
           cat > notas.md <<EOF
           ## NEFS $VERSAO - NovaEra From Scratch
 
-          Para criar o seu próprio sistema operacional sobre o microkernel NovaEra.
+          **A oficina para criar o seu próprio sistema operacional** sobre o
+          microkernel NovaEra, no estilo do Linux From Scratch: uma tela preta,
+          os comandos e o livro. Você monta o sistema, peça por peça, e vê ele
+          nascer.
 
-          ### nefs-novaera-$VERSAO-x86_64.iso — sem Linux (recomendada)
+          (Quer só usar o sistema NovaEra pronto, com janelas? Ele tem o
+          lançamento dele: procure "NovaEra" na página de lançamentos.)
 
-          O NovaEra puro: dá boot direto, **em modo gráfico** (1024 × 768, com
-          mouse e janelas), e já traz o compilador (cproc + QBE), o \`nefs\`, o
-          código-fonte e o livro. Com um disco para guardar o trabalho:
+          ### nefs-$VERSAO-x86_64.iso
 
-              truncate -s 256M disco.img
-              qemu-system-x86_64 -cdrom nefs-novaera-$VERSAO-x86_64.iso -m 256M \\
-                  -drive file=disco.img,format=raw
-
-          No celular (Termux), a tela gráfica vai por VNC: acrescente \`-vnc :1\` e
-          conecte um app de VNC (bVNC, RealVNC...) em \`localhost:5901\`. Para ficar em
-          texto, no próprio terminal: \`-display curses -vga cirrus\`.
-
-          No modo gráfico, digite \`janelas\`: terminais, relógio e calculadora em
-          janelas que se arrastam e mudam de tamanho (Ctrl+Q sai).
-
-          Dentro dele:
-
-              nefs guia                                  # o Livro 2: instalar no disco, à mão
-              nefs livro                                 # o Livro 1: como o NovaEra funciona
-              formatar                                   # o disco (FAT32), para guardar trabalho
-              nefs novo /disco/meu Meu Sistema           # o seu sistema
-              nefs compilar /disco/meu                   # compila lá dentro
-              nefs iso -o /disco/meu.iso /disco/meu      # a ISO do seu sistema
-
-          **Ela também é a ISO de instalação:** com \`nefs guia\`, o NovaEra se
-          instala no disco, passo a passo, como o Arch Linux (particionar,
-          formatar em ext2, \`instalar-sistema\`, \`entrar\`, \`instalar-boot\`) e
-          depois liga sozinho pelo disco, numa **tela de entrada gráfica**, com
-          usuários e senhas (ou no login de texto, pela 2ª opção do GRUB). Para
-          ligar pela ISO com um disco que já tem o NovaEra, use \`-boot d\` no QEMU.
-
-          ### O que o NovaEra já tem
-
-          Microkernel x86_64 com os servidores no anel 3; sinais e Ctrl+C;
-          até 4 discos com partições, FAT32 e ext2; usuários, senhas e \`sudo\`;
-          threads (pthread); memória compartilhada (\`mmap\`, \`shm_open\`);
-          sockets locais (AF_UNIX); e compila a si mesmo (\`nefs compilar\`).
-
-          **Novo na 0.3, a parte gráfica (Fase 5):** a tela de 1024 × 768 com a
-          logo; o mouse (PS/2 e o vmmouse, que acompanha o dedo no VNC); a
-          biblioteca de desenho (\`grafico.h\`), com fotos PNG/JPEG/BMP pelo
-          stb_image (\`ver foto.png\`); letras bonitas, com contorno suave (a
-          DejaVu Sans pela stb_truetype); o servidor de janelas, no estilo do
-          Wayland, e a biblioteca de janelas (\`janela.h\`: botões, caixas de texto,
-          mudar o tamanho); o terminal gráfico (\`term\`), com vários terminais
-          virtuais; e a tela de entrada gráfica no sistema instalado.
-
-          ### nefs-$VERSAO-x86_64.iso — com um Linux mínimo
-
-          A oficina da Fase 1 (pelo menos 1 GiB de RAM):
+          Pelo menos 1 GiB de RAM:
 
               qemu-system-x86_64 -cdrom nefs-$VERSAO-x86_64.iso -m 1G
 
+          (No celular, no Termux: acrescente \`-display curses\`.)
+
           Dentro dela:
 
-              nefs livro                       # o Livro do NEFS
+              nefs livro                       # o Livro do NEFS: como o NovaEra funciona
               nefs novo meu-so "Meu Sistema"   # cria o seu sistema
               cd meu-so
               nefs compilar                    # compila com cproc + QBE
@@ -113,6 +74,10 @@ jobs:
 
           **Dentro da ISO:** Linux mínimo (kernel do Ubuntu + BusyBox), cproc + QBE 1.3,
           nefs-as, nefs-ld e nefs-ar, QEMU, GRUB, o comando \`nefs\`, o código do NovaEra e o Livro 1.
+
+          O livro acompanha cada peça: o núcleo, os servidores, os discos, os
+          usuários e, desde a 0.3, a parte gráfica (a tela, o mouse, as letras e
+          as janelas): tudo isso vem no código que o seu sistema herda.
 
           Tudo roda na memória RAM: copie o seu trabalho antes de desligar
           (capítulo 2 do livro).
