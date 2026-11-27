@@ -18,7 +18,7 @@ Plano detalhado em [`FASE3.md`](FASE3.md): QBE, assembler e ligador
 próprios, cproc, autossuficiência e disco. **Entrega:** a ISO do NEFS sem
 nenhum Linux por baixo.
 
-## Fase 4 — base POSIX e o modo manual
+## Fase 4 — base POSIX e o modo manual ✅
 
 O que quase todo programa de Unix espera do sistema:
 

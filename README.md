@@ -369,6 +369,23 @@ Clique dentro da janela do QEMU (ou toque na tela do Termux) e digite:
 
 **O disco** usa FAT32: o que você gravar em `/disco` abre também no Windows, no Linux e no celular. Do lado de fora, sem ligar o NovaEra: `mdir -i disco.img ::/` e `mcopy -i disco.img ::/arquivo .` (pacote `mtools`; no Termux, `pkg install mtools`).
 
+### Instalando no disco (pela ISO)
+
+Na página de **[lançamentos](https://github.com/josedavimoura579-ai/NewEra-Karnel/releases)**,
+baixe a `nefs-novaera-<versão>-x86_64.iso`: o NovaEra que liga pelo CD e se
+instala num disco, à mão, como o Arch Linux:
+
+```bash
+truncate -s 256M disco.img
+qemu-system-x86_64 -cdrom nefs-novaera-0.2-x86_64.iso -boot d -m 256M -display curses \
+    -drive file=disco.img,format=raw,index=0,media=disk
+```
+
+Dentro dele, `nefs guia` mostra o passo a passo (o **Livro 2**:
+particionar, formatar, `instalar-sistema`, `entrar`, `instalar-boot`).
+Depois, ligue só pelo disco: `bash run.sh disco` (ou o mesmo QEMU sem
+`-cdrom` e `-boot d`), e o NovaEra pede o login.
+
 ### Compilando a partir do código-fonte
 
 Para mudar o NovaEra e compilar de novo. A compilação usa o **clang** e as ferramentas do próprio NovaEra (`nefs-as`, `nefs-ld`), que o `build.sh` compila antes. Não precisa de NASM nem de binutils.
@@ -461,7 +478,7 @@ O destino é que cada pessoa possa criar o próprio sistema de **dois jeitos**:
 degraus, e cada fase já entrega algo usável. Detalhes em
 [`nefs/ROTEIRO.md`](nefs/ROTEIRO.md).
 
-- [ ] **Fase 4 — base POSIX e o modo manual** (plano em 9 etapas: [`nefs/FASE4.md`](nefs/FASE4.md)): sinais e `kill`, threads, `mmap`, sockets locais, usuários e permissões (`sudo`), e o modo **manual estilo Arch** completo no livro
+- [x] **Fase 4 — base POSIX e o modo manual** (plano em 9 etapas: [`nefs/FASE4.md`](nefs/FASE4.md)): sinais e `kill`, threads, `mmap`, sockets locais, usuários e permissões (`sudo`), e o modo **manual estilo Arch** completo no livro
   - [x] Etapa 1 — sinais e `kill`: **Ctrl+C** para o comando (o pipe inteiro), `kill`, tratadores (`signal`/`sigaction`), SIGSEGV/SIGFPE, SIGPIPE ([livro, capítulo 8](nefs/livro/08-sinais.md))
   - [x] Etapa 2 — até 4 discos (`sda` a `sdd`), partições MBR (`particionar`), `montar`/`desmontar` em qualquer pasta, `discos` ([livro, capítulo 9](nefs/livro/09-discos-particoes-montagens.md))
   - [x] Etapa 3 — **ext2** (o sistema de arquivos do Linux, com dono e permissões): `formatar -t ext2`, `montar` descobre o tipo; o `e2fsck` do Linux aprova ([livro, capítulo 10](nefs/livro/10-o-ext2.md))
@@ -470,6 +487,7 @@ degraus, e cada fase já entrega algo usável. Detalhes em
   - [x] Etapa 6 — **threads**: `pthread_create`, `pthread_join`, mutex e condições, com futex no núcleo ([livro, capítulo 13](nefs/livro/13-threads.md))
   - [x] Etapa 7 — **`mmap` e memória compartilhada** entre programas (`shm_open`), com mutex entre processos ([livro, capítulo 14](nefs/livro/14-memoria-compartilhada.md))
   - [x] Etapa 8 — **sockets locais** (`AF_UNIX`): `socket`, `bind`, `listen`, `accept`, `connect`, `socketpair`, `poll`; um servidor no anel 3 (PID 11) ([livro, capítulo 15](nefs/livro/15-sockets.md))
+  - [x] Etapa 9 — **o modo manual (estilo Arch)**: o Livro 2 (`nefs guia`), `entrar` (chroot), `gerar-montagens`, `data`, `/etc/hostname`; a ISO de instalação
 - [ ] **Fase 5 — gráficos**: framebuffer em alta resolução, mouse, fontes e um servidor de janelas no anel 3
 - [ ] **Fase 6 — a área de trabalho do NovaEra e o modo pronto**: painel, menu, janelas, gerenciador de arquivos e terminal gráfico (no estilo do XFCE), pacotes e um **instalador estilo Debian/Ubuntu** com a opção "com área de trabalho"
 - [ ] **Fase 7 — rede e o XFCE4 de verdade**: TCP/IP, porte do GCC ou do clang, do X11, do GTK e do **XFCE4**

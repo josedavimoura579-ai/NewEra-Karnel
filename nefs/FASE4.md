@@ -137,7 +137,20 @@ Cada etapa termina com algo testável no QEMU.
     `exemplos/sockets.c` (um servidor, três clientes, `poll`). Ainda não:
     o nome como arquivo na pasta, `SOCK_DGRAM`, passar descritores
     (`SCM_RIGHTS`) e sockets de rede.
-- [ ] **Etapa 9 — o modo manual (estilo Arch)**
+- [x] **Etapa 9 — o modo manual (estilo Arch)** (núcleo 4.0; o Livro 2: `nefs guia`)
   - o Livro 2: instalar o NovaEra à mão, passo a passo
   - a ISO de instalação
   - *Entrega: um sistema multiusuário montado à mão, dando boot no disco.*
+  - Feito: o Livro 2 (`nefs/guia`, lido com `nefs guia`), em 9 capítulos,
+    do boot pela ISO até o primeiro login. Comandos novos: `entrar` (o
+    arch-chroot: `SYS_RAIZ`, a raiz de cada processo, que a ulib põe na
+    frente dos caminhos), `gerar-montagens` (o genfstab), `data` (o relógio
+    do CMOS, `SYS_RELOGIO`) e o nome da máquina em `/etc/hostname`. O
+    `passwd` do root grava direto (funciona dentro do `entrar`); o
+    `instalar-sistema` atualiza sem trocar o `/etc` que já existe. A ISO
+    sem Linux (`nefs-novaera-0.2`) é a ISO de instalação. Conferido:
+    instalar à mão seguindo o guia ao pé da letra, ligar pelo disco, logar
+    com a senha criada dentro do `entrar`, atualizar pela ISO e os
+    usuários continuarem lá; o `e2fsck` aprova.
+
+**A Fase 4 está completa.** Próxima: a Fase 5, os gráficos (`nefs/ROTEIRO.md`).

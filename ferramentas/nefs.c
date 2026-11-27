@@ -507,7 +507,7 @@ static const char *const fontes_raiz[] = {
     "kernel.c", "novaera.h", "boot.s", "cpu.s", "linker.ld", "build.sh",
     "sistema.conf", "programas.lista", "logo.txt", "LICENSE", NULL };
 static const char *const fontes_pastas[] = {
-    "usuario", "libc", "ferramentas", "exemplos", "portes", "nefs/livro", "etc", NULL };
+    "usuario", "libc", "ferramentas", "exemplos", "portes", "nefs/livro", "nefs/guia", "etc", NULL };
 static const char *const fontes_fora[] = { "portes/fontes", "ferramentas/testes", NULL };
 
 /* ------------------------------- Portes ---------------------------------- */
@@ -796,6 +796,7 @@ static void cmd_compilar(int argc, char **argv)
     tar_arvore("usr/include", "libc/include", NULL);
     tar_arvore("usr/share/nefs/exemplos", "exemplos", NULL);
     tar_arvore("usr/share/nefs/livro", "nefs/livro", NULL);
+    if (eh_pasta("nefs/guia")) tar_arvore("usr/share/nefs/guia", "nefs/guia", NULL);
     if (existe(GRUB_ELTORITO)) tar_arquivo("usr/lib/nefs/grub/eltorito.img", GRUB_ELTORITO, 0);
     if (existe("ferramentas/grub/boot.img")) tar_arquivo("usr/lib/nefs/grub/boot.img", "ferramentas/grub/boot.img", 0);
     if (existe("ferramentas/grub/disco.img")) tar_arquivo("usr/lib/nefs/grub/disco.img", "ferramentas/grub/disco.img", 0);
@@ -1047,15 +1048,17 @@ static void cmd_iso(int argc, char **argv)
 
 /* -------------------------------- livro ---------------------------------- */
 
-static void cmd_livro(int argc, char **argv)
+/* O Livro 1 (nefs livro) e o Livro 2, o guia de instalação (nefs guia). */
+static void ler_livro(const char *sistema, const char *repo, const char *titulo, const char *cmd,
+                      int argc, char **argv)
 {
-    const char *pasta = existe("/usr/share/nefs/livro") ? "/usr/share/nefs/livro" : "nefs/livro";
+    const char *pasta = existe(sistema) ? sistema : repo;
     lista_t caps = {0};
     lista_pasta(pasta, ".md", &caps);
     if (!caps.n) erro("o livro não está em %s", pasta);
     /* os capítulos são "01-o-que-e.md", "02-...": o número vem do nome */
     if (argc == 0) {
-        printf("O Livro do NEFS (leia um capítulo com: nefs livro <número>):\n");
+        printf("%s (leia um capítulo com: nefs %s <número>):\n", titulo, cmd);
         for (int i = 0; i < caps.n; i++) {
             char *t = le_arquivo(caps.v[i], NULL), *nl = t ? strchr(t, '\n') : NULL;
             if (nl) *nl = '\0';
@@ -1075,6 +1078,16 @@ static void cmd_livro(int argc, char **argv)
         return;
     }
     erro("o capítulo %s não existe", argv[0]);
+}
+
+static void cmd_livro(int argc, char **argv)
+{
+    ler_livro("/usr/share/nefs/livro", "nefs/livro", "O Livro do NEFS", "livro", argc, argv);
+}
+
+static void cmd_guia(int argc, char **argv)
+{
+    ler_livro("/usr/share/nefs/guia", "nefs/guia", "Livro 2: o guia de instalação do NovaEra", "guia", argc, argv);
 }
 
 /* --------------------------------- novo ---------------------------------- */
@@ -1166,6 +1179,7 @@ static void uso(void)
            "  nefs novo <pasta> [nome do sistema]        um sistema novo, a partir de /usr/src/novaera\n"
            "  nefs iso [-o saida.iso] [pasta]            uma ISO inicializável (depois do compilar)\n"
            "  nefs livro [capítulo]                      o Livro do NEFS\n"
+           "  nefs guia [capítulo]                       o Livro 2: instalar o NovaEra à mão\n"
            "  nefs info                                  o sistema e as ferramentas\n"
            "Exemplo:  cd /usr/src/novaera  e  nefs compilar\n");
 }
@@ -1178,6 +1192,7 @@ int main(int argc, char **argv)
     else if (!strcmp(argv[1], "info")) cmd_info();
     else if (!strcmp(argv[1], "iso")) cmd_iso(argc - 2, argv + 2);
     else if (!strcmp(argv[1], "livro")) cmd_livro(argc - 2, argv + 2);
+    else if (!strcmp(argv[1], "guia")) cmd_guia(argc - 2, argv + 2);
     else { uso(); return 2; }
     return 0;
 }

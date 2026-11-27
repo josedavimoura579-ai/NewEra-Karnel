@@ -7,12 +7,17 @@
  * Copia /bin, /etc, /usr e /boot (com o kernel.bin) e cria as pastas que
  * todo sistema tem: /home, /root, /tmp, /mnt, /disco. Depois, para o disco
  * dar boot sozinho: instalar-boot sda /mnt
+ *
+ * Num disco que já tem o NovaEra, serve para ATUALIZAR: os programas são
+ * trocados, mas um arquivo do /etc que já existe (passwd, sombra, group,
+ * hostname, montagens) fica como está.
  */
 #include <stdio.h>
 #include "ulib.h"
 
 static u8  buf[ESCRITA_MAX];
-static u32 arquivos, pastas;
+static u32 arquivos, pastas, mantidos;
+static int manter_existentes;            /* no /etc: a configuração de quem já instalou fica */
 static u64 bytes;
 
 static void junta(char *d, const char *a, const char *b)
@@ -58,6 +63,7 @@ static int copiar_pasta(const char *de, const char *para, u32 modo)
         junta(a, de, nome);
         junta(b, para, nome);
         if (e.tipo == ARQ_TIPO_PASTA) r |= copiar_pasta(a, b, e.modo ? e.modo : 0755);
+        else if (manter_existentes && arq_info(b, 0) == ARQ_TIPO_ARQUIVO) mantidos++;
         else if (copiar_arquivo(a, b, e.modo ? e.modo : 0644) < 0) {
             fprintf(stderr, "instalar-sistema: erro ao copiar %s\n", a);
             r = -1;
@@ -106,7 +112,9 @@ int main(int argc, char **argv)
         junta(destino, raiz, copiar[i] + 1);
         printf("Copiando %s...\n", copiar[i]);
         fflush(stdout);
+        manter_existentes = str_igual(copiar[i], "/etc");
         r |= copiar_pasta(copiar[i], destino, 0755);
+        manter_existentes = 0;
     }
     criar(raiz, "home", 0755);
     criar(raiz, "root", 0700);
@@ -132,6 +140,7 @@ int main(int argc, char **argv)
 
     printf("%s: %u pastas, %u arquivos, %lu KiB em %s.\n", r ? "Terminou com erros" : "Pronto",
            pastas, arquivos, (unsigned long)(bytes / 1024), raiz);
+    if (mantidos) printf("No /etc, %u arquivos já existiam e ficaram como estavam (usuários, senhas...).\n", mantidos);
     if (!tem_kernel) printf("Aviso: não achei o /boot/kernel.bin para copiar (rode o nefs compilar).\n");
     else printf("Agora, para dar boot por este disco: instalar-boot sda %s\n", raiz);
     return r ? 1 : 0;

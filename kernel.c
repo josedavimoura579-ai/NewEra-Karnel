@@ -619,6 +619,7 @@ typedef struct {
      * núcleo guarda, para os filhos herdarem; quem usa é a ulib. */
     u32        entrada, entrada_canal, saida, saida_canal;
     char       pasta[CAMINHO_MAX];
+    char       raiz[CAMINHO_MAX];  /* o chroot ("" = a raiz de verdade) */
 
     u64       *diretorio;      /* PML4: o espaço de endereçamento (CR3) */
     u8        *pilha_nucleo;   /* onde o quadro_t fica enquanto está parado */
@@ -1225,6 +1226,7 @@ static long processo_executar(tarefa_t *eu, u64 pedido)
     t->saida         = c.saida   ? c.saida         : eu->saida;
     t->saida_canal   = c.saida   ? c.saida_canal   : eu->saida_canal;
     mem_copia(t->pasta, eu->pasta, CAMINHO_MAX);
+    mem_copia(t->raiz, eu->raiz, CAMINHO_MAX);
     long erro = processo_carregar(pid, &args_tmp);
     t->imagem = 0;                              /* a imagem era emprestada */
     if (erro) {
@@ -1514,6 +1516,7 @@ static long thread_criar(tarefa_t *eu, u64 pedido)
     t->entrada       = p->entrada;       t->entrada_canal = p->entrada_canal;
     t->saida         = p->saida;         t->saida_canal   = p->saida_canal;
     mem_copia(t->pasta, eu->pasta, CAMINHO_MAX);
+    mem_copia(t->raiz, eu->raiz, CAMINHO_MAX);
     t->diretorio     = p->diretorio;     /* a MESMA memória */
     t->ident         = eu->ident;
     t->grupo         = eu->grupo;
@@ -1954,6 +1957,50 @@ static long syscall_executar(quadro_t *q)
 
     case SYS_SHM_APAGAR:
         return shm_apagar(eu, a);
+
+    case SYS_RAIZ: {
+        if (a) {
+            char nova[CAMINHO_MAX];
+            if (eu->ident.uid != UID_ROOT) return ERRO_SEM_PERMISSAO;
+            if (texto_do_usuario(eu, a, nova, CAMINHO_MAX) <= 0 || nova[0] != '/') return ERRO_INVALIDO;
+            if (nova[1] == '\0') nova[0] = '\0';          /* "/" = sem chroot */
+            mem_copia(eu->raiz, nova, CAMINHO_MAX);
+            eu->pasta[0] = '/'; eu->pasta[1] = '\0';      /* começa na raiz nova */
+        }
+        if (b) {
+            if (!usuario_valido(eu, b, sizeof(msg_t))) return ERRO_INVALIDO;
+            msg_t *m = (msg_t *)b;
+            mem_zera(m, sizeof(*m));
+            mem_copia(m->texto, eu->raiz, CAMINHO_MAX);
+        }
+        return 0;
+    }
+
+    case SYS_RELOGIO: {                    /* o relógio do CMOS (portas 0x70/0x71) */
+        if (!usuario_valido(eu, a, sizeof(msg_t))) return ERRO_INVALIDO;
+        u32 v[6], antes[6];
+        static const u8 regs[6] = { 9, 8, 7, 4, 2, 0 };       /* ano mês dia hora min seg */
+        for (int tentativa = 0; tentativa < 5; tentativa++) {
+            for (u32 i = 0; i < 6; i++) antes[i] = v[i];
+            outb(0x70, 0x0A);
+            while (inb(0x71) & 0x80) { }                     /* não ler no meio de uma atualização */
+            for (u32 i = 0; i < 6; i++) { outb(0x70, regs[i]); v[i] = inb(0x71); }
+            if (tentativa && antes[0] == v[0] && antes[5] == v[5]) break;
+        }
+        outb(0x70, 0x0B);
+        u8 status = inb(0x71);
+        u32 pm = v[3] & 0x80;
+        v[3] &= 0x7F;
+        if (!(status & 0x04))                                /* BCD -> binário */
+            for (u32 i = 0; i < 6; i++) v[i] = (v[i] & 0x0F) + ((v[i] >> 4) * 10);
+        if (!(status & 0x02) && pm) v[3] = (v[3] + 12) % 24; /* relógio de 12 horas */
+        msg_t *m = (msg_t *)a;
+        mem_zera(m, sizeof(*m));
+        m->arg[0] = 2000 + v[0];
+        m->arg[1] = v[1] << 8 | v[2];
+        m->arg[2] = v[3] << 16 | v[4] << 8 | v[5];
+        return 0;
+    }
 
     case SYS_NUCLEO: {
         if (!usuario_valido(eu, a, sizeof(msg_t))) return ERRO_INVALIDO;

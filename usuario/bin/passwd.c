@@ -32,7 +32,15 @@ int main(int argc, char **argv)
     ler_linha("Nova senha: ", senha, sizeof senha, 0);
     ler_linha("Repita a nova senha: ", de_novo, sizeof de_novo, 0);
     if (!str_igual(senha, de_novo)) { escreve_erro("passwd: as duas nao sao iguais\n"); return 1; }
-    long e = contas_pedir(CONTAS_SENHA, alvo, senha, &r);
+    long e;
+    if (eu.uid == UID_ROOT) {                 /* o root grava ele mesmo (funciona no "entrar") */
+        char sal[20], hash[HASH_MAX];
+        sal_novo(sal);
+        senha_hash(senha, sal, hash);
+        e = sombra_trocar(alvo, hash);
+    } else {
+        e = contas_pedir(CONTAS_SENHA, alvo, senha, &r);
+    }
     mem_zera(senha, sizeof senha);
     mem_zera(de_novo, sizeof de_novo);
     if (e < 0) { escreve_erro("passwd: nao consegui trocar a senha\n"); return 1; }

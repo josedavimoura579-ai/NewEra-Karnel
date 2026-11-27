@@ -36,6 +36,9 @@ static inline long sys_ambiente(msg_t *m)               { return syscall2(SYS_AM
 static inline long sys_pasta(const char *caminho)       { return syscall2(SYS_PASTA, (u64)caminho, 0); }
 static inline long sys_nucleo(msg_t *m)                 { return syscall2(SYS_NUCLEO, (u64)m, 0); }
 static inline long sys_linha_boot(msg_t *m)             { return syscall2(SYS_LINHA_BOOT, (u64)m, 0); }
+static inline long sys_raiz(const char *nova, msg_t *m)  { return syscall2(SYS_RAIZ, (u64)nova, (u64)m); }
+static inline long sys_relogio(msg_t *m)                 { return syscall2(SYS_RELOGIO, (u64)m, 0); }
+
 
 /* Sinais. pid > 0: um processo; pid < 0: o grupo -pid; 0: o meu grupo. */
 void __sinal_volta(void);                                /* sys.s: o restaurador */
@@ -407,6 +410,19 @@ static inline int caminho_absoluto(const char *rel, char *saida)
 
 /* -------------------------------- Arquivos -------------------------------- */
 
+/* A raiz do processo (o chroot do "entrar"): "" = a de verdade. */
+static char ulib_raiz[CAMINHO_MAX];
+static int  ulib_raiz_lida;
+static inline const char *raiz_atual(void)
+{
+    if (!ulib_raiz_lida) {
+        msg_t m;
+        if (sys_raiz(0, &m) == 0) str_copia(ulib_raiz, m.texto, CAMINHO_MAX);
+        ulib_raiz_lida = 1;
+    }
+    return ulib_raiz;
+}
+
 /* Pedido com um caminho; devolve a resposta em m (em m->origem fica quem
  * respondeu). Todo caminho começa no servidor de arquivos, que é a raiz;
  * se ele cair num disco montado, a resposta diz quem cuida dele
@@ -415,6 +431,15 @@ static inline long arq_pedido(u32 tipo, const char *caminho, msg_t *m)
 {
     char abs[CAMINHO_MAX];
     if (caminho_absoluto(caminho, abs) < 0) return ERRO_INVALIDO;
+    const char *raiz = raiz_atual();
+    if (raiz[0]) {                               /* dentro do "entrar": /etc é <raiz>/etc */
+        char rel[CAMINHO_MAX];
+        str_copia(rel, abs, sizeof rel);
+        u32 nr = str_tam(raiz), na = str_tam(rel);
+        if (nr + na >= CAMINHO_MAX) return ERRO_INVALIDO;
+        str_copia(abs, raiz, sizeof abs);
+        if (!(rel[0] == '/' && rel[1] == '\0')) str_copia(abs + nr, rel, sizeof abs - nr);
+    }
     u32 a0 = m->arg[0], srv = PID_ARQUIVOS;
     u32 a1 = (tipo == ARQ_ABRIR || tipo == ARQ_DONO) ? m->arg[1] : 0;
     for (int tentativa = 0; ; tentativa++) {
