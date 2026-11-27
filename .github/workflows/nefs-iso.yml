@@ -58,11 +58,25 @@ jobs:
 
           Dentro dele:
 
-              formatar                                   # o disco (FAT32), uma vez
+              nefs guia                                  # o Livro 2: instalar no disco, à mão
+              nefs livro                                 # o Livro 1: como o NovaEra funciona
+              formatar                                   # o disco (FAT32), para guardar trabalho
               nefs novo /disco/meu Meu Sistema           # o seu sistema
               nefs compilar /disco/meu                   # compila lá dentro
               nefs iso -o /disco/meu.iso /disco/meu      # a ISO do seu sistema
-              nefs livro                                 # o Livro do NEFS
+
+          **Ela também é a ISO de instalação:** com \`nefs guia\`, o NovaEra se
+          instala no disco, passo a passo, como o Arch Linux (particionar,
+          formatar em ext2, \`instalar-sistema\`, \`entrar\`, \`instalar-boot\`) e
+          depois liga sozinho pelo disco, com login e usuários. Para ligar pela
+          ISO com um disco que já tem o NovaEra, use \`-boot d\` no QEMU.
+
+          ### O que o NovaEra já tem
+
+          Microkernel x86_64 com os servidores no anel 3; sinais e Ctrl+C;
+          até 4 discos com partições, FAT32 e ext2; usuários, senhas e \`sudo\`;
+          threads (pthread); memória compartilhada (\`mmap\`, \`shm_open\`);
+          sockets locais (AF_UNIX); e compila a si mesmo (\`nefs compilar\`).
 
           ### nefs-$VERSAO-x86_64.iso — com um Linux mínimo
 
