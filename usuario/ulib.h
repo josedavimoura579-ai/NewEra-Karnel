@@ -64,6 +64,13 @@ static inline void sys_thread_sair(int codigo)             { syscall2(SYS_THREAD
 static inline long sys_futex_esperar(int *p, int valor)    { return syscall2(SYS_FUTEX_ESPERAR, (u64)p, (u64)(u32)valor); }
 static inline long sys_futex_acordar(int *p, int n)        { return syscall2(SYS_FUTEX_ACORDAR, (u64)p, (u64)n); }
 
+/* mmap e memória compartilhada */
+static inline long sys_mmap(mmap_t *m)                     { return syscall2(SYS_MMAP, (u64)m, 0); }
+static inline long sys_munmap(u64 endereco, u64 bytes)     { return syscall2(SYS_MUNMAP, endereco, bytes); }
+static inline long sys_shm_abrir(shm_pedido_t *p)          { return syscall2(SYS_SHM_ABRIR, (u64)p, 0); }
+static inline long sys_shm_tamanho(u32 id, u64 bytes)      { return syscall2(SYS_SHM_TAMANHO, id, bytes); }
+static inline long sys_shm_apagar(const char *nome)        { return syscall2(SYS_SHM_APAGAR, (u64)nome, 0); }
+
 /* Usuários: quem é um processo (pid 0 = eu); só o root muda. */
 static inline long sys_identidade(u32 pid, identidade_t *id)       { return syscall2(SYS_IDENTIDADE, pid, (u64)id); }
 static inline long sys_identidade_mudar(u32 pid, identidade_t *id) { return syscall2(SYS_IDENTIDADE_MUDAR, pid, (u64)id); }

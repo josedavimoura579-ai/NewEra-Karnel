@@ -7,6 +7,8 @@
  */
 #include <errno.h>
 #include <limits.h>
+#include <fcntl.h>
+#include <sys/mman.h>
 #include <pthread.h>
 #include <signal.h>
 #include <spawn.h>
@@ -478,8 +480,87 @@ static void testa_threads(char *eu)
     confere(st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 0, "a principal sai com pthread_exit; a outra termina");
 }
 
+/* --------------------------- mmap e memória compartilhada ------------------ */
+
+typedef struct {
+    pthread_mutex_t trava;            /* um mutex DENTRO da memória compartilhada */
+    long contador;
+    char recado[64];
+} comum_t;
+
+static comum_t *abrir_comum(int criar)
+{
+    int fd = shm_open("/testelibc", criar ? (O_CREAT | O_RDWR) : O_RDWR, 0600);
+    if (fd < 0) return NULL;
+    if (criar && ftruncate(fd, sizeof(comum_t)) < 0) { close(fd); return NULL; }
+    void *p = mmap(NULL, sizeof(comum_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
+    return p == MAP_FAILED ? NULL : p;
+}
+
+static void somar_comum(comum_t *c)
+{
+    for (int i = 0; i < 20000; i++) {
+        pthread_mutex_lock(&c->trava);
+        c->contador++;
+        pthread_mutex_unlock(&c->trava);
+        if (i % 1000 == 0) sched_yield_ou_nada();
+    }
+}
+
+static void testa_mmap(char *eu)
+{
+    size_t tam = 1024 * 1024;
+    unsigned char *m = mmap(NULL, tam, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    int ok = m != MAP_FAILED;
+    for (size_t i = 0; ok && i < tam; i += 4096) if (m[i] != 0) ok = 0;   /* vem zerada */
+    for (size_t i = 0; ok && i < tam; i++) m[i] = (unsigned char)(i * 7);
+    for (size_t i = 0; ok && i < tam; i++) if (m[i] != (unsigned char)(i * 7)) ok = 0;
+    confere(ok, "mmap de 1 MiB: zerado, escreve e lê");
+    confere(ok && munmap(m, tam) == 0, "munmap");
+
+    int st = espera(filho(eu, "--munmap"));
+    confere(st != -1 && WIFSIGNALED(st) && WTERMSIG(st) == SIGSEGV, "usar depois do munmap: SIGSEGV");
+    st = espera(filho(eu, "--so-leitura"));
+    confere(st != -1 && WIFSIGNALED(st) && WTERMSIG(st) == SIGSEGV, "escrever em PROT_READ: SIGSEGV");
+
+    shm_unlink("/testelibc");
+    comum_t *c = abrir_comum(1);
+    confere(c != NULL, "shm_open + ftruncate + mmap");
+    if (!c) return;
+    pthread_mutex_init(&c->trava, NULL);
+    strcpy(c->recado, "ola, filho");
+    pid_t p = filho(eu, "--shm");
+    somar_comum(c);                         /* o filho soma junto, ao mesmo tempo */
+    st = espera(p);
+    confere(st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 0, "o filho leu o recado do pai");
+    texto(c->recado, "oi, pai", "o pai lê o que o filho escreveu");
+    confere(c->contador == 40000, "pai e filho somando com um mutex compartilhado: 40000");
+    confere(shm_unlink("/testelibc") == 0 && shm_open("/testelibc", O_RDWR, 0) == -1 && errno == ENOENT,
+            "shm_unlink: o nome some");
+    munmap(c, sizeof(comum_t));
+}
+
 int main(int argc, char **argv)
 {
+    if (argc == 2 && !strcmp(argv[1], "--munmap")) {
+        char *m = mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        m[0] = 1;
+        munmap(m, 8192);
+        return m[0];
+    }
+    if (argc == 2 && !strcmp(argv[1], "--so-leitura")) {
+        char *m = mmap(NULL, 4096, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        m[0] = 1;
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--shm")) {
+        comum_t *c = abrir_comum(0);
+        if (!c || strcmp(c->recado, "ola, filho")) return 1;
+        somar_comum(c);
+        strcpy(c->recado, "oi, pai");
+        return 0;
+    }
     if (argc == 2 && !strcmp(argv[1], "--thread-exit")) {
         pthread_t t;
         pthread_create(&t, NULL, sair_7, NULL);
@@ -530,6 +611,7 @@ int main(int argc, char **argv)
     testa_processos(argv[0]);
     testa_sinais(argv[0]);
     testa_threads(argv[0]);
+    testa_mmap(argv[0]);
     printf("%s: %d de %d testes passaram\n", falhas ? "FALHAS" : "OK", total - falhas, total);
     return falhas;
 }

@@ -22,7 +22,7 @@ typedef unsigned long long u64;
 
 /* A versão do NÚCLEO. A do sistema (a "distribuição") fica em sistema.conf,
  * como o /etc/os-release do Linux: o núcleo não sabe qual é a distro. */
-#define NOVAERA_VERSAO     "3.8"
+#define NOVAERA_VERSAO     "3.9"
 #define NOVAERA_ARQUITETURA "x86_64"
 
 /* ---------------------- Chamadas de sistema (int 0x80) -------------------
@@ -47,7 +47,7 @@ typedef unsigned long long u64;
 #define SYS_COPIAR_DE   16   /* (pid, copia_t*)  copia da memória de quem me CHAMOU para a minha */
 #define SYS_AMBIENTE    17   /* (msg*)           entrada, saída padrão e pasta atual */
 #define SYS_PASTA       18   /* (caminho)        muda a pasta atual          */
-#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.8 x86_64" (como o uname) */
+#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.9 x86_64" (como o uname) */
 #define SYS_SINAL       20   /* (pid, sinal)     envia um sinal; pid < 0: ao grupo -pid; 0: ao meu grupo */
 #define SYS_SINAL_TRATAR 21  /* (sinal, sinal_acao_t*) troca o tratador; devolve o antigo na mesma struct */
 #define SYS_SINAL_VOLTAR 22  /* ()               fim do tratador: volta ao ponto interrompido */
@@ -62,6 +62,11 @@ typedef unsigned long long u64;
 #define SYS_THREAD_SAIR 29   /* (código)         só esta thread termina (a última encerra o programa) */
 #define SYS_FUTEX_ESPERAR 30 /* (endereço, valor) dorme se *endereço == valor (senão ERRO_DE_NOVO) */
 #define SYS_FUTEX_ACORDAR 31 /* (endereço, n)    acorda até n threads dormindo nesse endereço */
+#define SYS_MMAP        32   /* (mmap_t*)        páginas novas (ou de um objeto compartilhado); devolve o endereço */
+#define SYS_MUNMAP      33   /* (endereço, bytes) devolve as páginas */
+#define SYS_SHM_ABRIR   34   /* (shm_pedido_t*)  abre ou cria um objeto de memória compartilhada; devolve o id */
+#define SYS_SHM_TAMANHO 35   /* (id, bytes)      o tamanho do objeto (o ftruncate); só cresce */
+#define SYS_SHM_APAGAR  36   /* (nome)           tira o nome; a memória vai embora com o último mapa */
 
 #define ERRO_INVALIDO   (-1) /* argumento ou ponteiro inválido */
 #define ERRO_SEM_PERMISSAO (-2)
@@ -159,8 +164,11 @@ typedef struct {
 #define ARQ_DISCO          "/disco"    /* onde o boot monta o primeiro FAT32 que achar */
 #define ARQ_SERVIDOR(c)    (((u32)(c) >> 8) & 0xFFu)
 #define ARQ_CANAL(c)       ((u32)(c) & 0xFFu)
-/* Quem guarda arquivos (e não é o terminal nem um pipe)? */
-#define SERVIDOR_DE_ARQUIVOS(s) ((s) != PID_TERMINAL && (s) != PID_TUBOS)
+/* Num descritor da libc, um objeto de memória compartilhada (shm_open)
+ * aparece com este "servidor" (não é um processo: nenhum PID chega a 254). */
+#define SERVIDOR_SHM 0xFEu
+/* Quem guarda arquivos (e não é o terminal, um pipe nem a memória compartilhada)? */
+#define SERVIDOR_DE_ARQUIVOS(s) ((s) != PID_TERMINAL && (s) != PID_TUBOS && (s) != SERVIDOR_SHM)
 
 /* Driver de disco (ATA: até 4 discos, nos dois canais IDE; setores de 512
  * bytes, até 128 por pedido). Um DISPOSITIVO é disco * 8 + partição:
@@ -335,6 +343,29 @@ typedef struct {
 #define ESTADO_ZUMBI      6      /* terminou; o pai ainda não leu o código */
 #define ESTADO_FUTEX      7      /* uma thread dormindo num futex (SYS_FUTEX_ESPERAR) */
 
+/* ------------------------ mmap e memória compartilhada --------------------
+ * mmap pede páginas de memória direto ao núcleo, numa região só para isso
+ * (USUARIO_MMAP). Com objeto = 0, páginas novas, zeradas, só deste
+ * programa. Com o id de um OBJETO DE MEMÓRIA COMPARTILHADA (SYS_SHM_ABRIR,
+ * pelo nome, como o shm_open do Linux), as MESMAS páginas físicas aparecem
+ * em todos os programas que o mapearem: o que um escreve, o outro lê na
+ * hora, sem mensagens. O futex usa o endereço físico: um mutex dentro da
+ * memória compartilhada funciona entre programas diferentes. */
+#define PROT_LER       1u
+#define PROT_ESCREVER  2u
+typedef struct {
+    u64 tam;                     /* em bytes (arredondado para páginas de 4 KiB) */
+    u64 objeto;                  /* 0 = memória nova; senão, o id do objeto compartilhado */
+    u64 prot;                    /* PROT_LER | PROT_ESCREVER */
+    u64 reservado;
+} mmap_t;
+typedef struct {
+    u64 nome;                    /* "/nome" (até 31 letras) */
+    u32 criar;                   /* 0 = só abre; 1 = cria se não existir; 2 = cria, e erro se existir */
+    u32 modo;                    /* as permissões, se criar (0600...) */
+} shm_pedido_t;
+#define SHM_MAX_BYTES  (2u * 1024 * 1024)   /* cada objeto: até 2 MiB */
+
 /* Quantos processos e threads o núcleo aguenta ao mesmo tempo. */
 #define PROCESSOS_MAX     64u
 
@@ -372,6 +403,7 @@ typedef struct {
  * ...depois do programa    heap, cresce para cima com SYS_SBRK, até 0x60000000
  * 0x68000000 - ...         o initrd, só leitura (só no servidor de arquivos)
  * 0x70000000 - 0x70000FFF  memória de vídeo 0xB8000 (só no servidor de vídeo)
+ * 0x71000000 - 0x7EFFFFFF  o mmap (memória nova e memória compartilhada)
  * 0x7FF00000 - 0x7FFFEFFF  pilha (1 MiB), cresce para baixo sob demanda;
  *                          no topo ficam os argumentos (argc, argv)       */
 #define USUARIO_BASE        0x40000000ull
@@ -379,6 +411,8 @@ typedef struct {
 #define USUARIO_HEAP_FIM    0x60000000ull
 #define USUARIO_INITRD      0x68000000ull
 #define USUARIO_VGA         0x70000000ull
+#define USUARIO_MMAP        0x71000000ull     /* a região do mmap, até 0x7F000000 */
+#define USUARIO_MMAP_FIM    0x7F000000ull
 #define USUARIO_PILHA_TOPO  0x7FFFF000ull
 #define USUARIO_PILHA_TAM   0x00100000ull
 #define USUARIO_FIM         USUARIO_PILHA_TOPO

@@ -113,8 +113,17 @@ Cada etapa termina com algo testável no QEMU.
     seguidas, `exit` e falha numa thread); `exemplos/threads.c`. Corrigido:
     o `nefs-ld` não ligava o `x` do programa que gera, e o `cp` agora
     mantém o modo da origem.
-- [ ] **Etapa 7 — `mmap` e memória compartilhada**
+- [x] **Etapa 7 — `mmap` e memória compartilhada** (núcleo 3.9; [livro, capítulo 14](livro/14-memoria-compartilhada.md))
   - `mmap` anônimo; memória compartilhada entre processos (`shm_open`)
+  - Feito: `SYS_MMAP`/`SYS_MUNMAP` (região 0x71000000-0x7F000000, só
+    leitura ou leitura e escrita) e `SYS_SHM_ABRIR`/`SYS_SHM_TAMANHO`/
+    `SYS_SHM_APAGAR` (objetos com nome, dono e modo, até 2 MiB; as páginas
+    marcadas nos bits livres da tabela não são liberadas com o processo).
+    O futex passou a usar o endereço físico: mutex e condições funcionam
+    entre programas. nlibc: `sys/mman.h` (`mmap`, `munmap`, `shm_open`,
+    `shm_unlink`) e `ftruncate`. `testelibc`: 9 testes (83/83), entre eles
+    pai e filho somando 40000 com um mutex compartilhado;
+    `exemplos/compartilhada.c`. Ainda não: `mmap` de arquivos.
 - [ ] **Etapa 8 — sockets locais (`AF_UNIX`)**
   - um servidor de sockets: `socket`, `bind`, `listen`, `accept`, `connect`
   - a base do X11, do Wayland e do D-Bus (Fases 5 a 7)

@@ -86,6 +86,7 @@ char *strerror(int e)
     case ENOSYS:  return "Ainda nao existe no NovaEra";
     case ENOTEMPTY: return "A pasta nao esta vazia";
     case EBUSY:   return "Em uso";
+    case ENODEV:  return "Nao suportado por este dispositivo";
     }
     return "Erro desconhecido";
 }

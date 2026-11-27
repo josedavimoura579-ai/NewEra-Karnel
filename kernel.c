@@ -310,6 +310,37 @@ static void memoria_iniciar(u64 mbi_endereco)
 #define PG_ESCRITA   0x2ull
 #define PG_USUARIO   0x4ull
 #define PG_ENDERECO  0x000FFFFFFFFFF000ull
+/* Bits livres para o sistema: a página é de um objeto compartilhado (não
+ * se libera com o processo) e qual objeto (bits 52-57). */
+#define PG_COMPARTILHADA (1ull << 9)
+#define PG_OBJETO(e)     ((u32)(((e) >> 52) & 0x3F))
+
+/* Objetos de memória compartilhada (SYS_SHM_*): as páginas físicas, que
+ * vários espaços de endereçamento mapeiam. Vivem enquanto têm nome ou
+ * alguém as mapeia. */
+#define SHM_MAX 32u                    /* ids de 1 a 31 (cabem nos bits 52-57) */
+typedef struct {
+    u32  usado, apagado;
+    char nome[32];
+    u32  dono, modo;
+    u32  paginas;
+    u64 *quadros;                      /* um quadro com até 512 endereços físicos */
+    u32  refs;                         /* páginas mapeadas, em todos os processos */
+} shm_t;
+static shm_t shms[SHM_MAX];
+
+static void quadro_liberar(u64 fisico);
+static void shm_soltar(u32 id)
+{
+    if (id == 0 || id >= SHM_MAX || !shms[id].usado) return;
+    shm_t *o = &shms[id];
+    if (o->refs) o->refs--;
+    if (!o->apagado || o->refs) return;
+    for (u32 i = 0; i < o->paginas; i++) quadro_liberar(o->quadros[i]);
+    if (o->quadros) quadro_liberar((u64)o->quadros);
+    o->quadros = 0;
+    o->usado = 0;
+}
 
 extern u64 pml4_boot[512];             /* boot.s */
 extern u64 pd_boot[512];
@@ -380,6 +411,10 @@ static void espaco_destruir(u64 *pml4)
                 u64 *pt = tabela_de(pd[k]);
                 for (u32 l = 0; l < 512; l++) {
                     u64 fisico = pt[l] & PG_ENDERECO;
+                    if ((pt[l] & PG_PRESENTE) && (pt[l] & PG_COMPARTILHADA)) {
+                        shm_soltar(PG_OBJETO(pt[l]));    /* do objeto, não do processo */
+                        continue;
+                    }
                     if ((pt[l] & PG_PRESENTE) && fisico >= (u64)_kernel_fim &&
                         !(fisico >= ((u64)initrd & ~0xFFFull) && fisico < (u64)initrd + initrd_tam))
                         quadro_liberar(fisico);      /* a VGA e o initrd não são do processo */
@@ -1437,12 +1472,16 @@ static long sinal_tratar(tarefa_t *eu, u64 s, u64 pedido)
  *  Threads e futex
  * =========================================================================== */
 
+/* O futex é guardado pelo endereço FÍSICO: assim duas threads (o mesmo
+ * espaço) ou dois programas (a mesma memória compartilhada) se encontram. */
 static long futex_acordar(u64 *dir, u64 endereco, u64 n)
 {
     long acordadas = 0;
+    u64 fisico = traduzir(dir, endereco);
+    if (!fisico) return 0;
     for (u32 j = 1; j < MAX_TAREFAS && (u64)acordadas < n; j++) {
         tarefa_t *o = &tarefas[j];
-        if (o->estado == ESTADO_FUTEX && o->diretorio == dir && o->futex_end == endereco) {
+        if (o->estado == ESTADO_FUTEX && o->futex_end == fisico) {
             acordar(o, 0);
             acordadas++;
         }
@@ -1531,6 +1570,145 @@ static void thread_sair(u32 id, long codigo)
     thread_liberar(id);
     if (p->nthreads == 1 && p->estado == ESTADO_ESPERANDO && p->alvo == ALVO_THREADS)
         processo_encerrar(lider, 0, 0, 0);   /* só sobrou a líder, que já tinha saído */
+}
+
+/* ===========================================================================
+ *  mmap e memória compartilhada
+ * =========================================================================== */
+
+/* A entrada da tabela de páginas de um endereço (0 se a tabela não existe). */
+static u64 *pte_de(u64 *pml4, u64 v)
+{
+    u64 *t = pml4;
+    for (int nivel = 39; nivel > 12; nivel -= 9) {
+        u64 e = t[(v >> nivel) & 511];
+        if (!(e & PG_PRESENTE)) return 0;
+        t = tabela_de(e);
+    }
+    return &t[(v >> 12) & 511];
+}
+
+/* 'n' páginas seguidas livres na região do mmap (0 = não há). */
+static u64 mmap_procura(u64 *pml4, u64 n)
+{
+    u64 livres = 0;
+    for (u64 v = USUARIO_MMAP; v < USUARIO_MMAP_FIM; v += QUADRO) {
+        u64 *e = pte_de(pml4, v);
+        if (e && (*e & PG_PRESENTE)) { livres = 0; continue; }
+        if (++livres == n) return v - (n - 1) * QUADRO;
+    }
+    return 0;
+}
+
+static long mmap_soltar(tarefa_t *eu, u64 ini, u64 bytes)
+{
+    if ((ini & 0xFFF) || ini < USUARIO_MMAP || bytes > USUARIO_MMAP_FIM - ini) return ERRO_INVALIDO;
+    for (u64 v = ini; v < ini + bytes; v += QUADRO) {
+        u64 *e = pte_de(eu->diretorio, v);
+        if (!e || !(*e & PG_PRESENTE)) continue;
+        if (*e & PG_COMPARTILHADA) shm_soltar(PG_OBJETO(*e));
+        else quadro_liberar(*e & PG_ENDERECO);
+        *e = 0;
+    }
+    if ((u64)eu->diretorio == cr3_atual) cpu_carregar_cr3(cr3_atual);   /* esquece as traduções velhas */
+    return 0;
+}
+
+static long mmap_criar(tarefa_t *eu, u64 pedido)
+{
+    if (!usuario_valido(eu, pedido, sizeof(mmap_t))) return ERRO_INVALIDO;
+    mmap_t c = *(const mmap_t *)pedido;
+    u64 n = (c.tam + QUADRO - 1) / QUADRO;
+    if (n == 0 || n > (USUARIO_MMAP_FIM - USUARIO_MMAP) / QUADRO) return ERRO_INVALIDO;
+    shm_t *o = 0;
+    if (c.objeto) {
+        if (c.objeto >= SHM_MAX || !shms[c.objeto].usado || shms[c.objeto].apagado) return ERRO_NAO_ACHADO;
+        o = &shms[c.objeto];
+        if (n > o->paginas) return ERRO_INVALIDO;            /* maior que o objeto */
+    }
+    u64 v = mmap_procura(eu->diretorio, n);
+    if (!v) return ERRO_SEM_MEMORIA;
+    u64 flags = PG_PRESENTE | PG_USUARIO | ((c.prot & PROT_ESCREVER) ? PG_ESCRITA : 0);
+    for (u64 i = 0; i < n; i++) {
+        int ok;
+        if (o) {
+            ok = mapear(eu->diretorio, v + i * QUADRO, o->quadros[i],
+                        flags | PG_COMPARTILHADA | ((u64)c.objeto << 52));
+            if (ok) o->refs++;
+        } else {
+            u64 q = quadro_alocar();                          /* já vem zerado */
+            ok = q && mapear(eu->diretorio, v + i * QUADRO, q, flags);
+            if (q && !ok) quadro_liberar(q);
+        }
+        if (!ok) { mmap_soltar(eu, v, i * QUADRO); return ERRO_SEM_MEMORIA; }
+    }
+    return (long)v;
+}
+
+static long shm_abrir(tarefa_t *eu, u64 pedido)
+{
+    if (!usuario_valido(eu, pedido, sizeof(shm_pedido_t))) return ERRO_INVALIDO;
+    shm_pedido_t c = *(const shm_pedido_t *)pedido;
+    char nome[32];
+    if (texto_do_usuario(eu, c.nome, nome, sizeof nome) <= 0 || nome[0] != '/') return ERRO_INVALIDO;
+    u32 id = 0, livre = 0;
+    for (u32 i = 1; i < SHM_MAX; i++) {
+        if (shms[i].usado && !shms[i].apagado) {
+            u32 k = 0;
+            while (nome[k] && nome[k] == shms[i].nome[k]) k++;
+            if (nome[k] == shms[i].nome[k]) id = i;
+        } else if (!shms[i].usado && !livre) livre = i;
+    }
+    if (id) {
+        if (c.criar == 2) return ERRO_EXISTE;
+        shm_t *o = &shms[id];                                 /* as permissões rw */
+        u32 bits = eu->ident.uid == o->dono ? (o->modo >> 6) & 6 : o->modo & 6;
+        if (eu->ident.uid != UID_ROOT && !(bits & 4)) return ERRO_SEM_PERMISSAO;
+        return id;
+    }
+    if (!c.criar) return ERRO_NAO_ACHADO;
+    if (!livre) return ERRO_LOTADO;
+    shm_t *o = &shms[livre];
+    mem_zera(o, sizeof(*o));
+    mem_copia(o->nome, nome, sizeof nome);
+    o->usado = 1;
+    o->dono  = eu->ident.uid;
+    o->modo  = c.modo & 0777;
+    return livre;
+}
+
+static long shm_tamanho(u64 id, u64 bytes)
+{
+    if (id == 0 || id >= SHM_MAX || !shms[id].usado || shms[id].apagado) return ERRO_NAO_ACHADO;
+    if (bytes > SHM_MAX_BYTES) return ERRO_SEM_ESPACO;
+    shm_t *o = &shms[id];
+    u32 n = (u32)((bytes + QUADRO - 1) / QUADRO);
+    if (!o->quadros && !(o->quadros = (u64 *)quadro_alocar())) return ERRO_SEM_MEMORIA;
+    while (o->paginas < n) {                                  /* só cresce */
+        u64 q = quadro_alocar();
+        if (!q) return ERRO_SEM_MEMORIA;
+        o->quadros[o->paginas++] = q;
+    }
+    return 0;
+}
+
+static long shm_apagar(tarefa_t *eu, u64 p)
+{
+    char nome[32];
+    if (texto_do_usuario(eu, p, nome, sizeof nome) <= 0) return ERRO_INVALIDO;
+    for (u32 i = 1; i < SHM_MAX; i++) {
+        shm_t *o = &shms[i];
+        if (!o->usado || o->apagado) continue;
+        u32 k = 0;
+        while (nome[k] && nome[k] == o->nome[k]) k++;
+        if (nome[k] != o->nome[k]) continue;
+        if (eu->ident.uid != UID_ROOT && eu->ident.uid != o->dono) return ERRO_SEM_PERMISSAO;
+        o->apagado = 1;
+        o->refs++;                      /* shm_soltar desconta e libera se ninguém mapeia */
+        shm_soltar(i);
+        return 0;
+    }
+    return ERRO_NAO_ACHADO;
 }
 
 /* ===========================================================================
@@ -1755,12 +1933,27 @@ static long syscall_executar(quadro_t *q)
         if ((a & 3) || !usuario_valido(eu, a, 4)) return ERRO_INVALIDO;
         if (*(const u32 *)a != (u32)b) return ERRO_DE_NOVO;   /* mudou: não dorme */
         eu->estado    = ESTADO_FUTEX;
-        eu->futex_end = a;
+        eu->futex_end = traduzir(eu->diretorio, a);   /* o físico (veja futex_acordar) */
         return 0;
 
     case SYS_FUTEX_ACORDAR:
         if (a & 3) return ERRO_INVALIDO;
         return futex_acordar(eu->diretorio, a, b);
+
+    case SYS_MMAP:
+        return mmap_criar(eu, a);
+
+    case SYS_MUNMAP:
+        return mmap_soltar(eu, a, (b + QUADRO - 1) & ~(u64)(QUADRO - 1));
+
+    case SYS_SHM_ABRIR:
+        return shm_abrir(eu, a);
+
+    case SYS_SHM_TAMANHO:
+        return shm_tamanho(a, b);
+
+    case SYS_SHM_APAGAR:
+        return shm_apagar(eu, a);
 
     case SYS_NUCLEO: {
         if (!usuario_valido(eu, a, sizeof(msg_t))) return ERRO_INVALIDO;

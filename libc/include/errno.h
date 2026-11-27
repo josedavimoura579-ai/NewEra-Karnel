@@ -28,4 +28,5 @@ extern int errno;
 #define ENOSYS  38
 #define ENOTEMPTY 39
 #define EBUSY   16
+#define ENODEV  19
 #endif
