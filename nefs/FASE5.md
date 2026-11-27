@@ -142,13 +142,28 @@ Cada etapa termina com algo testável no QEMU (e uma foto da tela).
     `ola.c` em `/usr/share/nefs/exemplos/janelas/`, compilado com o cproc
     dentro do NovaEra e aberto com `janelas /tmp/ola`. O `testelibc`
     ganhou a `math.h` e as datas (108 testes).
-- [ ] **Etapa 7 — o terminal gráfico**
+- [x] **Etapa 7 — o terminal gráfico** ([livro, capítulo 22](livro/22-o-terminal-grafico.md))
   - terminais virtuais (os "pty"): o servidor de terminal atende vários
     terminais ao mesmo tempo
   - um programa de terminal numa janela, com o shell dentro; vários
     abertos
   - *Teste: dois terminais lado a lado, um compilando e o outro com o
     `ps`; o Ctrl+C só vale para o da frente.*
+  - Feito: o servidor de terminal atende o console (canal 0) e até 8
+    terminais virtuais (`TERM_PTY_CRIAR`, `TERM_PTY_LER`,
+    `TERM_PTY_TECLAS`, `TERM_PTY_FECHAR`), cada um com a sua linha, o seu
+    eco, o seu modo cru e o seu primeiro plano; a saída espera o dono ler
+    (16 KiB; quem escreve com ela cheia espera). As cores vão no meio do
+    texto (27, 1, cor); o `limpar` é 27, 2. `TERM_GRUPO`, `TERM_ECO` e
+    `TERM_CRU` dizem o canal; o fd 2 e o eco das senhas vão para o
+    terminal do programa (`terminal_canal()`). No modo cru, o Ctrl+C vai
+    como tecla. O programa `term`: o shell num terminal virtual, desenhado
+    com a fonte 8×16 e as cores do console; rolar copia a imagem; puxar o
+    canto muda as colunas e linhas; fechar mata o grupo do shell; o shell
+    sair fecha a janela. O `janelas` abre um terminal, o relógio e a
+    calculadora, e recolhe os filhos que terminam. Conferido: dois
+    terminais, um com `sleep 20` e o outro com `ps` e Ctrl+C; o `sleep`
+    continuou até o fim.
 - [ ] **Etapa 8 — o modo gráfico no boot**
   - o `init` liga o servidor de janelas e uma **tela de login gráfica**
     (com a logo); o modo texto continua sendo uma opção (no GRUB e no

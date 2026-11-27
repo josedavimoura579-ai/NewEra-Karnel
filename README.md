@@ -9,7 +9,7 @@
 
 ### A Nova Era Começou
 
-<img src="arte/tela-grafica.png" alt="A tela gráfica do NovaEra" width="640">
+<img src="arte/terminal-grafico.png" alt="O NovaEra em modo gráfico: um terminal, o relógio e a calculadora em janelas" width="640">
 
 **Um microkernel x86_64 escrito do zero — nascido num smartphone, livre para o mundo inteiro.**
 
@@ -498,6 +498,7 @@ degraus, e cada fase já entrega algo usável. Detalhes em
   - [x] Etapa 4 — **letras bonitas**: fontes TrueType com o contorno suave (stb_truetype + DejaVu Sans); o comando `letras` ([livro, capítulo 19](nefs/livro/19-letras-bonitas.md))
   - [x] Etapa 5 — **o servidor de janelas**: arrastar, trazer para a frente, fechar; o comando `janelas` com `rabisco`, `bloco` e `bolas` ([livro, capítulo 20](nefs/livro/20-o-servidor-de-janelas.md))
   - [x] Etapa 6 — **a biblioteca das janelas**: botões, caixas de texto, mudar o tamanho; o `relogio` e a `calculadora` ([livro, capítulo 21](nefs/livro/21-a-biblioteca-das-janelas.md))
+  - [x] Etapa 7 — **o terminal gráfico**: o shell numa janela (`term`), vários ao mesmo tempo, cada um com o seu Ctrl+C ([livro, capítulo 22](nefs/livro/22-o-terminal-grafico.md))
 - [ ] **Fase 6 — a área de trabalho do NovaEra e o modo pronto**: painel, menu, janelas, gerenciador de arquivos e terminal gráfico (no estilo do XFCE), pacotes e um **instalador estilo Debian/Ubuntu** com a opção "com área de trabalho"
 - [ ] **Fase 7 — rede e o XFCE4 de verdade**: TCP/IP, porte do GCC ou do clang, do X11, do GTK e do **XFCE4**
 

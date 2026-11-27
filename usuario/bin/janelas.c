@@ -2,7 +2,7 @@
  * usuario/bin/janelas.c - o servidor de janelas do NovaEra (só no modo
  * gráfico).
  *
- *   janelas                    abre e já começa três exemplos: relogio, calculadora, bloco
+ *   janelas                    abre e já começa: um terminal (term), o relogio e a calculadora
  *   janelas PROG...            abre e começa estes programas
  *   janelas -                  só o servidor (os programas vêm depois)
  *
@@ -36,6 +36,7 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <grafico.h>
 #include <janela.h>
 #include "ulib.h"
@@ -471,6 +472,7 @@ static void terminal_cru(int ligar)
     msg_zera(&m);
     m.tipo = TERM_CRU;
     m.arg[0] = (u32)ligar;
+    m.arg[1] = terminal_canal();
     sys_chamar(PID_TERMINAL, &m);
 }
 
@@ -497,6 +499,14 @@ static void *thread_teclado(void *x)
 }
 
 /* ------------------------------ Começo ---------------------------------- */
+
+/* Os programas que o servidor começou e já terminaram: recolhe (senão viram "zumbis") */
+static void *thread_filhos(void *x)
+{
+    (void)x;
+    for (;;) if (wait(NULL) < 0) sleep(1);
+    return NULL;
+}
 
 static void *thread_aceitar(void *arg)
 {
@@ -539,7 +549,7 @@ int main(int argc, char **argv)
     pthread_create(&t, NULL, thread_teclado, NULL);
 
     /* os programas para começar */
-    static char *padrao[] = { "janelas", "relogio", "calculadora", "bloco", NULL };
+    static char *padrao[] = { "janelas", "term", "relogio", "calculadora", NULL };
     char **progs = argc > 1 ? argv : padrao;
     for (int i = 1; progs[i] && n_filhos < MAX_FILHOS; i++) {
         if (!strcmp(progs[i], "-")) continue;
@@ -548,6 +558,7 @@ int main(int argc, char **argv)
     }
 
     pthread_create(&t, NULL, thread_aceitar, (void *)(long)ouvir);
+    pthread_create(&t, NULL, thread_filhos, NULL);
 
     /* a thread principal desenha o que as outras marcaram */
     pthread_mutex_lock(&g);

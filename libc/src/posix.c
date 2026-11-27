@@ -62,6 +62,7 @@ void __fds_iniciar(void)
     __fds[1].dono  = (a->saida_canal & CANAL_DONO) != 0;
     __fds[2].usado = 1;
     __fds[2].servidor = PID_TERMINAL;
+    __fds[2].canal = terminal_canal();          /* o terminal deste programa (pode ser uma janela) */
 }
 
 int close(int fd)
