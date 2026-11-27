@@ -8,6 +8,10 @@
  *    entrega a linha inteira a quem pediu com MSG_LER.
  *  - Ctrl+D numa linha vazia é o "fim da entrada": quem lê recebe 0 bytes
  *    (é assim que um "cat" lendo do teclado termina).
+ *  - Ctrl+C manda o SIGINT ao grupo do "primeiro plano" (o comando que o
+ *    shell está rodando, avisado com TERM_GRUPO) e joga fora a linha e o
+ *    que estava digitado adiantado. Sem comando rodando, só pula de linha.
+ *  - TERM_ECO 0 esconde o que se digita (para as senhas).
  *  - MSG_ESCREVER de qualquer programa vai para o servidor de vídeo.
  *
  *  É a entrada e a saída padrão de todo programa que não foi redirecionado
@@ -31,6 +35,8 @@ typedef struct { u32 pid, max, buffer; } leitor_t;
 static leitor_t leitores[MAX_LEITORES];   /* quem está esperando uma linha */
 static u32      leitores_n;
 static u32      fins;                     /* Ctrl+D digitados, ainda não entregues */
+static u32      primeiro_plano;           /* grupo que recebe o Ctrl+C (0 = nenhum) */
+static int      eco = 1;                  /* 0: não mostra o que se digita (senhas) */
 
 static void tela(const char *dados, u32 n, u8 cor)
 {
@@ -80,12 +86,36 @@ static void atender_leitores(void)
     }
 }
 
+/* Ctrl+C: quem estava esperando uma linha acorda com "interrompido" (antes
+ * do sinal: assim ninguém fica na lista esperando para sempre) e o grupo
+ * do primeiro plano recebe o SIGINT. */
+static void interromper(void)
+{
+    tela("^C\n", 3, COR(COR_CINZA_CLARO));
+    linha_n = 0;
+    eco = 1;
+    if (!primeiro_plano) {                      /* no prompt do shell: linha vazia */
+        fila_n = fila_ini = 0;
+        fila[0] = '\n';
+        fila_n = 1;
+        atender_leitores();
+        return;
+    }
+    fila_n = fila_ini = fins = 0;
+    for (u32 i = 0; i < leitores_n; i++)
+        responder(leitores[i].pid, MSG_ERRO, (u32)(-ERRO_INTERROMPIDO));
+    leitores_n = 0;
+    sys_sinal(-(long)primeiro_plano, SINAL_INT);
+}
+
 static void tecla(char c)
 {
-    if (c == 4) {                               /* Ctrl+D */
+    if (c == 3) {                               /* Ctrl+C */
+        interromper();
+    } else if (c == 4) {                               /* Ctrl+D */
         if (linha_n == 0) { fins++; tela("^D\n", 3, COR(COR_CINZA_CLARO)); atender_leitores(); }
     } else if (c == '\b') {
-        if (linha_n > 0) { linha_n--; tela("\b", 1, 0); }
+        if (linha_n > 0) { linha_n--; if (eco) tela("\b", 1, 0); }
     } else if (c == '\n') {
         tela("\n", 1, 0);
         for (u32 i = 0; i <= linha_n && fila_n < FILA_TAM; i++) {
@@ -96,7 +126,7 @@ static void tecla(char c)
         atender_leitores();
     } else if (c >= 32 && c < 127 && linha_n < LINHA_MAX - 1) {
         linha[linha_n++] = c;
-        tela(&c, 1, 0);
+        if (eco) tela(&c, 1, 0);
     }
 }
 
@@ -110,6 +140,13 @@ int main(int argc, char **argv)
 
         if (m.tipo == MSG_TECLA && m.origem == PID_TECLADO) {
             tecla((char)m.arg[0]);
+        } else if (m.tipo == TERM_GRUPO) {
+            u32 antes = primeiro_plano;
+            primeiro_plano = m.arg[0];
+            responder(m.origem, MSG_OK, antes);
+        } else if (m.tipo == TERM_ECO) {
+            eco = m.arg[0] != 0;
+            responder(m.origem, MSG_OK, 0);
         } else if (m.tipo == MSG_ESCREVER) {
             u32 n = m.arg[2] < MSG_TEXTO_MAX ? m.arg[2] : MSG_TEXTO_MAX - 1;
             tela(m.texto, n, (u8)m.arg[1]);

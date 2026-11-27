@@ -1,5 +1,10 @@
 <div align="center">
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="arte/logo-horizontal-escuro.svg">
+  <img src="arte/logo-horizontal-claro.svg" alt="NovaEra" width="480">
+</picture>
+
 # NovaEra Microkernel
 
 ### A Nova Era Começou
@@ -139,10 +144,10 @@ Estado atual: **NovaEra Microkernel v3.2** (alfa).
 | **Programas** | **ELF de 64 bits**: os servidores do boot vêm embutidos no `kernel.bin`; os comandos ficam em `/bin`, no servidor de arquivos. Para executar um, quem cria lê o ELF do servidor de arquivos e entrega os bytes ao núcleo (`CRIAR`): **o núcleo não sabe o que é um arquivo**. Recebem `main(argc, argv)`, a entrada e a saída padrão e a pasta atual (herdadas do pai) e devolvem o código de saída |
 | **Arquivos** (PID 4) | Servidor no anel 3: pastas e arquivos na memória (ramfs). Monta a árvore a partir do **initrd** (`initrd.tar`, um módulo Multiboot do GRUB ou de `qemu -initrd`), que o núcleo mapeia só para ele, só para leitura. Arquivos do initrd são copiados na primeira escrita. Abrir, ler, escrever, anexar, listar, criar pasta, apagar. `/bin`, `/etc` e `/tmp` |
 | **Terminal** (PID 5) | O TTY, no anel 3: recebe as teclas do driver de teclado, edita a linha (Backspace), mostra o eco e entrega linhas inteiras a quem lê. **Ctrl+D** numa linha vazia = fim da entrada. É a entrada e a saída padrão de todo programa não redirecionado |
-| **Disco** (PIDs 7 e 8) | `disco`: driver ATA no anel 3 (portas de E/S, sem interrupção). `fat`: o sistema de arquivos **FAT32** em `/disco`, com nomes longos; o mesmo protocolo dos outros arquivos. `formatar` prepara o disco |
+| **Discos** (PIDs 7, 8 e 9) | `disco`: driver ATA no anel 3 (portas de E/S, sem interrupção), até 4 discos (`sda` a `sdd`) com partições MBR. `fat`: o sistema de arquivos **FAT32**, com nomes longos. `ext2`: o sistema de arquivos do Linux, com dono e permissões. Cada um com até 4 volumes montados; o mesmo protocolo dos outros arquivos. O servidor de arquivos é a raiz e guarda a tabela de montagens. `discos`, `particionar`, `formatar` (`-t ext2`), `montar` e `desmontar`; no boot, o primeiro FAT32 vai para `/disco` |
 | **Pipes** (PID 6) | Servidor no anel 3: tubos de 4 KiB; escrever num tubo cheio e ler de um vazio só adiam a resposta. O mesmo protocolo (`MSG_LER`/`MSG_ESCREVER`) vale para terminal, pipes e arquivos |
 | **Escalonador** | Preemptivo, *round-robin*, com o timer PIT a **100 Hz** (IRQ 0) |
-| **Chamadas de sistema** | `int 0x80` (única porta da IDT com DPL 3): `ENVIAR`, `RECEBER`, `CHAMAR`, `RESPONDER`, `CEDER`, `IRQ_ASSINAR`, `TEMPO`, `TAREFA_INFO`, `MEMORIA`, `SAIR`, `CRIAR`, `ESPERAR`, `SBRK`, `PID`, `INITRD`, `COPIAR_PARA`, `COPIAR_DE` (um servidor copia dados direto da/para a memória de quem o chamou e espera a resposta), `AMBIENTE`, `PASTA`, `NUCLEO` (como o `uname`). Todo ponteiro recebido é conferido nas tabelas de página antes de o núcleo tocar nele |
+| **Chamadas de sistema** | `int 0x80` (única porta da IDT com DPL 3): `ENVIAR`, `RECEBER`, `CHAMAR`, `RESPONDER`, `CEDER`, `IRQ_ASSINAR`, `TEMPO`, `TAREFA_INFO`, `MEMORIA`, `SAIR`, `CRIAR`, `ESPERAR`, `SBRK`, `PID`, `INITRD`, `COPIAR_PARA`, `COPIAR_DE` (um servidor copia dados direto da/para a memória de quem o chamou e espera a resposta), `AMBIENTE`, `PASTA`, `NUCLEO` (como o `uname`), `SINAL`, `SINAL_TRATAR`, `SINAL_VOLTAR`, `SINAL_MASCARA` e `GRUPO` (sinais, como no Unix: o Ctrl+C, o `kill`, tratadores que rodam no anel 3 e voltam pelo núcleo; uma exceção da CPU vira SIGSEGV/SIGFPE/SIGILL). Todo ponteiro recebido é conferido nas tabelas de página antes de o núcleo tocar nele |
 | **IPC** | Síncrono, por mensagens de 80 bytes copiadas pelo núcleo entre espaços de endereçamento (estilo L4/MINIX). `RESPONDER` nunca bloqueia, para que um servidor não fique refém de um cliente |
 | **Interrupções** | IRQ 0 é do núcleo. As outras viram **mensagens `MSG_IRQ`** para o driver que as assinou; o PIC só libera uma IRQ quando alguém a assina |
 | **Drivers** | No anel 3 com IOPL 3 (podem usar `in`/`out`). **Vídeo**: o único processo com `0xB8000` mapeado. Converte UTF-8 para CP437 (os acentos do português aparecem). **Teclado**: PS/2 *set 1*, layout US, Shift, Ctrl e Caps Lock; entrega as teclas ao terminal e faz o `reboot` pela porta `0x64` |
@@ -184,7 +189,7 @@ Experimente no shell:
 
 ### O que o NovaEra **ainda não** tem
 
-Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), sinais (`kill`), threads, mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, relógio (a data dos arquivos é 1980), usuários e permissões, rede e interface gráfica. Veja o [Roteiro](#roteiro).
+Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), relógio (a data dos arquivos é 1980), rede e interface gráfica. Veja o [Roteiro](#roteiro).
 
 ### Estrutura do repositório
 
@@ -193,7 +198,8 @@ NewEra-Karnel/
 ├── novaera.h         # A ABI: syscalls, mensagens, PIDs, mapa de memória
 ├── sistema.conf      # Nome, versão, lema e prompt do sistema
 ├── programas.lista   # Os servidores que o núcleo inicia no boot
-├── logo.txt          # O logo do sistema (o novafetch mostra)
+├── logo.txt          # O logo do sistema em texto (o novafetch mostra)
+├── arte/             # A logo (SVG): o sol nascendo, a "nova era"
 ├── boot.s            # Multiboot, GDT/TSS, stubs, int 0x80, troca de contexto
 ├── cpu.s             # Instruções especiais da CPU como funções
 ├── kernel.c          # O microkernel: memória, paginação, processos, ELF, IPC (C puro)
@@ -210,7 +216,10 @@ NewEra-Karnel/
 │   ├── terminal.c    #   o terminal / TTY (PID 5)
 │   ├── tubos.c       #   os pipes (PID 6)
 │   ├── disco.c       #   o driver de disco ATA (PID 7)
-│   ├── fat.c         #   o disco em /disco, FAT32 (PID 8)
+│   ├── fat.c         #   os discos FAT32 (PID 8)
+│   ├── ext2.c        #   os discos ext2, com dono e permissões (PID 9)
+│   ├── contas.c      #   usuários e senhas: login, su, sudo, passwd (PID 10)
+│   ├── sockets.c     #   sockets locais AF_UNIX (PID 11)
 │   └── bin/          #   os comandos: ls, cat, echo, mkdir, rm, novafetch...
 ├── build.sh          # Compila os programas, embute-os e liga o kernel.bin
 ├── libc/             # A libc do NovaEra: include/ (cabeçalhos), src/, crt0.s
@@ -309,6 +318,7 @@ O `run.sh` liga o NovaEra com 64 MiB de memória e um disco (`disco.img`, de 64 
 - **No celular, gire para a horizontal** ou diminua a fonte (gesto de pinça): o PC virtual precisa de 80×25 letras.
 - **Para sair do QEMU:** aperte **Alt+2**, digite `quit` e Enter. (No Termux, o Alt fica na barra de teclas extras; se ela não tiver, Esc e depois 2.)
 - **Janela gráfica:** `bash run.sh vnc` e conecte um app de VNC (bVNC, RealVNC...) em `localhost:5901`.
+- **Instalado no disco:** depois de instalar o NovaEra no `disco.img` (`instalar-sistema` e `instalar-boot`; veja `nefs livro 12`), `bash run.sh disco` liga só pelo disco, com o login.
 
 **Em qualquer sistema**, direto com o QEMU:
 
@@ -452,6 +462,14 @@ degraus, e cada fase já entrega algo usável. Detalhes em
 [`nefs/ROTEIRO.md`](nefs/ROTEIRO.md).
 
 - [ ] **Fase 4 — base POSIX e o modo manual** (plano em 9 etapas: [`nefs/FASE4.md`](nefs/FASE4.md)): sinais e `kill`, threads, `mmap`, sockets locais, usuários e permissões (`sudo`), e o modo **manual estilo Arch** completo no livro
+  - [x] Etapa 1 — sinais e `kill`: **Ctrl+C** para o comando (o pipe inteiro), `kill`, tratadores (`signal`/`sigaction`), SIGSEGV/SIGFPE, SIGPIPE ([livro, capítulo 8](nefs/livro/08-sinais.md))
+  - [x] Etapa 2 — até 4 discos (`sda` a `sdd`), partições MBR (`particionar`), `montar`/`desmontar` em qualquer pasta, `discos` ([livro, capítulo 9](nefs/livro/09-discos-particoes-montagens.md))
+  - [x] Etapa 3 — **ext2** (o sistema de arquivos do Linux, com dono e permissões): `formatar -t ext2`, `montar` descobre o tipo; o `e2fsck` do Linux aprova ([livro, capítulo 10](nefs/livro/10-o-ext2.md))
+  - [x] Etapa 4 — **usuários e permissões**: `adduser`, `login`, `su`, `sudo`, `passwd`, `chmod`, `chown`, `id`, `whoami`, `ls -l`; senhas com SHA-256 na `/etc/sombra` ([livro, capítulo 11](nefs/livro/11-usuarios-e-permissoes.md))
+  - [x] Etapa 5 — **instalar no disco e ligar por ele**: `instalar-sistema`, `instalar-boot` (o GRUB no disco), o `init` com login e o `/etc/montagens`, `desligar` ([livro, capítulo 12](nefs/livro/12-instalando-no-disco.md))
+  - [x] Etapa 6 — **threads**: `pthread_create`, `pthread_join`, mutex e condições, com futex no núcleo ([livro, capítulo 13](nefs/livro/13-threads.md))
+  - [x] Etapa 7 — **`mmap` e memória compartilhada** entre programas (`shm_open`), com mutex entre processos ([livro, capítulo 14](nefs/livro/14-memoria-compartilhada.md))
+  - [x] Etapa 8 — **sockets locais** (`AF_UNIX`): `socket`, `bind`, `listen`, `accept`, `connect`, `socketpair`, `poll`; um servidor no anel 3 (PID 11) ([livro, capítulo 15](nefs/livro/15-sockets.md))
 - [ ] **Fase 5 — gráficos**: framebuffer em alta resolução, mouse, fontes e um servidor de janelas no anel 3
 - [ ] **Fase 6 — a área de trabalho do NovaEra e o modo pronto**: painel, menu, janelas, gerenciador de arquivos e terminal gráfico (no estilo do XFCE), pacotes e um **instalador estilo Debian/Ubuntu** com a opção "com área de trabalho"
 - [ ] **Fase 7 — rede e o XFCE4 de verdade**: TCP/IP, porte do GCC ou do clang, do X11, do GTK e do **XFCE4**

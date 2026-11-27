@@ -7,8 +7,9 @@ int main(int argc, char **argv)
 {
     int erro = 0;
     for (int i = 1; i < argc; i++) {
-        if (arq_pasta(argv[i]) < 0) {
-            escreve_erro("mkdir: nao consegui criar: ");
+        long r = arq_pasta(argv[i]);
+        if (r < 0) {
+            escreve_erro(r == ERRO_SEM_PERMISSAO ? "mkdir: permissao negada: " : "mkdir: nao consegui criar: ");
             escreve_erro(argv[i]);
             escreve_erro("\n");
             erro = 1;

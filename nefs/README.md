@@ -82,6 +82,14 @@ A pasta [`livro/`](livro/) tem o Livro 1, em português:
 5. [A identidade do seu sistema](livro/05-a-identidade-do-seu-sistema.md)
 6. [O NovaEra se compila sozinho](livro/06-o-novaera-se-compila.md)
 7. [O disco e a ISO](livro/07-o-disco-e-a-iso.md)
+8. [Sinais: o Ctrl+C e o `kill`](livro/08-sinais.md)
+9. [Discos, partições e montagens](livro/09-discos-particoes-montagens.md)
+10. [O ext2: o disco com dono e permissões](livro/10-o-ext2.md)
+11. [Usuários, senhas e permissões](livro/11-usuarios-e-permissoes.md)
+12. [Instalando o NovaEra no disco](livro/12-instalando-no-disco.md)
+13. [Threads: um programa fazendo várias coisas ao mesmo tempo](livro/13-threads.md)
+14. [Memória compartilhada: dois programas, a mesma memória](livro/14-memoria-compartilhada.md)
+15. [Sockets: uma linha de conversa entre programas](livro/15-sockets.md)
 
 ## Construindo a ISO do NEFS
 

@@ -22,6 +22,50 @@ syscall2:
     popq %rbx
     ret
 
+# void __sinal_volta(void)
+# O "restaurador": o tratador de sinal volta (ret) para cá, e o núcleo
+# devolve os registradores de antes do sinal (SYS_SINAL_VOLTAR = 22).
+# Não retorna.
+.globl __sinal_volta
+__sinal_volta:
+    movl $22, %eax
+    int $0x80
+    hlt                              # nunca chega aqui (e daria GPF no anel 3)
+
+# Operações atômicas (para as threads): ninguém consegue ver o número no
+# meio da troca, nem outra thread, nem uma interrupção. Em bytes porque o
+# nefs-as ainda não conhece cmpxchg e xadd.
+#
+# int atomico_troca(int *p, int v)        guarda v, devolve o que havia
+.globl atomico_troca
+atomico_troca:
+    .byte 0x87, 0x37                 # xchgl %esi, (%rdi)
+    movl %esi, %eax
+    ret
+
+# int atomico_cmpxchg(int *p, int esperado, int novo)
+# se *p == esperado, guarda novo; devolve o que havia em *p
+.globl atomico_cmpxchg
+atomico_cmpxchg:
+    movl %esi, %eax
+    .byte 0xf0, 0x0f, 0xb1, 0x17     # lock cmpxchgl %edx, (%rdi)
+    ret
+
+# int atomico_soma(int *p, int v)         soma v, devolve o valor de antes
+.globl atomico_soma
+atomico_soma:
+    .byte 0xf0, 0x0f, 0xc1, 0x37     # lock xaddl %esi, (%rdi)
+    movl %esi, %eax
+    ret
+
+# u64 rdtsc(void) - o contador de ciclos da CPU (para sortear um "sal")
+.globl rdtsc
+rdtsc:
+    .byte 0x0f, 0x31                 # rdtsc: EDX:EAX = ciclos desde que ligou
+    shlq $32, %rdx
+    orq %rdx, %rax
+    ret
+
 # void mem_escreve16(u64 endereco, u16 valor)
 # u16  mem_le16(u64 endereco)
 # Acesso a memória de dispositivo (como a VGA em 0xB8000). Em C isso exigiria
@@ -52,6 +96,14 @@ outb:
     ret
 
 # void ins16(u16 porta, void *buf, u64 n)   - lê n palavras de 16 bits da porta
+# void outw(u16 porta, u16 valor)   - só drivers (IOPL 3)
+.globl outw
+outw:
+    movw %di, %dx
+    movw %si, %ax
+    outw %ax, %dx
+    ret
+
 # void outs16(u16 porta, const void *buf, u64 n) - escreve n palavras na porta
 # (o disco ATA entrega e recebe os setores assim: 256 palavras cada)
 .globl ins16

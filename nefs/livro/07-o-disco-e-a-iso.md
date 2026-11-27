@@ -44,10 +44,10 @@ São dois servidores novos, no anel 3, como todos os outros:
 | 7 | `disco` | o driver do disco (ATA): lê e grava setores de 512 bytes pelas portas de E/S |
 | 8 | `fat` | o sistema de arquivos FAT32: pastas, nomes longos, arquivos |
 
-A biblioteca (`ulib.h`) manda todo caminho que começa em `/disco` para o
-servidor `fat`; o resto vai para o servidor de arquivos da memória. Os
-dois falam o mesmo protocolo, então `cat`, `ls`, `cp`, o shell e a libc
-funcionam igual nos dois.
+O servidor de arquivos da memória sabe que `/disco` é um disco montado:
+um caminho que começa lá é mandado para o servidor `fat`. Os dois falam o
+mesmo protocolo, então `cat`, `ls`, `cp`, o shell e a libc funcionam igual
+nos dois. (Mais discos, partições e montagens: capítulo 9.)
 
 ## O seu sistema, guardado no disco
 

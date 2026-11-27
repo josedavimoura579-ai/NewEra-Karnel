@@ -254,6 +254,10 @@ static u64 quadro_alocar(void)
 static const u8 *initrd;
 static u64       initrd_tam;
 
+/* A linha de comando do boot (o GRUB passa "kernel.bin root=sda1"): o
+ * núcleo não a usa, só guarda para o init saber de onde montar a raiz. */
+static char linha_boot[MSG_TEXTO_MAX];
+
 /* Multiboot: se o bit 0 das flags estiver ligado, mem_upper diz quantos
  * KiB de RAM existem acima de 1 MiB; o bit 3 diz que há módulos. */
 static void memoria_iniciar(u64 mbi_endereco)
@@ -265,6 +269,12 @@ static void memoria_iniciar(u64 mbi_endereco)
         if (mbi[0] & 1) {
             u64 real = 0x100000ull + (u64)mbi[2] * 1024u;
             if (real < fim) fim = real;
+        }
+        if ((mbi[0] & 4) && mbi[4]) {          /* bit 2: há linha de comando */
+            const char *c = (const char *)(u64)mbi[4];
+            u32 i = 0;
+            for (; c[i] && i < MSG_TEXTO_MAX - 1; i++) linha_boot[i] = c[i];
+            linha_boot[i] = '\0';
         }
         if ((mbi[0] & 8) && mbi[5] > 0) {
             /* Cada módulo: [início, fim, texto, reservado]. Usamos o 1º. */
@@ -300,6 +310,37 @@ static void memoria_iniciar(u64 mbi_endereco)
 #define PG_ESCRITA   0x2ull
 #define PG_USUARIO   0x4ull
 #define PG_ENDERECO  0x000FFFFFFFFFF000ull
+/* Bits livres para o sistema: a página é de um objeto compartilhado (não
+ * se libera com o processo) e qual objeto (bits 52-57). */
+#define PG_COMPARTILHADA (1ull << 9)
+#define PG_OBJETO(e)     ((u32)(((e) >> 52) & 0x3F))
+
+/* Objetos de memória compartilhada (SYS_SHM_*): as páginas físicas, que
+ * vários espaços de endereçamento mapeiam. Vivem enquanto têm nome ou
+ * alguém as mapeia. */
+#define SHM_MAX 32u                    /* ids de 1 a 31 (cabem nos bits 52-57) */
+typedef struct {
+    u32  usado, apagado;
+    char nome[32];
+    u32  dono, modo;
+    u32  paginas;
+    u64 *quadros;                      /* um quadro com até 512 endereços físicos */
+    u32  refs;                         /* páginas mapeadas, em todos os processos */
+} shm_t;
+static shm_t shms[SHM_MAX];
+
+static void quadro_liberar(u64 fisico);
+static void shm_soltar(u32 id)
+{
+    if (id == 0 || id >= SHM_MAX || !shms[id].usado) return;
+    shm_t *o = &shms[id];
+    if (o->refs) o->refs--;
+    if (!o->apagado || o->refs) return;
+    for (u32 i = 0; i < o->paginas; i++) quadro_liberar(o->quadros[i]);
+    if (o->quadros) quadro_liberar((u64)o->quadros);
+    o->quadros = 0;
+    o->usado = 0;
+}
 
 extern u64 pml4_boot[512];             /* boot.s */
 extern u64 pd_boot[512];
@@ -370,6 +411,10 @@ static void espaco_destruir(u64 *pml4)
                 u64 *pt = tabela_de(pd[k]);
                 for (u32 l = 0; l < 512; l++) {
                     u64 fisico = pt[l] & PG_ENDERECO;
+                    if ((pt[l] & PG_PRESENTE) && (pt[l] & PG_COMPARTILHADA)) {
+                        shm_soltar(PG_OBJETO(pt[l]));    /* do objeto, não do processo */
+                        continue;
+                    }
                     if ((pt[l] & PG_PRESENTE) && fisico >= (u64)_kernel_fim &&
                         !(fisico >= ((u64)initrd & ~0xFFFull) && fisico < (u64)initrd + initrd_tam))
                         quadro_liberar(fisico);      /* a VGA e o initrd não são do processo */
@@ -543,7 +588,7 @@ static void timer_iniciar(void)
  *  Processos
  * =========================================================================== */
 
-#define MAX_TAREFAS       32u
+#define MAX_TAREFAS       PROCESSOS_MAX
 #define PILHA_NUCLEO_TAM  QUADRO
 #define MAX_REINICIOS     5u
 
@@ -592,9 +637,28 @@ typedef struct {
     u32        entregar;       /* 1 = copiar a caixa para o usuário ao retomar */
     u32        irqs;           /* IRQs assinadas (bits) */
     u32        irqs_pendentes;
+
+    identidade_t ident;        /* o usuário e os grupos (0 = root) */
+
+    /* Threads: todas as de um programa apontam para a líder, que guarda o
+     * que é do programa inteiro (o heap, a pilha principal, o pai). */
+    u32        lider;          /* o id da líder (= o próprio, se for ela) */
+    u32        nthreads;       /* só na líder: quantas threads o programa tem */
+    u64        tid_endereco;   /* ao sair, zera este u32 e acorda o futex (pthread_join) */
+    u64        futex_end;      /* em ESTADO_FUTEX: o endereço onde dorme */
+
+    /* Sinais (bit s = sinal s) */
+    u32        grupo;          /* grupo de processos: o Ctrl+C vai para o grupo todo */
+    u32        sinais;         /* pendentes: chegaram e ainda não foram entregues */
+    u32        bloqueados;     /* a máscara: esperam até serem desbloqueados */
+    u64        tratador[SINAL_MAX];      /* SINAL_PADRAO, SINAL_IGNORAR ou a função */
+    u32        trat_mascara[SINAL_MAX];  /* bloqueados durante o tratador */
+    u64        restaurador;    /* para onde o tratador volta (__sinal_volta) */
+    u64        falha_endereco; /* o CR2 (ou o RIP) da última exceção: vai no siginfo */
 } tarefa_t;
 
 static tarefa_t tarefas[MAX_TAREFAS];
+#define ALVO_THREADS 0xFFFFFFFEu   /* a líder saiu antes: espera as outras acabarem */
 static u32      atual;                 /* índice (= PID) de quem está rodando */
 static u64      cr3_atual;
 static u32      contador_ordem;
@@ -743,6 +807,7 @@ static int pilha_preparar(tarefa_t *t, const args_t *a, u64 *rsp, u64 *argv)
 /* A pilha cresce sozinha: um acesso logo abaixo dela ganha páginas novas. */
 static int pilha_crescer(tarefa_t *t, u64 endereco)
 {
+    t = &tarefas[t->lider];                 /* a pilha principal é do programa */
     if (!t->diretorio || endereco < USUARIO_PILHA_TOPO - USUARIO_PILHA_TAM ||
         endereco >= t->pilha_baixo)
         return 0;
@@ -812,6 +877,14 @@ static long processo_carregar(u32 pid, const args_t *a)
     t->entregar       = 0;
     t->irqs           = 0;
     t->irqs_pendentes = 0;
+    t->lider          = pid;         /* uma thread só: ela é a líder */
+    t->nthreads       = 1;
+    t->tid_endereco   = 0;
+    t->sinais         = 0;           /* programa novo: todos os sinais no padrão */
+    t->bloqueados     = 0;
+    t->restaurador    = 0;
+    mem_zera(t->tratador, sizeof(t->tratador));
+    mem_zera(t->trat_mascara, sizeof(t->trat_mascara));
     return 0;
 }
 
@@ -824,6 +897,7 @@ static int processo_criar(u32 pid, const char *nome, const u8 *ini, const u8 *fi
     t->imagem     = ini;
     t->imagem_tam = (u64)(fim - ini);
     t->pai        = PID_KERNEL;
+    t->grupo      = (u32)(t - tarefas);     /* cada servidor é o seu próprio grupo */
     t->entrada = t->saida = PID_TERMINAL;   /* o terminal é a tela e o teclado */
     t->pasta[0] = '/';
 
@@ -1013,9 +1087,34 @@ static void ipc_receber(u32 origem)
  *  programas viram "zumbis" até o pai ler o código de saída.
  * =========================================================================== */
 
+/* Uma thread que não é a líder vai embora (o espaço de memória fica). */
+static void thread_liberar(u32 i)
+{
+    tarefa_t *t = &tarefas[i];
+    for (u32 j = 1; j < MAX_TAREFAS; j++) {   /* quem conversava com ela não fica preso */
+        tarefa_t *o = &tarefas[j];
+        if ((o->estado == ESTADO_ENVIANDO || o->estado == ESTADO_RECEBENDO) && o->alvo == i) {
+            o->chamando = 0;
+            acordar(o, ERRO_PID);
+        }
+    }
+    t->estado    = ESTADO_LIVRE;
+    t->diretorio = 0;
+    t->entregar  = 0;
+}
+
 static void processo_encerrar(u32 pid, long codigo, int falhou, u64 vetor)
 {
+    /* O programa inteiro acaba: as outras threads primeiro, e o resto é
+     * feito na líder (dona do espaço de memória e do código de saída). */
+    u32 lider = tarefas[pid].lider;
+    for (u32 i = 1; i < MAX_TAREFAS; i++)
+        if (i != lider && tarefas[i].estado != ESTADO_LIVRE && tarefas[i].lider == lider &&
+            tarefas[i].diretorio == tarefas[lider].diretorio)
+            thread_liberar(i);
+    pid = lider;
     tarefa_t *t = &tarefas[pid];
+    t->nthreads = 1;
 
     if (cr3_atual == (u64)t->diretorio) {   /* nunca destrua o CR3 em uso */
         cr3_atual = (u64)pml4_boot;
@@ -1024,7 +1123,7 @@ static void processo_encerrar(u32 pid, long codigo, int falhou, u64 vetor)
     espaco_destruir(t->diretorio);
     t->diretorio = 0;
     t->estado = ESTADO_MORTO;
-    if (falhou) t->ultima_falha = (u32)vetor;
+    t->ultima_falha = falhou ? (u32)vetor : FALHA_NENHUMA;
 
     if (t->irqs) {                          /* ninguém mais atende essas IRQs */
         pic_mascara |= (u16)t->irqs;
@@ -1057,14 +1156,23 @@ static void processo_encerrar(u32 pid, long codigo, int falhou, u64 vetor)
     }
     if (t->flags & T_REINICIAR) return;     /* servidor desistiu: fica MORTO */
 
-    /* O pai está esperando? Entrega o código. Senão, vira zumbi. */
+    /* O pai está esperando? Entrega o código. Senão, vira zumbi. E, se o
+     * pai tem um tratador de SIGCHLD, ele fica sabendo. */
     t->codigo_saida = codigo;
     tarefa_t *pai = &tarefas[t->pai];
-    if (t->pai != PID_KERNEL && pai->estado == ESTADO_ESPERANDO && pai->alvo == pid) {
-        acordar(pai, codigo);
+    if (pid_vivo(t->pai) && pai->tratador[SINAL_CHLD] > SINAL_IGNORAR)
+        pai->sinais |= 1u << SINAL_CHLD;
+    /* quem espera pode ser qualquer thread do programa pai */
+    tarefa_t *esperando = 0;
+    for (u32 j = 1; t->pai != PID_KERNEL && j < MAX_TAREFAS && !esperando; j++)
+        if (tarefas[j].estado == ESTADO_ESPERANDO && tarefas[j].lider == t->pai &&
+            (tarefas[j].alvo == pid || tarefas[j].alvo == 0))
+            esperando = &tarefas[j];
+    if (esperando && esperando->alvo == pid) {
+        acordar(esperando, codigo);
         t->estado = ESTADO_LIVRE;
-    } else if (t->pai != PID_KERNEL && pai->estado == ESTADO_ESPERANDO && pai->alvo == 0) {
-        acordar(pai, ((long)pid << 16) | (codigo & 0xFFFF));   /* "qualquer filho" */
+    } else if (esperando) {
+        acordar(esperando, ((long)pid << 16) | (codigo & 0xFFFF));   /* "qualquer filho" */
         t->estado = ESTADO_LIVRE;
     } else if (pid_vivo(t->pai)) {
         t->estado = ESTADO_ZUMBI;
@@ -1107,9 +1215,11 @@ static long processo_executar(tarefa_t *eu, u64 pedido)
     t->flags         = 0;
     t->imagem        = (const u8 *)c.imagem;   /* lido agora, com o CR3 de quem chama */
     t->imagem_tam    = c.tamanho;
-    t->pai           = atual;
+    t->pai           = eu->lider;              /* o pai é o programa, não a thread */
     t->reinicios     = 0;
-    t->ultima_falha  = 0;
+    t->ultima_falha  = FALHA_NENHUMA;
+    t->grupo         = c.grupo == GRUPO_NOVO ? pid : c.grupo ? c.grupo : eu->grupo;
+    t->ident         = eu->ident;                  /* o filho é do mesmo usuário */
     t->entrada       = c.entrada ? c.entrada       : eu->entrada;
     t->entrada_canal = c.entrada ? c.entrada_canal : eu->entrada_canal;
     t->saida         = c.saida   ? c.saida         : eu->saida;
@@ -1151,6 +1261,454 @@ static long copiar_cliente(tarefa_t *eu, u64 pid, u64 pedido, int para_ele)
         n    -= cabe;
     }
     return (long)c.bytes;
+}
+
+/* ===========================================================================
+ *  Sinais
+ *
+ *  Enviar um sinal só marca um bit (t->sinais). A entrega acontece quando
+ *  o processo vai voltar ao anel 3 (no fim de interrupt_dispatch): o núcleo
+ *  guarda o quadro, a FPU e a máscara na pilha do programa, empilha o
+ *  endereço do restaurador e faz o iretq cair no tratador, com RDI = sinal.
+ *  Quando o tratador volta, o restaurador chama SYS_SINAL_VOLTAR e o
+ *  núcleo põe tudo de volta, como se nada tivesse acontecido.
+ *
+ *  A ação padrão (encerrar) é feita logo no envio, mesmo que o alvo esteja
+ *  bloqueado num IPC: é assim que o Ctrl+C solta um pipe travado. Com
+ *  tratador, o alvo que dorme em SYS_ESPERAR ou na fila de um ENVIAR acorda
+ *  com ERRO_INTERROMPIDO (o EINTR). Quem espera a RESPOSTA de um servidor
+ *  não é interrompido (o servidor responderia depois, para a pergunta
+ *  errada): o sinal espera a resposta chegar, como o SA_RESTART do Unix.
+ * =========================================================================== */
+
+/* O que a entrega empilha no programa (o "sigframe"). A FPU vem primeiro:
+ * o FXSAVE quer 16 bytes de alinhamento. */
+typedef struct {
+    u8       fpu[512];
+    quadro_t quadro;           /* os registradores no momento do sinal */
+    u64      mascara;          /* a máscara de antes do tratador */
+    u8       info[128];        /* o siginfo_t: sinal, código, endereço */
+} sinal_quadro_t;
+
+#define BIT(s) (1u << (s))
+
+/* Sinais cuja ação padrão é não fazer nada. */
+static int sinal_padrao_ignora(u32 s)
+{
+    return s == SINAL_CHLD || s == SINAL_CONT || s == SINAL_URG || s == SINAL_WINCH ||
+           s == SINAL_STOP || s == SINAL_TSTP || s == SINAL_TTIN || s == SINAL_TTOU;
+}
+
+/* A exceção da CPU que vira cada sinal. */
+static u32 sinal_da_excecao(u64 vetor)
+{
+    switch (vetor) {
+    case 0: case 16: case 19: return SINAL_FPE;    /* divisão, x87, SIMD */
+    case 6:                   return SINAL_ILL;    /* opcode inválido */
+    case 1: case 3:           return SINAL_TRAP;   /* debug, breakpoint */
+    case 17:                  return SINAL_BUS;    /* alinhamento */
+    }
+    return SINAL_SEGV;                             /* GPF, falha de página... */
+}
+
+/* O alvo dorme numa espera que pode ser interrompida? */
+static void sinal_interromper(tarefa_t *t)
+{
+    if ((t->estado == ESTADO_ESPERANDO && t->alvo != ALVO_THREADS) ||
+        t->estado == ESTADO_ENVIANDO || t->estado == ESTADO_FUTEX) {
+        t->chamando = 0;
+        acordar(t, ERRO_INTERROMPIDO);
+    }
+}
+
+/* Envia o sinal s ao processo pid. */
+static long sinal_enviar(u32 pid, u32 s)
+{
+    if (!pid_vivo(pid)) return ERRO_PID;
+    tarefa_t *t = &tarefas[pid];
+    if (t->flags & T_REINICIAR) return ERRO_SEM_PERMISSAO;   /* os servidores do boot, não */
+    tarefa_t *eu = &tarefas[atual];                          /* só nos meus (ou o root) */
+    if (eu->ident.uid != UID_ROOT && eu->ident.uid != t->ident.uid) return ERRO_SEM_PERMISSAO;
+    if (s == 0) return 0;                                    /* kill(pid, 0): "existe?" */
+
+    u64 h = s == SINAL_KILL ? SINAL_PADRAO : t->tratador[s];
+    if (h == SINAL_IGNORAR || (h == SINAL_PADRAO && sinal_padrao_ignora(s))) return 0;
+    if (h == SINAL_PADRAO && (s == SINAL_KILL || !(t->bloqueados & BIT(s)))) {
+        processo_encerrar(pid, SAIDA_SINAL(s), 0, 0);        /* a ação padrão: fim */
+        return 0;
+    }
+    t->sinais |= BIT(s);
+    if (!(t->bloqueados & BIT(s))) sinal_interromper(t);
+    return 0;
+}
+
+/* SYS_SINAL: pid > 0 é um processo; pid < 0, o grupo -pid; 0, o meu grupo. */
+static long sinal_kill(long pid, u64 s)
+{
+    if (s >= SINAL_MAX) return ERRO_INVALIDO;
+    if (pid > 0) return pid < MAX_TAREFAS ? sinal_enviar((u32)pid, (u32)s) : ERRO_PID;
+
+    u32 g = pid == 0 ? tarefas[atual].grupo : (u32)(-pid);
+    int achou = 0;
+    for (u32 i = 1; i < MAX_TAREFAS; i++) {
+        if (!pid_vivo(i) || tarefas[i].grupo != g || (tarefas[i].flags & T_REINICIAR)) continue;
+        achou = 1;
+        sinal_enviar(i, (u32)s);
+    }
+    return achou ? 0 : ERRO_PID;
+}
+
+/* Monta o quadro do sinal na pilha do programa e desvia para o tratador.
+ * Roda no fim de interrupt_dispatch, com o CR3 e a FPU do próprio t.
+ * Devolve 0 se o processo teve de ser encerrado. */
+static int sinal_preparar(tarefa_t *t)
+{
+    quadro_t *q = t->quadro;
+    if (atual == 0 || (q->cs & 3) != 3) return 1;
+
+    for (;;) {
+        u32 prontos = t->sinais & ~t->bloqueados;
+        if (!prontos) return 1;
+        u32 s = 1;
+        while (!(prontos & BIT(s))) s++;
+        t->sinais &= ~BIT(s);
+
+        u64 h = t->tratador[s];
+        if (h == SINAL_IGNORAR || (h == SINAL_PADRAO && sinal_padrao_ignora(s))) continue;
+        if (h == SINAL_PADRAO) {                 /* estava bloqueado e foi liberado */
+            processo_encerrar(atual, SAIDA_SINAL(s), 0, 0);
+            return 0;
+        }
+
+        /* Abaixo da "zona vermelha" (128 bytes que a ABI deixa a função
+         * usar sem mexer no RSP), alinhado em 16, e o endereço de volta. */
+        u64 base = ((q->rsp - 128) - sizeof(sinal_quadro_t)) & ~15ull;
+        u64 sp   = base - 8;
+        if (q->rsp < USUARIO_BASE + 4096 || !usuario_valido(t, sp, sizeof(sinal_quadro_t) + 8)) {
+            processo_encerrar(atual, SAIDA_SINAL(SINAL_SEGV), 0, 0);   /* pilha estragada */
+            return 0;
+        }
+        sinal_quadro_t *f = (sinal_quadro_t *)base;
+        cpu_fpu_salvar((u64)t->fpu);             /* os registradores são os dele */
+        mem_copia(f->fpu, t->fpu, 512);
+        mem_copia(&f->quadro, q, sizeof(quadro_t));
+        f->mascara = t->bloqueados;
+        mem_zera(f->info, sizeof(f->info));
+        *(u32 *)(f->info + 0) = s;               /* si_signo */
+        if (s == SINAL_SEGV || s == SINAL_FPE || s == SINAL_ILL || s == SINAL_BUS || s == SINAL_TRAP)
+            *(u64 *)(f->info + 16) = t->falha_endereco;   /* si_addr */
+        *(u64 *)sp = t->restaurador;
+
+        cpu_fpu_restaurar((u64)fpu_inicial);     /* o tratador começa com a FPU limpa */
+        t->bloqueados |= (BIT(s) | t->trat_mascara[s]) & ~BIT(SINAL_KILL);
+        q->rip    = h;
+        q->rsp    = sp;
+        q->rdi    = s;
+        q->rsi    = base + 512 + sizeof(quadro_t) + 8;   /* &f->info */
+        q->rdx    = 0;
+        q->rax    = 0;
+        q->rflags &= ~0x500ull;                  /* DF e TF desligados, como a ABI quer */
+        return 1;
+    }
+}
+
+/* SYS_SINAL_VOLTAR: o tratador terminou; o quadro está onde o RSP aponta. */
+static long sinal_voltar(tarefa_t *t, quadro_t *q)
+{
+    u64 base = q->rsp;
+    if (!usuario_valido(t, base, sizeof(sinal_quadro_t))) {
+        processo_encerrar(atual, SAIDA_SINAL(SINAL_SEGV), 0, 0);
+        return 0;
+    }
+    sinal_quadro_t *f = (sinal_quadro_t *)base;
+    quadro_t salvo;
+    mem_copia(&salvo, &f->quadro, sizeof(salvo));
+    /* Nada de voltar para o núcleo nem para um endereço não canônico: o
+     * iretq falharia no anel 0. */
+    if (salvo.rip >= USUARIO_FIM || salvo.rsp > USUARIO_FIM) {
+        processo_encerrar(atual, SAIDA_SINAL(SINAL_SEGV), 0, 0);
+        return 0;
+    }
+    u64 cs = q->cs, ss = q->ss, vetor = q->vetor;
+    mem_copia(q, &salvo, sizeof(salvo));
+    q->cs = cs; q->ss = ss; q->vetor = vetor;
+    q->rflags = (salvo.rflags & 0xCD5ull) | 0x202 | ((t->flags & T_DRIVER) ? 0x3000u : 0);
+
+    mem_copia(t->fpu, f->fpu, 512);
+    u32 m = *(u32 *)(fpu_inicial + 28);          /* MXCSR_MASK: bits que a CPU aceita */
+    *(u32 *)(t->fpu + 24) &= m ? m : 0xFFBF;     /* senão o FXRSTOR daria GPF no núcleo */
+    t->fpu_limpa  = 1;                           /* restaurada no fim do despacho */
+    t->bloqueados = (u32)f->mascara & ~BIT(SINAL_KILL);
+    return (long)salvo.rax;                      /* o RAX de antes do sinal */
+}
+
+/* SYS_SINAL_TRATAR */
+static long sinal_tratar(tarefa_t *eu, u64 s, u64 pedido)
+{
+    if (s == 0 || s >= SINAL_MAX || !usuario_valido(eu, pedido, sizeof(sinal_acao_t)))
+        return ERRO_INVALIDO;
+    sinal_acao_t *a = (sinal_acao_t *)pedido;
+    sinal_acao_t novo = *a;
+    if (novo.mudar) {
+        if (s == SINAL_KILL || s == SINAL_STOP) return ERRO_INVALIDO;
+        if (novo.tratador > SINAL_IGNORAR &&
+            (novo.tratador < USUARIO_BASE || novo.tratador >= USUARIO_FIM ||
+             novo.restaurador < USUARIO_BASE || novo.restaurador >= USUARIO_FIM))
+            return ERRO_INVALIDO;
+    }
+    a->tratador    = eu->tratador[s];
+    a->restaurador = eu->restaurador;
+    a->mascara     = eu->trat_mascara[s];
+    if (novo.mudar) {
+        eu->tratador[s]     = novo.tratador;
+        eu->trat_mascara[s] = novo.mascara;
+        if (novo.tratador > SINAL_IGNORAR) eu->restaurador = novo.restaurador;
+        if (novo.tratador == SINAL_IGNORAR) eu->sinais &= ~BIT(s);
+    }
+    return 0;
+}
+
+/* ===========================================================================
+ *  Threads e futex
+ * =========================================================================== */
+
+/* O futex é guardado pelo endereço FÍSICO: assim duas threads (o mesmo
+ * espaço) ou dois programas (a mesma memória compartilhada) se encontram. */
+static long futex_acordar(u64 *dir, u64 endereco, u64 n)
+{
+    long acordadas = 0;
+    u64 fisico = traduzir(dir, endereco);
+    if (!fisico) return 0;
+    for (u32 j = 1; j < MAX_TAREFAS && (u64)acordadas < n; j++) {
+        tarefa_t *o = &tarefas[j];
+        if (o->estado == ESTADO_FUTEX && o->futex_end == fisico) {
+            acordar(o, 0);
+            acordadas++;
+        }
+    }
+    return acordadas;
+}
+
+/* SYS_THREAD_CRIAR: mais uma tarefa no mesmo espaço de memória. */
+static long thread_criar(tarefa_t *eu, u64 pedido)
+{
+    if (!usuario_valido(eu, pedido, sizeof(thread_t))) return ERRO_INVALIDO;
+    thread_t c = *(const thread_t *)pedido;
+    if (c.entrada < USUARIO_BASE || c.entrada >= USUARIO_FIM ||
+        c.pilha < USUARIO_BASE + 16 || c.pilha > USUARIO_FIM)
+        return ERRO_INVALIDO;
+
+    u32 id = 1;
+    while (id < MAX_TAREFAS && tarefas[id].estado != ESTADO_LIVRE) id++;
+    if (id == MAX_TAREFAS) return ERRO_LOTADO;
+    tarefa_t *t = &tarefas[id], *p = &tarefas[eu->lider];
+    if (!t->pilha_nucleo && !(t->pilha_nucleo = (u8 *)quadro_alocar())) return ERRO_SEM_MEMORIA;
+    if (!t->fpu && !(t->fpu = (u8 *)quadro_alocar())) return ERRO_SEM_MEMORIA;
+
+    mem_copia(t->nome, p->nome, sizeof(t->nome));
+    t->flags         = p->flags & ~T_REINICIAR;
+    t->imagem        = 0;
+    t->pai           = p->pai;
+    t->reinicios     = 0;
+    t->ultima_falha  = FALHA_NENHUMA;
+    t->entrada       = p->entrada;       t->entrada_canal = p->entrada_canal;
+    t->saida         = p->saida;         t->saida_canal   = p->saida_canal;
+    mem_copia(t->pasta, eu->pasta, CAMINHO_MAX);
+    t->diretorio     = p->diretorio;     /* a MESMA memória */
+    t->ident         = eu->ident;
+    t->grupo         = eu->grupo;
+    t->lider         = eu->lider;
+    t->nthreads      = 0;
+    t->tid_endereco  = c.tid_endereco;
+    t->sinais        = 0;
+    t->bloqueados    = eu->bloqueados;
+    mem_copia(t->tratador, p->tratador, sizeof(t->tratador));
+    mem_copia(t->trat_mascara, p->trat_mascara, sizeof(t->trat_mascara));
+    t->restaurador   = p->restaurador;
+
+    quadro_t *q = (quadro_t *)(t->pilha_nucleo + PILHA_NUCLEO_TAM - sizeof(quadro_t));
+    mem_zera(q, sizeof(*q));
+    q->rip    = c.entrada;
+    q->rsp    = c.pilha;
+    q->rdi    = c.arg;
+    q->cs     = SEL_CODIGO_USUARIO;
+    q->ss     = SEL_DADOS_USUARIO;
+    q->rflags = 0x202 | ((t->flags & T_DRIVER) ? 0x3000u : 0);
+    mem_copia(t->fpu, fpu_inicial, 512);
+    t->fpu_limpa      = 1;
+    t->quadro         = q;
+    t->chamando       = 0;
+    t->entregar       = 0;
+    t->irqs           = 0;
+    t->irqs_pendentes = 0;
+    t->estado         = ESTADO_PRONTO;
+    p->nthreads++;
+    return id;
+}
+
+/* SYS_THREAD_SAIR: só a thread que chama termina. */
+static void thread_sair(u32 id, long codigo)
+{
+    tarefa_t *t = &tarefas[id];
+    u32 lider = t->lider;
+    tarefa_t *p = &tarefas[lider];
+    /* o pthread_join: zera o número e acorda quem espera nele */
+    if (t->tid_endereco && !(t->tid_endereco & 3) && usuario_valido(t, t->tid_endereco, 4)) {
+        *(u32 *)t->tid_endereco = 0;
+        futex_acordar(t->diretorio, t->tid_endereco, ~0ull);
+    }
+    if (p->nthreads <= 1) {                  /* a última: o programa acaba */
+        processo_encerrar(id, codigo & 0xFF, 0, 0);
+        return;
+    }
+    p->nthreads--;
+    if (id == lider) {                       /* a líder guarda o programa: dorme até o fim */
+        t->estado = ESTADO_ESPERANDO;
+        t->alvo   = ALVO_THREADS;
+        return;
+    }
+    thread_liberar(id);
+    if (p->nthreads == 1 && p->estado == ESTADO_ESPERANDO && p->alvo == ALVO_THREADS)
+        processo_encerrar(lider, 0, 0, 0);   /* só sobrou a líder, que já tinha saído */
+}
+
+/* ===========================================================================
+ *  mmap e memória compartilhada
+ * =========================================================================== */
+
+/* A entrada da tabela de páginas de um endereço (0 se a tabela não existe). */
+static u64 *pte_de(u64 *pml4, u64 v)
+{
+    u64 *t = pml4;
+    for (int nivel = 39; nivel > 12; nivel -= 9) {
+        u64 e = t[(v >> nivel) & 511];
+        if (!(e & PG_PRESENTE)) return 0;
+        t = tabela_de(e);
+    }
+    return &t[(v >> 12) & 511];
+}
+
+/* 'n' páginas seguidas livres na região do mmap (0 = não há). */
+static u64 mmap_procura(u64 *pml4, u64 n)
+{
+    u64 livres = 0;
+    for (u64 v = USUARIO_MMAP; v < USUARIO_MMAP_FIM; v += QUADRO) {
+        u64 *e = pte_de(pml4, v);
+        if (e && (*e & PG_PRESENTE)) { livres = 0; continue; }
+        if (++livres == n) return v - (n - 1) * QUADRO;
+    }
+    return 0;
+}
+
+static long mmap_soltar(tarefa_t *eu, u64 ini, u64 bytes)
+{
+    if ((ini & 0xFFF) || ini < USUARIO_MMAP || bytes > USUARIO_MMAP_FIM - ini) return ERRO_INVALIDO;
+    for (u64 v = ini; v < ini + bytes; v += QUADRO) {
+        u64 *e = pte_de(eu->diretorio, v);
+        if (!e || !(*e & PG_PRESENTE)) continue;
+        if (*e & PG_COMPARTILHADA) shm_soltar(PG_OBJETO(*e));
+        else quadro_liberar(*e & PG_ENDERECO);
+        *e = 0;
+    }
+    if ((u64)eu->diretorio == cr3_atual) cpu_carregar_cr3(cr3_atual);   /* esquece as traduções velhas */
+    return 0;
+}
+
+static long mmap_criar(tarefa_t *eu, u64 pedido)
+{
+    if (!usuario_valido(eu, pedido, sizeof(mmap_t))) return ERRO_INVALIDO;
+    mmap_t c = *(const mmap_t *)pedido;
+    u64 n = (c.tam + QUADRO - 1) / QUADRO;
+    if (n == 0 || n > (USUARIO_MMAP_FIM - USUARIO_MMAP) / QUADRO) return ERRO_INVALIDO;
+    shm_t *o = 0;
+    if (c.objeto) {
+        if (c.objeto >= SHM_MAX || !shms[c.objeto].usado || shms[c.objeto].apagado) return ERRO_NAO_ACHADO;
+        o = &shms[c.objeto];
+        if (n > o->paginas) return ERRO_INVALIDO;            /* maior que o objeto */
+    }
+    u64 v = mmap_procura(eu->diretorio, n);
+    if (!v) return ERRO_SEM_MEMORIA;
+    u64 flags = PG_PRESENTE | PG_USUARIO | ((c.prot & PROT_ESCREVER) ? PG_ESCRITA : 0);
+    for (u64 i = 0; i < n; i++) {
+        int ok;
+        if (o) {
+            ok = mapear(eu->diretorio, v + i * QUADRO, o->quadros[i],
+                        flags | PG_COMPARTILHADA | ((u64)c.objeto << 52));
+            if (ok) o->refs++;
+        } else {
+            u64 q = quadro_alocar();                          /* já vem zerado */
+            ok = q && mapear(eu->diretorio, v + i * QUADRO, q, flags);
+            if (q && !ok) quadro_liberar(q);
+        }
+        if (!ok) { mmap_soltar(eu, v, i * QUADRO); return ERRO_SEM_MEMORIA; }
+    }
+    return (long)v;
+}
+
+static long shm_abrir(tarefa_t *eu, u64 pedido)
+{
+    if (!usuario_valido(eu, pedido, sizeof(shm_pedido_t))) return ERRO_INVALIDO;
+    shm_pedido_t c = *(const shm_pedido_t *)pedido;
+    char nome[32];
+    if (texto_do_usuario(eu, c.nome, nome, sizeof nome) <= 0 || nome[0] != '/') return ERRO_INVALIDO;
+    u32 id = 0, livre = 0;
+    for (u32 i = 1; i < SHM_MAX; i++) {
+        if (shms[i].usado && !shms[i].apagado) {
+            u32 k = 0;
+            while (nome[k] && nome[k] == shms[i].nome[k]) k++;
+            if (nome[k] == shms[i].nome[k]) id = i;
+        } else if (!shms[i].usado && !livre) livre = i;
+    }
+    if (id) {
+        if (c.criar == 2) return ERRO_EXISTE;
+        shm_t *o = &shms[id];                                 /* as permissões rw */
+        u32 bits = eu->ident.uid == o->dono ? (o->modo >> 6) & 6 : o->modo & 6;
+        if (eu->ident.uid != UID_ROOT && !(bits & 4)) return ERRO_SEM_PERMISSAO;
+        return id;
+    }
+    if (!c.criar) return ERRO_NAO_ACHADO;
+    if (!livre) return ERRO_LOTADO;
+    shm_t *o = &shms[livre];
+    mem_zera(o, sizeof(*o));
+    mem_copia(o->nome, nome, sizeof nome);
+    o->usado = 1;
+    o->dono  = eu->ident.uid;
+    o->modo  = c.modo & 0777;
+    return livre;
+}
+
+static long shm_tamanho(u64 id, u64 bytes)
+{
+    if (id == 0 || id >= SHM_MAX || !shms[id].usado || shms[id].apagado) return ERRO_NAO_ACHADO;
+    if (bytes > SHM_MAX_BYTES) return ERRO_SEM_ESPACO;
+    shm_t *o = &shms[id];
+    u32 n = (u32)((bytes + QUADRO - 1) / QUADRO);
+    if (!o->quadros && !(o->quadros = (u64 *)quadro_alocar())) return ERRO_SEM_MEMORIA;
+    while (o->paginas < n) {                                  /* só cresce */
+        u64 q = quadro_alocar();
+        if (!q) return ERRO_SEM_MEMORIA;
+        o->quadros[o->paginas++] = q;
+    }
+    return 0;
+}
+
+static long shm_apagar(tarefa_t *eu, u64 p)
+{
+    char nome[32];
+    if (texto_do_usuario(eu, p, nome, sizeof nome) <= 0) return ERRO_INVALIDO;
+    for (u32 i = 1; i < SHM_MAX; i++) {
+        shm_t *o = &shms[i];
+        if (!o->usado || o->apagado) continue;
+        u32 k = 0;
+        while (nome[k] && nome[k] == o->nome[k]) k++;
+        if (nome[k] != o->nome[k]) continue;
+        if (eu->ident.uid != UID_ROOT && eu->ident.uid != o->dono) return ERRO_SEM_PERMISSAO;
+        o->apagado = 1;
+        o->refs++;                      /* shm_soltar desconta e libera se ninguém mapeia */
+        shm_soltar(i);
+        return 0;
+    }
+    return ERRO_NAO_ACHADO;
 }
 
 /* ===========================================================================
@@ -1218,8 +1776,8 @@ static long syscall_executar(quadro_t *q)
     case SYS_MEMORIA:
         return (long)(((quadros_livres * 4) << 32) | (quadros_total * 4));
 
-    case SYS_SAIR:
-        processo_encerrar(atual, (long)a, 0, 0);
+    case SYS_SAIR:                                   /* o código vai de 0 a 255 */
+        processo_encerrar(atual, (long)(a & 0xFF), 0, 0);
         return 0;
 
     case SYS_CRIAR:
@@ -1229,7 +1787,7 @@ static long syscall_executar(quadro_t *q)
         if (a == 0) {                                /* qualquer filho (o wait()) */
             int tem_filho = 0;
             for (u32 f = 1; f < MAX_TAREFAS; f++) {
-                if (tarefas[f].pai != atual || f == atual || tarefas[f].estado == ESTADO_LIVRE)
+                if (tarefas[f].pai != eu->lider || f == eu->lider || tarefas[f].estado == ESTADO_LIVRE)
                     continue;
                 if (tarefas[f].estado == ESTADO_ZUMBI) {
                     tarefas[f].estado = ESTADO_LIVRE;
@@ -1242,7 +1800,7 @@ static long syscall_executar(quadro_t *q)
             eu->alvo   = 0;
             return 0;
         }
-        if (a >= MAX_TAREFAS || tarefas[a].pai != atual ||
+        if (a >= MAX_TAREFAS || tarefas[a].pai != eu->lider ||
             tarefas[a].estado == ESTADO_LIVRE)
             return ERRO_PID;                         /* não é meu filho */
         if (tarefas[a].estado == ESTADO_ZUMBI) {     /* já terminou */
@@ -1256,6 +1814,7 @@ static long syscall_executar(quadro_t *q)
 
     case SYS_SBRK: {
         long incremento = (long)a;
+        eu = &tarefas[eu->lider];          /* o heap é do programa inteiro */
         u64 antigo = eu->heap_fim;
         if (incremento < 0 || (u64)incremento > USUARIO_HEAP_FIM - antigo)
             return ERRO_SEM_MEMORIA;
@@ -1303,6 +1862,98 @@ static long syscall_executar(quadro_t *q)
         mem_copia(eu->pasta, nova, CAMINHO_MAX);
         return 0;
     }
+
+    case SYS_SINAL:
+        return sinal_kill((long)a, b);
+
+    case SYS_SINAL_TRATAR:
+        return sinal_tratar(eu, a, b);
+
+    case SYS_SINAL_VOLTAR:
+        return sinal_voltar(eu, q);
+
+    case SYS_SINAL_MASCARA: {
+        u32 antiga = eu->bloqueados, m = (u32)b & ~BIT(SINAL_KILL) & ~BIT(SINAL_STOP);
+        if      (a == SINAL_BLOQUEAR)    eu->bloqueados |= m;
+        else if (a == SINAL_DESBLOQUEAR) eu->bloqueados &= ~m;
+        else if (a == SINAL_DEFINIR)     eu->bloqueados = m;
+        else return ERRO_INVALIDO;
+        return antiga;                     /* os liberados chegam na volta ao anel 3 */
+    }
+
+    case SYS_GRUPO: {                      /* o setpgid / getpgid */
+        u64 pid = a ? a : atual;
+        if (pid >= MAX_TAREFAS || !pid_vivo(pid)) return ERRO_PID;
+        if ((long)b == -1) return tarefas[pid].grupo;
+        if (pid != atual && tarefas[pid].pai != atual) return ERRO_SEM_PERMISSAO;
+        if (b >= 0x80000000ull) return ERRO_INVALIDO;
+        tarefas[pid].grupo = b ? (u32)b : (u32)pid;
+        return 0;
+    }
+
+    case SYS_IDENTIDADE: {                 /* qualquer um pode ver de quem é um processo */
+        u64 pid = a ? a : atual;
+        if (pid >= MAX_TAREFAS || tarefas[pid].estado == ESTADO_LIVRE) return ERRO_PID;
+        if (!usuario_valido(eu, b, sizeof(identidade_t))) return ERRO_INVALIDO;
+        mem_copia((void *)b, &tarefas[pid].ident, sizeof(identidade_t));
+        return 0;
+    }
+
+    case SYS_IDENTIDADE_MUDAR: {
+        if (eu->ident.uid != UID_ROOT) return ERRO_SEM_PERMISSAO;
+        u64 pid = a ? a : atual;
+        if (pid >= MAX_TAREFAS || !pid_vivo(pid)) return ERRO_PID;
+        tarefa_t *t = &tarefas[pid];
+        int cliente = t->estado == ESTADO_RECEBENDO && t->alvo == atual;
+        if (pid != atual && t->pai != atual && !cliente) return ERRO_SEM_PERMISSAO;
+        if (!usuario_valido(eu, b, sizeof(identidade_t))) return ERRO_INVALIDO;
+        identidade_t nova;
+        mem_copia(&nova, (const void *)b, sizeof(nova));
+        if (nova.n > GRUPOS_MAX) return ERRO_INVALIDO;
+        t->ident = nova;
+        return 0;
+    }
+
+    case SYS_LINHA_BOOT: {
+        if (!usuario_valido(eu, a, sizeof(msg_t))) return ERRO_INVALIDO;
+        msg_t *m = (msg_t *)a;
+        mem_zera(m, sizeof(*m));
+        mem_copia(m->texto, linha_boot, MSG_TEXTO_MAX);
+        return 0;
+    }
+
+    case SYS_THREAD_CRIAR:
+        return thread_criar(eu, a);
+
+    case SYS_THREAD_SAIR:
+        thread_sair(atual, (long)a);
+        return 0;
+
+    case SYS_FUTEX_ESPERAR:
+        if ((a & 3) || !usuario_valido(eu, a, 4)) return ERRO_INVALIDO;
+        if (*(const u32 *)a != (u32)b) return ERRO_DE_NOVO;   /* mudou: não dorme */
+        eu->estado    = ESTADO_FUTEX;
+        eu->futex_end = traduzir(eu->diretorio, a);   /* o físico (veja futex_acordar) */
+        return 0;
+
+    case SYS_FUTEX_ACORDAR:
+        if (a & 3) return ERRO_INVALIDO;
+        return futex_acordar(eu->diretorio, a, b);
+
+    case SYS_MMAP:
+        return mmap_criar(eu, a);
+
+    case SYS_MUNMAP:
+        return mmap_soltar(eu, a, (b + QUADRO - 1) & ~(u64)(QUADRO - 1));
+
+    case SYS_SHM_ABRIR:
+        return shm_abrir(eu, a);
+
+    case SYS_SHM_TAMANHO:
+        return shm_tamanho(a, b);
+
+    case SYS_SHM_APAGAR:
+        return shm_apagar(eu, a);
 
     case SYS_NUCLEO: {
         if (!usuario_valido(eu, a, sizeof(msg_t))) return ERRO_INVALIDO;
@@ -1366,8 +2017,16 @@ quadro_t *interrupt_dispatch(quadro_t *q)
             kernel_panico(q);                    /* o núcleo falhou: fim */
         if (q->vetor == 14 && pilha_crescer(&tarefas[atual], cpu_ler_cr2())) {
             /* só faltava pilha: a página nova já está lá, tenta de novo */
-        } else {                                 /* o usuário falhou: isola */
-            processo_encerrar(atual, SAIDA_FALHA_BASE + (long)q->vetor, 1, q->vetor);
+        } else {                                 /* o usuário falhou: vira um sinal */
+            tarefa_t *t = &tarefas[atual];
+            u32 sinal = sinal_da_excecao(q->vetor);
+            t->falha_endereco = q->vetor == 14 ? cpu_ler_cr2() : q->rip;
+            if (t->tratador[sinal] > SINAL_IGNORAR && !(t->bloqueados & BIT(sinal))) {
+                t->sinais |= BIT(sinal);         /* o tratador decide (no fim do despacho) */
+                t->ultima_falha = (u32)q->vetor;
+            } else {                             /* sem tratador: o processo acaba, o sistema não */
+                processo_encerrar(atual, SAIDA_SINAL(sinal), 1, q->vetor);
+            }
         }
     } else if (q->vetor < 48) {
         u32 irq = q->vetor - 32;
@@ -1393,33 +2052,38 @@ quadro_t *interrupt_dispatch(quadro_t *q)
             trocar = 1;
     }
 
-    if (trocar || tarefas[atual].estado != ESTADO_PRONTO)
-        escalonar();
+    for (;;) {
+        if (trocar || tarefas[atual].estado != ESTADO_PRONTO)
+            escalonar();
 
-    tarefa_t *t = &tarefas[atual];
-    if ((u64)t->diretorio != cr3_atual) {
-        cr3_atual = (u64)t->diretorio;
-        cpu_carregar_cr3(cr3_atual);
-    }
-    if (t->pilha_nucleo)
-        tss_definir_rsp0((u64)t->pilha_nucleo + PILHA_NUCLEO_TAM);
+        tarefa_t *t = &tarefas[atual];
+        if ((u64)t->diretorio != cr3_atual) {
+            cr3_atual = (u64)t->diretorio;
+            cpu_carregar_cr3(cr3_atual);
+        }
+        if (t->pilha_nucleo)
+            tss_definir_rsp0((u64)t->pilha_nucleo + PILHA_NUCLEO_TAM);
 
-    /* Ponto flutuante: o núcleo não usa a FPU nem o SSE, então os
-     * registradores continuam sendo do processo que rodou por último.
-     * Só na troca é preciso guardar os dele e trazer os do próximo. */
-    tarefa_t *ant = &tarefas[anterior];
-    if (atual != anterior && ant->fpu && !ant->fpu_limpa)
-        cpu_fpu_salvar((u64)ant->fpu);
-    if (t->fpu && (atual != anterior || t->fpu_limpa)) {
-        cpu_fpu_restaurar((u64)t->fpu);
-        t->fpu_limpa = 0;
-    }
+        /* Ponto flutuante: o núcleo não usa a FPU nem o SSE, então os
+         * registradores continuam sendo do processo que rodou por último.
+         * Só na troca é preciso guardar os dele e trazer os do próximo. */
+        tarefa_t *ant = &tarefas[anterior];
+        if (atual != anterior && ant->fpu && !ant->fpu_limpa)
+            cpu_fpu_salvar((u64)ant->fpu);
+        if (t->fpu && (atual != anterior || t->fpu_limpa)) {
+            cpu_fpu_restaurar((u64)t->fpu);
+            t->fpu_limpa = 0;
+        }
 
-    if (t->entregar) {                           /* última etapa do IPC */
-        mem_copia((void *)t->msg_usuario, &t->caixa, sizeof(msg_t));
-        t->entregar = 0;
+        if (t->entregar) {                       /* última etapa do IPC */
+            mem_copia((void *)t->msg_usuario, &t->caixa, sizeof(msg_t));
+            t->entregar = 0;
+        }
+        if (sinal_preparar(t))                   /* um sinal pendente? desvia para o tratador */
+            return t->quadro;
+        anterior = atual;        /* foi encerrado por ele: a FPU é a dele, escolhe outro */
+        trocar   = 1;
     }
-    return t->quadro;
 }
 
 /* ------------------------------- Mensagem ------------------------------- */

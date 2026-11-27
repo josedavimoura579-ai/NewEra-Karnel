@@ -183,6 +183,7 @@ cp "$REPO"/usuario/bin/*.c "$MODELO/usuario/bin/"
 cp -r "$REPO/libc" "$MODELO/libc"
 cp -r "$REPO/ferramentas" "$MODELO/ferramentas"
 cp -r "$REPO/exemplos" "$MODELO/exemplos"
+cp -r "$REPO/etc" "$MODELO/etc"
 # Os portes (o QBE e o cproc que rodam dentro do NovaEra), já com as
 # fontes: a ISO não precisa de internet para compilá-los.
 mkdir -p "$REPO/portes/fontes"

@@ -18,6 +18,7 @@ typedef struct nl_bloco {
 } cabecalho_t;
 
 static cabecalho_t *livres[CLASSES];
+static int trava;                            /* duas threads no malloc ao mesmo tempo */
 
 static size_t classe_de(size_t n)
 {
@@ -30,15 +31,17 @@ void *malloc(size_t n)
 {
     size_t c = classe_de(n ? n : 1);
     if (((size_t)1 << c) < n) return NULL;
+    if (__threads_ativas) __trava(&trava);
     cabecalho_t *b = livres[c];
     if (b) {
         livres[c] = b->prox;
     } else {
         long p = sys_sbrk(sizeof(cabecalho_t) + ((size_t)1 << c));
-        if (p < 0) return NULL;
+        if (p < 0) { if (__threads_ativas) __destrava(&trava); return NULL; }
         b = (cabecalho_t *)p;
         b->classe = c;
     }
+    if (__threads_ativas) __destrava(&trava);
     return b + 1;
 }
 
@@ -46,8 +49,10 @@ void free(void *p)
 {
     if (!p) return;
     cabecalho_t *b = (cabecalho_t *)p - 1;
+    if (__threads_ativas) __trava(&trava);
     b->prox = livres[b->classe];
     livres[b->classe] = b;
+    if (__threads_ativas) __destrava(&trava);
 }
 
 void *calloc(size_t n, size_t tam)

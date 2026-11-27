@@ -17,9 +17,28 @@ int     chdir(const char *caminho);
 char   *getcwd(char *buf, size_t tam);
 int     isatty(int fd);
 pid_t   getpid(void);
+pid_t   getppid(void);
+uid_t   getuid(void);
+uid_t   geteuid(void);
+gid_t   getgid(void);
+gid_t   getegid(void);
+int     getgroups(int n, gid_t lista[]);
+int     setuid(uid_t uid);
+int     setgid(gid_t gid);
+int     chown(const char *caminho, uid_t dono, gid_t grupo);
+char   *getlogin(void);
+_Noreturn void _exit(int codigo);
+int     setpgid(pid_t pid, pid_t grupo);
+pid_t   getpgid(pid_t pid);
+pid_t   getpgrp(void);
+pid_t   setsid(void);
+unsigned sleep(unsigned segundos);
+int     usleep(unsigned microssegundos);
+int     pause(void);
 ssize_t readlink(const char *caminho, char *buf, size_t tam);
 extern char **environ;               /* o NovaEra ainda não tem variáveis de ambiente */
 int     access(const char *caminho, int modo);
+int     ftruncate(int fd, off_t tam);
 #define F_OK 0
 #define R_OK 4
 #define W_OK 2

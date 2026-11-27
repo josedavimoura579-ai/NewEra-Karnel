@@ -264,6 +264,8 @@ mkdir -p build/initrd/bin build/initrd/etc
     echo "PURO=$PURO"
 } > build/initrd/etc/sistema
 [ -f logo.txt ] && cp logo.txt build/initrd/etc/logo.txt
+# /etc/passwd, /etc/group, /etc/sombra: os usuários (no começo, só o root)
+[ -d etc ] && cp etc/* build/initrd/etc/
 # Os comandos (usuario/bin/) e as ferramentas do NEFS (ferramentas/), que
 # também rodam dentro do NovaEra.
 for fonte in usuario/bin/*.c ferramentas/*.c; do
@@ -281,10 +283,11 @@ cp -r libc/include build/initrd/usr/include
 [ -d exemplos ] && cp -r exemplos build/initrd/usr/share/nefs/exemplos
 # O Livro do NEFS (nefs livro) e o GRUB das ISOs (nefs iso).
 [ -d nefs/livro ] && cp -r nefs/livro build/initrd/usr/share/nefs/livro
-if [ -f ferramentas/grub/eltorito.img ]; then
-    mkdir -p build/initrd/usr/lib/nefs/grub
-    cp ferramentas/grub/eltorito.img build/initrd/usr/lib/nefs/grub/eltorito.img
-fi
+# O GRUB: eltorito.img para as ISOs; boot.img e disco.img para o instalar-boot.
+mkdir -p build/initrd/usr/lib/nefs/grub
+for g in eltorito.img boot.img disco.img; do
+    [ -f "ferramentas/grub/$g" ] && cp "ferramentas/grub/$g" "build/initrd/usr/lib/nefs/grub/$g"
+done
 
 # --- 4. Os portes: programas de fora (portes/<nome>/receita) ----------------
 # Cada porte é compilado do código original, sem mudanças, com a libc do
@@ -371,7 +374,7 @@ for f in kernel.c novaera.h boot.s cpu.s linker.ld build.sh sistema.conf \
          programas.lista logo.txt LICENSE; do
     [ -f "$f" ] && cp "$f" "$SRC/$f"
 done
-for d in usuario libc ferramentas exemplos portes nefs/livro; do
+for d in usuario libc ferramentas exemplos portes nefs/livro etc; do
     [ -d "$d" ] || continue
     find "$d" -type f ! -name '.*' | while read -r f; do
         case "$f" in portes/fontes/*|ferramentas/testes/*) continue ;; esac
@@ -379,6 +382,23 @@ for d in usuario libc ferramentas exemplos portes nefs/livro; do
         cp "$f" "$SRC/$f"
     done
 done
+
+# --- 5. Núcleo (antes do initrd: ele vai dentro, em /boot) ---------------------------------------------------------------
+
+montar build/boot.o boot.s
+montar build/cpu.o cpu.s
+montar build/programas.o build/programas.s
+# shellcheck disable=SC2086
+compilar build/kernel.o kernel.c $CFLAGS_NUCLEO
+# Binário puro: o cabeçalho Multiboot (boot.s) diz onde carregar.
+ligar_nucleo build/kernel.bin build/boot.o build/cpu.o build/kernel.o build/programas.o
+cp build/kernel.bin kernel.bin
+
+
+# O kernel.bin também vai para o initrd, em /boot: o instalar-sistema o
+# copia para o disco, e o GRUB do disco o carrega de lá.
+mkdir -p build/initrd/boot
+cp build/kernel.bin build/initrd/boot/kernel.bin
 
 # Formato ustar: o que o núcleo sabe ler. Data, dono e ordem fixos: o mesmo
 # código gera sempre o mesmo initrd.tar. O tar do BusyBox já usa ustar e
@@ -389,16 +409,5 @@ if ! tar --format=ustar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-own
 fi
 cp build/initrd.tar initrd.tar
 echo "  usuario/bin/*.c + etc/ -> initrd.tar ($(ls build/initrd/bin | wc -l) programas, $(wc -c < initrd.tar) bytes)"
-
-# --- 5. Núcleo ---------------------------------------------------------------
-
-montar build/boot.o boot.s
-montar build/cpu.o cpu.s
-montar build/programas.o build/programas.s
-# shellcheck disable=SC2086
-compilar build/kernel.o kernel.c $CFLAGS_NUCLEO
-# Binário puro: o cabeçalho Multiboot (boot.s) diz onde carregar.
-ligar_nucleo build/kernel.bin build/boot.o build/cpu.o build/kernel.o build/programas.o
-cp build/kernel.bin kernel.bin
 
 echo "OK: kernel.bin gerado ($(wc -c < kernel.bin) bytes) com $CC e as ferramentas '$FERRAMENTAS'"

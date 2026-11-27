@@ -22,7 +22,7 @@ typedef unsigned long long u64;
 
 /* A versão do NÚCLEO. A do sistema (a "distribuição") fica em sistema.conf,
  * como o /etc/os-release do Linux: o núcleo não sabe qual é a distro. */
-#define NOVAERA_VERSAO     "3.2"
+#define NOVAERA_VERSAO     "3.10"
 #define NOVAERA_ARQUITETURA "x86_64"
 
 /* ---------------------- Chamadas de sistema (int 0x80) -------------------
@@ -47,7 +47,26 @@ typedef unsigned long long u64;
 #define SYS_COPIAR_DE   16   /* (pid, copia_t*)  copia da memória de quem me CHAMOU para a minha */
 #define SYS_AMBIENTE    17   /* (msg*)           entrada, saída padrão e pasta atual */
 #define SYS_PASTA       18   /* (caminho)        muda a pasta atual          */
-#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.2 x86_64" (como o uname) */
+#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.10 x86_64" (como o uname) */
+#define SYS_SINAL       20   /* (pid, sinal)     envia um sinal; pid < 0: ao grupo -pid; 0: ao meu grupo */
+#define SYS_SINAL_TRATAR 21  /* (sinal, sinal_acao_t*) troca o tratador; devolve o antigo na mesma struct */
+#define SYS_SINAL_VOLTAR 22  /* ()               fim do tratador: volta ao ponto interrompido */
+#define SYS_SINAL_MASCARA 23 /* (como, mascara)  bloqueia/desbloqueia sinais; devolve a máscara antiga */
+#define SYS_GRUPO       24   /* (pid, grupo)     grupo de processos; grupo = -1: só consulta */
+#define SYS_IDENTIDADE  25   /* (pid, identidade_t*) quem é o processo (0 = eu) */
+#define SYS_IDENTIDADE_MUDAR 26 /* (pid, identidade_t*) só o root: muda a de um filho,
+                                de um cliente esperando a minha resposta, ou a minha */
+#define SYS_LINHA_BOOT  27   /* (msg*)           texto = a linha de comando que o GRUB passou
+                                ("/boot/kernel.bin root=sda1"); vazio se não houve */
+#define SYS_THREAD_CRIAR 28  /* (thread_t*)      uma thread nova no MEU espaço de memória; devolve o id */
+#define SYS_THREAD_SAIR 29   /* (código)         só esta thread termina (a última encerra o programa) */
+#define SYS_FUTEX_ESPERAR 30 /* (endereço, valor) dorme se *endereço == valor (senão ERRO_DE_NOVO) */
+#define SYS_FUTEX_ACORDAR 31 /* (endereço, n)    acorda até n threads dormindo nesse endereço */
+#define SYS_MMAP        32   /* (mmap_t*)        páginas novas (ou de um objeto compartilhado); devolve o endereço */
+#define SYS_MUNMAP      33   /* (endereço, bytes) devolve as páginas */
+#define SYS_SHM_ABRIR   34   /* (shm_pedido_t*)  abre ou cria um objeto de memória compartilhada; devolve o id */
+#define SYS_SHM_TAMANHO 35   /* (id, bytes)      o tamanho do objeto (o ftruncate); só cresce */
+#define SYS_SHM_APAGAR  36   /* (nome)           tira o nome; a memória vai embora com o último mapa */
 
 #define ERRO_INVALIDO   (-1) /* argumento ou ponteiro inválido */
 #define ERRO_SEM_PERMISSAO (-2)
@@ -59,6 +78,10 @@ typedef unsigned long long u64;
 #define ERRO_EXISTE     (-8) /* o arquivo ou a pasta já existe */
 #define ERRO_DISCO      (-9) /* erro de leitura ou escrita no disco */
 #define ERRO_SEM_ESPACO (-10) /* o disco está cheio */
+#define ERRO_INTERROMPIDO (-11) /* a espera foi interrompida por um sinal (o EINTR) */
+#define ERRO_TUBO       (-12) /* escrever num pipe que ninguém mais lê (o EPIPE) */
+#define ERRO_OCUPADO    (-13) /* em uso (desmontar com arquivos abertos: o EBUSY) */
+#define ERRO_DE_NOVO    (-14) /* o valor mudou: tente de novo (o EAGAIN do futex) */
 
 /* --------------------------- Processos fixos ----------------------------
  * O NovaEra ainda não tem um servidor de nomes: cada servidor tem um
@@ -71,7 +94,10 @@ typedef unsigned long long u64;
 #define PID_TERMINAL 5       /* terminal: entrada e saída padrão */
 #define PID_TUBOS    6       /* pipes                            */
 #define PID_DISCO    7       /* driver de disco (ATA)            */
-#define PID_FAT      8       /* o disco, em /disco (FAT32)       */
+#define PID_FAT      8       /* os discos FAT32 montados         */
+#define PID_EXT2     9       /* os discos ext2 montados          */
+#define PID_CONTAS   10      /* usuários e senhas (login, su, sudo, passwd) */
+#define PID_SOCKETS  11      /* sockets locais (AF_UNIX)         */
 #define PID_QUALQUER 0xFFFFFFFFu   /* em SYS_RECEBER: aceita de qualquer um */
 
 /* ------------------------------ Mensagem --------------------------------
@@ -91,7 +117,8 @@ typedef struct {
 #define MSG_VIDEO_ESCREVER 10    /* arg[0] = cor, texto = string            */
 #define MSG_VIDEO_LIMPAR   11
 #define MSG_TECLA          20    /* teclado -> terminal: arg[0] = caractere */
-#define MSG_REINICIAR      21    /* o driver do teclado controla a linha RESET */
+#define MSG_REINICIAR      21    /* o driver do teclado controla a linha RESET (só o root) */
+#define MSG_DESLIGAR       22    /* desliga a máquina (ACPI do QEMU/VirtualBox; só o root) */
 
 /* Entrada e saída: o MESMO protocolo no terminal, nos pipes e nos arquivos.
  * Um "canal" diz qual pipe ou qual arquivo aberto (no terminal, sempre 0). */
@@ -110,28 +137,70 @@ typedef struct {
 /* Servidor de arquivos: caminhos ABSOLUTOS em texto */
 #define ARQ_INFO           40    /* resposta: arg[0] = tipo (ARQ_TIPO_*), arg[1] = tamanho */
 #define ARQ_LISTAR         41    /* arg[0] = índice; resposta: texto = nome, arg[0] = tipo, arg[1] = tamanho */
-#define ARQ_ABRIR          42    /* arg[0] = modo (ARQ_MODO_*); resposta: arg[0] = canal */
+#define ARQ_ABRIR          42    /* arg[0] = modo (ARQ_MODO_*), arg[1] = permissões se criar (0 = 0644);
+                                    resposta: arg[0] = canal */
+#define ARQ_PERMISSOES     55    /* arg[0] = o modo novo (o chmod): só o dono ou o root */
+#define ARQ_DONO           56    /* arg[0] = uid, arg[1] = gid (o chown): só o root */
 #define ARQ_FECHAR         43    /* arg[0] = canal */
-#define ARQ_PASTA          44    /* cria uma pasta */
+#define ARQ_PASTA          44    /* cria uma pasta; arg[0] = modo (0 = 0755) */
 #define ARQ_APAGAR         45    /* apaga um arquivo ou uma pasta vazia */
+/* ARQ_INFO e ARQ_LISTAR: no ext2, arg[2] = o modo (permissões, como no
+ * Unix: 0644, 0755...) e arg[3] = dono | grupo << 16. No FAT32: 0. */
 #define ARQ_TIPO_ARQUIVO   1
 #define ARQ_TIPO_PASTA     2
 #define ARQ_MODO_LER       1
 #define ARQ_MODO_ESCREVER  2     /* cria ou apaga o conteúdo */
 #define ARQ_MODO_ANEXAR    3     /* cria ou escreve no fim  */
-/* Os caminhos que começam em /disco vão para o PID_FAT; o resto, para o
- * PID_ARQUIVOS. O canal que a ulib entrega leva o servidor nos bits 8-15
- * (ARQ_SERVIDOR); o servidor só olha os bits 0-7. */
-#define ARQ_DISCO          "/disco"
+/* Montagens (como o /etc/fstab e o mount do Linux). O servidor de
+ * arquivos (PID_ARQUIVOS) é a raiz e guarda a tabela: um pedido com um
+ * caminho que fica dentro de um ponto de montagem (o mais longo vence)
+ * é respondido com ARQ_OUTRO_SERVIDOR, e a ulib refaz o pedido lá. O canal
+ * que a ulib entrega leva o servidor nos bits 8-15 (ARQ_SERVIDOR); o
+ * servidor só olha os bits 0-7. */
+#define ARQ_OUTRO_SERVIDOR 46    /* resposta: arg[0] = o servidor que cuida do caminho */
+#define MONT_ADICIONAR     47    /* texto = pasta, arg[0] = servidor, arg[1] = dispositivo */
+#define MONT_REMOVER       48    /* texto = pasta; resposta: arg[0] = servidor, arg[1] = dispositivo */
+#define MONT_LISTAR        49    /* arg[0] = índice; resposta: texto = pasta, arg[0] = servidor, arg[1] = dispositivo */
+#define MONT_MAX           8u
+#define ARQ_DISCO          "/disco"    /* onde o boot monta o primeiro FAT32 que achar */
 #define ARQ_SERVIDOR(c)    (((u32)(c) >> 8) & 0xFFu)
 #define ARQ_CANAL(c)       ((u32)(c) & 0xFFu)
+/* Num descritor da libc, um objeto de memória compartilhada (shm_open)
+ * aparece com este "servidor" (não é um processo: nenhum PID chega a 254). */
+#define SERVIDOR_SHM 0xFEu
+/* Quem guarda arquivos (e não é o terminal, um pipe nem a memória compartilhada)? */
+#define SERVIDOR_DE_ARQUIVOS(s) ((s) != PID_TERMINAL && (s) != PID_TUBOS && (s) != SERVIDOR_SHM)
 
-/* Driver de disco (ATA, setores de 512 bytes, até 128 por pedido) */
-#define DISCO_INFO         60    /* resposta: arg[0] = setores (0 = sem disco) */
-#define DISCO_LER          61    /* arg[0] = setor (LBA), arg[1] = quantos, arg[2] = endereço do buffer */
+/* Driver de disco (ATA: até 4 discos, nos dois canais IDE; setores de 512
+ * bytes, até 128 por pedido). Um DISPOSITIVO é disco * 8 + partição:
+ * partição 0 é o disco inteiro, 1 a 4 são as primárias da tabela MBR. Os
+ * nomes são os do Linux: sda = 0, sda1 = 1, sdb = 8, sdb2 = 10...
+ * O LBA de cada pedido conta a partir do começo do dispositivo. */
+#define DISCO_INFO         60    /* arg[3] = dispositivo; resposta: arg[0] = setores (0 = não existe),
+                                    arg[1] = onde começa no disco, arg[2] = tipo da partição (MBR),
+                                    texto = o modelo do disco */
+#define DISCO_LER          61    /* arg[0] = setor (LBA), arg[1] = quantos, arg[2] = endereço do buffer,
+                                    arg[3] = dispositivo */
 #define DISCO_ESCREVER     62    /* idem, os dados vêm do buffer de quem chamou */
+#define DISCO_RELER        64    /* arg[3] = dispositivo: lê a tabela de partições de novo */
 #define DISCO_SETOR        512u
-#define FAT_MONTAR         63    /* ao PID_FAT: lê o disco de novo (depois do formatar) */
+#define DISCOS_MAX         4u
+#define DISCO_DEV(d, p)    ((d) * 8u + (p))
+#define DEV_DISCO(dev)     ((dev) / 8u)
+#define DEV_PARTICAO(dev)  ((dev) % 8u)
+
+/* Servidores de sistemas de arquivos (FAT32, ext2): cada um cuida de até
+ * 4 volumes montados ao mesmo tempo. Quem monta pergunta a um por vez: o
+ * que não reconhece o disco responde ERRO_FORMATO. */
+#define SA_MONTAR          63    /* arg[0] = dispositivo, texto = pasta */
+#define SA_DESMONTAR       65    /* texto = pasta; ERRO_OCUPADO se há arquivos abertos */
+#define FAT_MONTAR         SA_MONTAR
+#define FAT_DESMONTAR      SA_DESMONTAR
+
+/* Tipos de partição (o byte 4 da entrada na MBR) */
+#define PART_FAT32         0x0C  /* FAT32 com LBA */
+#define PART_LINUX         0x83  /* ext2 (e qualquer sistema de arquivos do Linux) */
+#define PART_SWAP          0x82
 
 /* Pipes. Cada ponta (leitura, escrita) conta quantas referências abertas
  * ela tem. Sem escritores, quem lê recebe o fim; sem leitores, quem escreve
@@ -145,6 +214,36 @@ typedef struct {
  * feche ao terminar" (a libc faz isso no exit). O shell não liga o bit:
  * ele mesmo fecha as pontas depois que os filhos terminam. */
 #define CANAL_DONO         0x80000000u
+
+/* O terminal manda o Ctrl+C (SIGINT) ao grupo do "primeiro plano": o
+ * comando que o shell está rodando. 0 = nenhum (o shell espera a linha). */
+#define TERM_GRUPO         32    /* arg[0] = grupo do primeiro plano; resposta: arg[0] = o anterior */
+#define TERM_ECO           33    /* arg[0] = 0: não mostra o que se digita (senhas); 1: mostra */
+
+/* Sockets locais (PID_SOCKETS), como os AF_UNIX do Linux: um programa
+ * "ouve" num nome (/tmp/servidor.sock) e outros se conectam a ele. Cada
+ * conexão é uma linha de conversa nos dois sentidos. Ler e escrever é o
+ * mesmo MSG_LER / MSG_ESCREVER dos arquivos (com arg[3] = o endereço, até
+ * ESCRITA_MAX); fechar é ARQ_FECHAR. arg[0] = o socket (o canal). */
+#define SOCK_CRIAR         80    /* resposta: arg[0] = o socket */
+#define SOCK_LIGAR         81    /* arg[0] = socket, texto = o nome (o bind) */
+#define SOCK_OUVIR         82    /* arg[0] = socket, arg[1] = fila (o listen) */
+#define SOCK_ACEITAR       83    /* arg[0] = socket; espera uma conexão; resposta: arg[0] = o socket novo */
+#define SOCK_CONECTAR      84    /* arg[0] = socket, texto = o nome (o connect) */
+#define SOCK_ESTADO        85    /* resposta: arg[0] = bytes para ler, arg[1] = conexões esperando,
+                                    arg[2] = 1 se o outro lado fechou, arg[3] = espaço para escrever */
+#define SOCK_PAR           86    /* dois sockets já ligados (o socketpair); resposta: arg[0], arg[1] */
+#define SOCK_BUF           16384u
+
+/* Servidor de contas (PID_CONTAS). texto = "usuario\0senha\0" (até 31
+ * letras cada). Os arquivos: /etc/passwd, /etc/group e /etc/sombra. */
+#define CONTAS_ENTRAR      70    /* vira o usuário (login, su); o root não precisa da senha.
+                                    resposta: arg[0] = uid, arg[1] = gid, texto = a pasta pessoal */
+#define CONTAS_SUDO        71    /* vira o root; texto = a senha de quem pede (que tem de estar
+                                    no grupo sudo ou wheel) */
+#define CONTAS_CONFERIR    72    /* só confere a senha (o passwd, antes de trocar) */
+#define CONTAS_SENHA       73    /* troca a senha: o root, ou o próprio usuário logo depois
+                                    de um CONTAS_CONFERIR */
 
 #define MSG_OK             99
 #define MSG_ERRO           98    /* arg[0] = -ERRO_* (o código, positivo)   */
@@ -167,7 +266,87 @@ typedef struct {
     u64  argv;                   /* char *argv[], terminado em 0 */
     u32  entrada, entrada_canal; /* servidor e canal da entrada padrão */
     u32  saida, saida_canal;     /* servidor e canal da saída padrão  */
+    u32  grupo;                  /* 0 = o de quem cria; GRUPO_NOVO = um grupo só dele */
+    u32  reservado;
 } criar_t;
+#define GRUPO_NOVO 0xFFFFFFFFu
+
+/* ------------------------- Usuários e grupos -----------------------------
+ * Cada processo é de um usuário (uid) e de um grupo (gid), e pode estar em
+ * mais alguns grupos. O root (uid 0) pode tudo. Um filho herda a
+ * identidade de quem o cria; só o root a muda (SYS_IDENTIDADE_MUDAR). É o
+ * servidor de contas, que roda como root, quem muda a identidade de um
+ * programa depois de conferir a senha (login, su, sudo).
+ * Os servidores de arquivos perguntam ao núcleo quem é o cliente
+ * (SYS_IDENTIDADE) e conferem as permissões rwx de cada arquivo. */
+#define GRUPOS_MAX 8u
+typedef struct {
+    u32 uid, gid;
+    u32 n;                       /* quantos grupos extras */
+    u32 grupos[GRUPOS_MAX];
+} identidade_t;
+#define UID_ROOT 0u
+
+/* Permissões (como no Unix): 3 grupos de 3 bits, dono / grupo / outros */
+#define PERM_LER       4u
+#define PERM_ESCREVER  2u
+#define PERM_EXECUTAR  1u        /* num arquivo: rodar; numa pasta: entrar */
+#define MODO_STICKY    01000u    /* numa pasta (/tmp): só o dono apaga o que é seu */
+
+/* ------------------------------- Sinais ---------------------------------
+ * Um sinal é um aviso assíncrono a um processo: "pare" (Ctrl+C), "morra",
+ * "seu filho terminou", "você leu memória que não é sua". Os números são
+ * os do Linux (o "kill -9" é o mesmo em toda parte).
+ *
+ * Cada sinal tem um destino: o padrão (quase todos encerram o processo;
+ * SIGCHLD, SIGCONT, SIGURG e SIGWINCH são ignorados), ignorar, ou uma
+ * função do programa (o tratador). O tratador roda no anel 3, na pilha do
+ * programa; quando ele volta, cai no "restaurador" (um int 0x80 com
+ * SYS_SINAL_VOLTAR) e o núcleo devolve tudo como estava.
+ *
+ * Quem é encerrado por um sinal sai com o código SAIDA_SINAL(s); um código
+ * normal (SYS_SAIR) vai de 0 a 255, como no Unix. */
+#define SINAL_HUP     1
+#define SINAL_INT     2      /* Ctrl+C */
+#define SINAL_QUIT    3
+#define SINAL_ILL     4      /* instrução inválida */
+#define SINAL_TRAP    5
+#define SINAL_ABRT    6      /* abort() */
+#define SINAL_BUS     7
+#define SINAL_FPE     8      /* divisão por zero */
+#define SINAL_KILL    9      /* não pode ser tratado nem ignorado */
+#define SINAL_USR1   10
+#define SINAL_SEGV   11      /* memória inválida (falha de página, GPF) */
+#define SINAL_USR2   12
+#define SINAL_PIPE   13      /* escreveu num pipe sem leitor */
+#define SINAL_ALRM   14
+#define SINAL_TERM   15      /* o padrão do "kill" */
+#define SINAL_CHLD   17      /* um filho terminou (ignorado por padrão) */
+#define SINAL_CONT   18
+#define SINAL_STOP   19      /* (ainda sem controle de tarefas: ignorados) */
+#define SINAL_TSTP   20
+#define SINAL_TTIN   21
+#define SINAL_TTOU   22
+#define SINAL_URG    23
+#define SINAL_WINCH  28
+#define SINAL_MAX    32      /* sinais de 1 a 31 */
+
+#define SINAL_PADRAO  0ull   /* tratador = 0: a ação padrão */
+#define SINAL_IGNORAR 1ull   /* tratador = 1: ignorar        */
+
+typedef struct {
+    u64  tratador;           /* SINAL_PADRAO, SINAL_IGNORAR ou o endereço da função */
+    u64  restaurador;        /* para onde o tratador volta (o __sinal_volta da ulib) */
+    u32  mascara;            /* sinais bloqueados enquanto o tratador roda */
+    u32  mudar;              /* 0 = só consulta; a resposta vem na mesma struct */
+} sinal_acao_t;
+
+#define SINAL_BLOQUEAR    0  /* SYS_SINAL_MASCARA: como o SIG_BLOCK   */
+#define SINAL_DESBLOQUEAR 1  /*                    SIG_UNBLOCK         */
+#define SINAL_DEFINIR     2  /*                    SIG_SETMASK         */
+
+#define SAIDA_SINAL(s)     (0x100 | (s))
+#define SAIDA_FOI_SINAL(c) (((c) & 0x100) != 0)
 
 /* Estados de processo. SYS_TAREFA_INFO devolve: arg[0] = estado,
  * arg[1] = reinícios, arg[2] = exceção da última falha, arg[3] = PID do pai. */
@@ -178,10 +357,60 @@ typedef struct {
 #define ESTADO_MORTO      4      /* servidor que falhou demais e desistiu  */
 #define ESTADO_ESPERANDO  5      /* em SYS_ESPERAR, aguardando um filho    */
 #define ESTADO_ZUMBI      6      /* terminou; o pai ainda não leu o código */
+#define ESTADO_FUTEX      7      /* uma thread dormindo num futex (SYS_FUTEX_ESPERAR) */
 
-/* Código de saída de quem foi encerrado por uma exceção: 128 + vetor
- * (o mesmo costume do Unix). Ex.: falha de página (14) = 142. */
-#define SAIDA_FALHA_BASE  128
+/* ------------------------ mmap e memória compartilhada --------------------
+ * mmap pede páginas de memória direto ao núcleo, numa região só para isso
+ * (USUARIO_MMAP). Com objeto = 0, páginas novas, zeradas, só deste
+ * programa. Com o id de um OBJETO DE MEMÓRIA COMPARTILHADA (SYS_SHM_ABRIR,
+ * pelo nome, como o shm_open do Linux), as MESMAS páginas físicas aparecem
+ * em todos os programas que o mapearem: o que um escreve, o outro lê na
+ * hora, sem mensagens. O futex usa o endereço físico: um mutex dentro da
+ * memória compartilhada funciona entre programas diferentes. */
+#define PROT_LER       1u
+#define PROT_ESCREVER  2u
+typedef struct {
+    u64 tam;                     /* em bytes (arredondado para páginas de 4 KiB) */
+    u64 objeto;                  /* 0 = memória nova; senão, o id do objeto compartilhado */
+    u64 prot;                    /* PROT_LER | PROT_ESCREVER */
+    u64 reservado;
+} mmap_t;
+typedef struct {
+    u64 nome;                    /* "/nome" (até 31 letras) */
+    u32 criar;                   /* 0 = só abre; 1 = cria se não existir; 2 = cria, e erro se existir */
+    u32 modo;                    /* as permissões, se criar (0600...) */
+} shm_pedido_t;
+#define SHM_MAX_BYTES  (2u * 1024 * 1024)   /* cada objeto: até 2 MiB */
+
+/* Quantos processos e threads o núcleo aguenta ao mesmo tempo. */
+#define PROCESSOS_MAX     64u
+
+/* ------------------------------- Threads ---------------------------------
+ * Uma thread é mais um "fio" de execução DENTRO de um programa: ela tem os
+ * seus registradores e a sua pilha, mas a memória (o código, as variáveis
+ * globais, o heap) é a mesma das outras threads do programa. Para o
+ * núcleo, cada thread é uma tarefa, com um id próprio; todas apontam para
+ * o mesmo espaço de endereçamento (o mesmo CR3) e para a mesma "líder"
+ * (a thread que o programa tinha ao começar). Uma falha ou um exit() em
+ * qualquer thread encerra o programa inteiro; o programa só acaba quando
+ * a última thread sai.
+ *
+ * Para uma thread esperar outra (um mutex, um join), o futex ("fast
+ * userspace mutex", do Linux): a espera mora num número da memória; quem
+ * espera dorme no núcleo só enquanto o número tiver o valor que viu. */
+typedef struct {
+    u64 entrada;                 /* a função: void f(u64 arg) */
+    u64 pilha;                   /* o topo da pilha dela (RSP inicial) */
+    u64 arg;                     /* vai em RDI */
+    u64 tid_endereco;            /* ao terminar, o núcleo põe 0 aqui (u32) e acorda quem
+                                    espera nesse futex: é o pthread_join */
+} thread_t;
+
+/* Uma exceção da CPU num programa vira um sinal: falha de página e GPF
+ * viram SIGSEGV, divisão por zero vira SIGFPE, opcode inválido vira
+ * SIGILL. Sem tratador, o processo sai com SAIDA_SINAL(sinal), e
+ * SYS_TAREFA_INFO guarda o vetor em arg[2] (FALHA_NENHUMA se não houve). */
+#define FALHA_NENHUMA     0xFFFFFFFFu
 
 /* ------------------------- Mapa de memória virtual ----------------------
  * 0x00000000 - 0x3FFFFFFF  núcleo (1 GiB, mapeado igual à memória física,
@@ -190,6 +419,7 @@ typedef struct {
  * ...depois do programa    heap, cresce para cima com SYS_SBRK, até 0x60000000
  * 0x68000000 - ...         o initrd, só leitura (só no servidor de arquivos)
  * 0x70000000 - 0x70000FFF  memória de vídeo 0xB8000 (só no servidor de vídeo)
+ * 0x71000000 - 0x7EFFFFFF  o mmap (memória nova e memória compartilhada)
  * 0x7FF00000 - 0x7FFFEFFF  pilha (1 MiB), cresce para baixo sob demanda;
  *                          no topo ficam os argumentos (argc, argv)       */
 #define USUARIO_BASE        0x40000000ull
@@ -197,6 +427,8 @@ typedef struct {
 #define USUARIO_HEAP_FIM    0x60000000ull
 #define USUARIO_INITRD      0x68000000ull
 #define USUARIO_VGA         0x70000000ull
+#define USUARIO_MMAP        0x71000000ull     /* a região do mmap, até 0x7F000000 */
+#define USUARIO_MMAP_FIM    0x7F000000ull
 #define USUARIO_PILHA_TOPO  0x7FFFF000ull
 #define USUARIO_PILHA_TAM   0x00100000ull
 #define USUARIO_FIM         USUARIO_PILHA_TOPO

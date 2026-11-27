@@ -8,7 +8,8 @@
  *  - Ler de um tubo vazio: a resposta só vem quando chegar algo, ou com 0
  *    bytes ("acabou") quando não sobrar nenhum escritor.
  *  - Cada ponta conta as referências abertas (TUBO_ABRIR / TUBO_FECHAR);
- *    sem leitores, escrever dá erro; sem ninguém, o tubo é liberado.
+ *    sem leitores, escrever dá ERRO_TUBO (e a libc manda o SIGPIPE a
+ *    quem escreveu); sem ninguém, o tubo é liberado.
  *  O servidor nunca bloqueia: ele simplesmente adia a resposta.
  * ===========================================================================
  */
@@ -58,8 +59,8 @@ static void andar(tubo_t *t)
         }
         t->leitor = 0;
     }
-    if (t->escritor && !t->leitores) {          /* ninguém mais vai ler */
-        responder(t->escritor, MSG_ERRO, (u32)(-ERRO_INVALIDO));
+    if (t->escritor && !t->leitores) {          /* ninguém mais vai ler: o EPIPE */
+        responder(t->escritor, MSG_ERRO, (u32)(-ERRO_TUBO));
         t->escritor = 0;
     }
     if (t->escritor && TUBO_TAM - t->n >= t->escritor_n) {
@@ -102,7 +103,7 @@ int main(int argc, char **argv)
         case MSG_ESCREVER: {
             u32 n = m.arg[2] < MSG_TEXTO_MAX ? m.arg[2] : MSG_TEXTO_MAX - 1;
             if (!t->leitores || t->escritor) {
-                responder(quem, MSG_ERRO, (u32)(-ERRO_INVALIDO));
+                responder(quem, MSG_ERRO, (u32)(-(t->leitores ? ERRO_INVALIDO : ERRO_TUBO)));
             } else if (TUBO_TAM - t->n >= n) {
                 por(t, m.texto, n);
                 responder(quem, MSG_OK, n);

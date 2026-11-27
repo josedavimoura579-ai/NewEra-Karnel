@@ -10,7 +10,75 @@
  * ===========================================================================
  */
 #include "ulib.h"
+#include "contas.h"
 #include "sistema.h"      /* gerado de sistema.conf pelo build.sh */
+
+/* O shell do boot é o PID 3. Uma cópia dele, o /bin/sh, roda como um
+ * programa comum (o su e o login a chamam): esse sai com "sair" ou com
+ * Ctrl+D, e ignora o Ctrl+C (que é para os comandos dele). */
+static int do_boot;
+
+/* O sistema instalado num disco: o GRUB passa "root=sda1" na linha de
+ * boot. O shell do boot (PID 3) faz então o papel do "init" do Unix: monta
+ * a raiz (/) daquele disco e chama o /bin/init de lá, que monta o resto
+ * (/etc/montagens) e mostra o login. Se o init terminar, chama de novo:
+ * nunca fica um shell do root aberto sem senha. Sem "root=" (no QEMU com
+ * -kernel e -initrd, ou na ISO), o sistema roda da memória, como sempre. */
+static int raiz_montada(void)
+{
+    char pasta[CAMINHO_MAX];
+    for (u32 i = 0; montagem(i, pasta, 0, 0) == 0; i++)
+        if (str_igual(pasta, "/")) return 1;
+    return 0;
+}
+
+static void modo_init(void)
+{
+    msg_t m;
+    sys_linha_boot(&m);
+    const char *r = m.texto;
+    while (*r && !(r[0] == 'r' && r[1] == 'o' && r[2] == 'o' && r[3] == 't' && r[4] == '=')) r++;
+    if (!raiz_montada()) {
+        if (!*r) return;                             /* sem root=: roda da memória */
+        char nome[16];
+        u32 k = 0;
+        for (r += 5; *r && *r != ' ' && k + 1 < sizeof nome; r++) nome[k++] = *r;
+        nome[k] = '\0';
+        long dev = dispositivo_de(nome);
+        escreve("[init] montando a raiz: ", COR(COR_CINZA_CLARO));
+        escreve(nome, COR(COR_BRANCO));
+        escreve(" em /\n", COR(COR_CINZA_CLARO));
+        long e = dev < 0 ? ERRO_INVALIDO : montar_em((u32)dev, "/");
+        if (e < 0) {
+            escreve("[init] nao consegui montar a raiz: o sistema roda da memoria.\n\n", COR(COR_VERMELHO_CLARO));
+            return;
+        }
+    }
+    for (u32 vezes = 0; ; vezes++) {
+        char *args[] = { "init", 0 };
+        long pid = executar("/bin/init", args, 0, 0, 0, 0);
+        if (pid < 0) {
+            escreve("[init] o disco nao tem /bin/init: abrindo o shell do root.\n\n", COR(COR_VERMELHO_CLARO));
+            return;
+        }
+        sys_esperar((u32)pid);
+        if (vezes > 20) for (u32 t = sys_tempo(); sys_tempo() - t < 100; ) sys_ceder();  /* sem girar à toa */
+    }
+}
+
+/* O nome de um usuário pelo uid (do /etc/passwd); "?" se não achar. */
+static void nome_usuario(u32 uid, char *nome, u32 max)
+{
+    u32 tam;
+    u8 *d = arq_carregar("/etc/passwd", &tam);
+    conta_t c;
+    char *t = d ? umalloc(tam + 1) : 0;
+    if (t) { mem_copia(t, d, tam); t[tam] = 0; }
+    if (t && conta_procura(t, 0, uid, &c)) str_copia(nome, c.nome, max);
+    else num_texto(uid, nome);
+    ufree(t);
+    ufree(d);
+}
 
 static void escreve_coluna(const char *s, u32 largura, u8 cor)
 {
@@ -21,7 +89,7 @@ static void escreve_coluna(const char *s, u32 largura, u8 cor)
 /* ---------------------------- Comandos internos --------------------------- */
 
 static const char *const ESTADOS[] = {
-    "livre", "pronto", "enviando", "recebendo", "morto", "esperando", "zumbi"
+    "livre", "pronto", "enviando", "recebendo", "morto", "esperando", "zumbi", "futex"
 };
 static const char *const EXCECOES[] = {
     "Divisao por zero", "Debug", "NMI", "Breakpoint", "Overflow",
@@ -44,7 +112,10 @@ static void cmd_ajuda(void)
     escreve("  reboot   ", c); escreve("reinicia o computador\n", d);
     escreve("Programas em /bin (veja: ls /bin):\n", COR(COR_CIANO_CLARO));
     escreve("  ls cat echo mkdir rm cp cmp base64 novafetch ola codigo memoria falha filho\n", c);
-    escreve("  formatar  (prepara o disco, que aparece em /disco; nefs livro 7)\n", c);
+    escreve("  kill sleep  (sinais: Ctrl+C interrompe o comando; nefs livro 8)\n", c);
+    escreve("  adduser login su sudo passwd chmod chown id whoami  (nefs livro 11)\n", c);
+    escreve("  instalar-sistema instalar-boot desligar  (instalar no disco; nefs livro 12)\n", c);
+    escreve("  discos particionar formatar montar desmontar  (discos; nefs livro 9 e 10)\n", c);
     escreve("  cproc qbe nefs-cpp nefs-as nefs-ld nefs-ar  (o compilador; nefs livro 4)\n", c);
     escreve("  nefs compilar  (em /usr/src/novaera: o NovaEra se compila; nefs livro 6)\n", c);
     escreve("Pipes e arquivos: ", COR(COR_CIANO_CLARO));
@@ -54,7 +125,7 @@ static void cmd_ajuda(void)
 static void cmd_ps(void)
 {
     const u8 t = COR(COR_CIANO_CLARO), v = COR(COR_BRANCO);
-    escreve("PID  NOME       ANEL  PAI  ESTADO      REINICIOS\n", t);
+    escreve("PID  NOME       USUARIO  PAI  ESTADO      REINICIOS\n", t);
     for (u32 pid = 0; ; pid++) {
         msg_t m;
         if (sys_tarefa_info(pid, &m) < 0) break;
@@ -62,9 +133,14 @@ static void cmd_ps(void)
         char buf[11];
         escreve_coluna(num_texto(pid, buf), 5, v);
         escreve_coluna(m.texto, 11, v);
-        escreve_coluna(pid == 0 ? "0" : "3", 6, v);
+        identidade_t id;
+        char quem[NOME_CONTA_MAX];
+        if (pid == 0) str_copia(quem, "root", sizeof quem);   /* (pid 0 na chamada = "eu") */
+        else if (sys_identidade(pid, &id) == 0) nome_usuario(id.uid, quem, sizeof quem);
+        else str_copia(quem, "?", sizeof quem);
+        escreve_coluna(quem, 9, v);
         escreve_coluna(num_texto(m.arg[3], buf), 5, v);
-        escreve_coluna(m.arg[0] <= ESTADO_ZUMBI ? ESTADOS[m.arg[0]] : "?", 12, v);
+        escreve_coluna(m.arg[0] <= ESTADO_FUTEX ? ESTADOS[m.arg[0]] : "?", 12, v);
         escreve_num(m.arg[1], v);
         escreve("\n", v);
     }
@@ -109,6 +185,13 @@ static void cmd_invadir(void)
 
 static void cmd_reboot(void)
 {
+    identidade_t id;
+    if (sys_identidade(0, &id) == 0 && id.uid != UID_ROOT) {
+        escreve("So o root reinicia (use: sudo desligar -r)\n", COR(COR_VERMELHO_CLARO));
+        return;
+    }
+    escreve("Gravando os discos...\n", COR(COR_CINZA_CLARO));
+    discos_sincronizar();
     escreve("Pedindo ao driver de teclado para reiniciar...\n", COR(COR_AMARELO));
     msg_t m;
     msg_zera(&m);
@@ -205,16 +288,29 @@ static int interno(comando_t *c)
     return 1;
 }
 
-static void avisar_fim(const char *nome, long codigo)
+/* 'falha' = a exceção da CPU (SYS_TAREFA_INFO arg[2]), ou FALHA_NENHUMA. */
+static void avisar_fim(const char *nome, long codigo, u32 falha)
 {
-    if (codigo >= SAIDA_FALHA_BASE && codigo < SAIDA_FALHA_BASE + 32) {
-        u32 v = (u32)(codigo - SAIDA_FALHA_BASE);
-        escreve("[nucleo] ", COR(COR_VERMELHO_CLARO));
-        escreve(nome, COR(COR_BRANCO));
-        escreve(" foi encerrado: ", COR(COR_VERMELHO_CLARO));
-        escreve(v < sizeof(EXCECOES) / sizeof(EXCECOES[0]) ? EXCECOES[v] : "excecao",
-                COR(COR_BRANCO));
-        escreve(". O sistema continua de pe.\n", COR(COR_VERMELHO_CLARO));
+    if (SAIDA_FOI_SINAL(codigo)) {
+        u32 s = (u32)codigo & 0xFF;
+        const char *sn = sinal_nome(s);
+        if (s == SINAL_PIPE) return;                 /* "| head": normal, como no bash */
+        if (falha < sizeof(EXCECOES) / sizeof(EXCECOES[0])) {
+            escreve("[nucleo] ", COR(COR_VERMELHO_CLARO));
+            escreve(nome, COR(COR_BRANCO));
+            escreve(" foi encerrado: ", COR(COR_VERMELHO_CLARO));
+            escreve(EXCECOES[falha], COR(COR_BRANCO));
+            escreve(" (SIG", COR(COR_CINZA_CLARO));
+            escreve(sn ? sn : "?", COR(COR_CINZA_CLARO));
+            escreve("). O sistema continua de pe.\n", COR(COR_VERMELHO_CLARO));
+            return;
+        }
+        escreve("[", COR(COR_CINZA_CLARO));
+        escreve(nome, COR(COR_CINZA_CLARO));
+        escreve(s == SINAL_INT ? " interrompido (SIG" : " encerrado pelo sinal SIG", COR(COR_CINZA_CLARO));
+        if (sn) escreve(sn, COR(COR_BRANCO));
+        else escreve_num(s, COR(COR_BRANCO));
+        escreve(s == SINAL_INT ? ")]\n" : "]\n", COR(COR_CINZA_CLARO));
     } else if (codigo != 0) {
         escreve("[", COR(COR_CINZA_CLARO));
         escreve(nome, COR(COR_CINZA_CLARO));
@@ -222,6 +318,18 @@ static void avisar_fim(const char *nome, long codigo)
         escreve_num((u32)codigo, COR(COR_BRANCO));
         escreve("]\n", COR(COR_CINZA_CLARO));
     }
+}
+
+/* Diz ao terminal quem recebe o Ctrl+C. */
+/* Diz ao terminal quem recebe o Ctrl+C; devolve quem era antes. */
+static u32 primeiro_plano(u32 grupo)
+{
+    msg_t m;
+    msg_zera(&m);
+    m.tipo   = TERM_GRUPO;
+    m.arg[0] = grupo;
+    if (sys_chamar(PID_TERMINAL, &m) < 0 || m.tipo != MSG_OK) return 0;
+    return m.arg[0];
 }
 
 static void erro_arquivo(const char *texto, const char *arquivo)
@@ -236,6 +344,8 @@ static void rodar(comando_t *cmds, u32 n)
 {
     long pids[MAX_COMANDOS], tubos[MAX_COMANDOS], abertos[2 * MAX_COMANDOS];
     u32 n_abertos = 0;
+    u32 grupo = 0;          /* a linha toda é um grupo: o do primeiro processo */
+    u32 antes = 0;          /* quem tinha o Ctrl+C antes (num /bin/sh, o su que o chamou) */
     for (u32 i = 0; i < n; i++) pids[i] = tubos[i] = -1;
 
     for (u32 i = 0; i < n; i++) {
@@ -245,7 +355,10 @@ static void rodar(comando_t *cmds, u32 n)
         if (i > 0) { ent = PID_TUBOS; ent_c = (u32)tubos[i - 1]; }
         if (c->entrada) {
             long a = arq_abrir(c->entrada, ARQ_MODO_LER);
-            if (a < 0) { erro_arquivo("Arquivo nao encontrado: ", c->entrada); break; }
+            if (a < 0) {
+                erro_arquivo(a == ERRO_SEM_PERMISSAO ? "Permissao negada: " : "Arquivo nao encontrado: ", c->entrada);
+                break;
+            }
             abertos[n_abertos++] = a;
             ent = ARQ_SERVIDOR(a); ent_c = (u32)a;
         }
@@ -256,7 +369,10 @@ static void rodar(comando_t *cmds, u32 n)
         }
         if (c->saida) {
             long a = arq_abrir(c->saida, c->anexar ? ARQ_MODO_ANEXAR : ARQ_MODO_ESCREVER);
-            if (a < 0) { erro_arquivo("Nao consegui criar: ", c->saida); break; }
+            if (a < 0) {
+                erro_arquivo(a == ERRO_SEM_PERMISSAO ? "Permissao negada: " : "Nao consegui criar: ", c->saida);
+                break;
+            }
             abertos[n_abertos++] = a;
             sai = ARQ_SERVIDOR(a); sai_c = (u32)a;
         }
@@ -273,9 +389,15 @@ static void rodar(comando_t *cmds, u32 n)
             str_copia(caminho + 5, nome, sizeof(caminho) - 5);
         }
 
-        pids[i] = executar(caminho, c->argv, ent, ent_c, sai, sai_c);
+        pids[i] = executar_grupo(caminho, c->argv, ent, ent_c, sai, sai_c,
+                                 grupo ? grupo : GRUPO_NOVO);
+        if (pids[i] >= 0 && !grupo) {
+            grupo = (u32)pids[i];
+            antes = primeiro_plano(grupo);      /* o Ctrl+C agora vai para eles */
+        }
         if (pids[i] < 0) {
             escreve(pids[i] == ERRO_NAO_ACHADO ? "Comando desconhecido: "
+                    : pids[i] == ERRO_SEM_PERMISSAO ? "Permissao negada (sem o x): "
                     : pids[i] == ERRO_FORMATO   ? "Nao e um programa ELF valido: "
                                                 : "Sem memoria ou sem vaga para: ",
                     COR(COR_VERMELHO_CLARO));
@@ -295,12 +417,20 @@ static void rodar(comando_t *cmds, u32 n)
      * quando quem lê termina, fecha a leitura, e o pipe é liberado. Os
      * avisos só aparecem no fim, para não se misturar com a saída. */
     long codigos[MAX_COMANDOS];
+    u32 falhas[MAX_COMANDOS];
     for (u32 i = 0; i < n; i++) {
-        codigos[i] = pids[i] >= 0 ? sys_esperar((u32)pids[i]) : 0;
+        codigos[i] = 0;
+        falhas[i]  = FALHA_NENHUMA;
+        if (pids[i] >= 0) {
+            codigos[i] = sys_esperar((u32)pids[i]);
+            msg_t m;                                /* qual exceção, se foi uma */
+            if (sys_tarefa_info((u32)pids[i], &m) == 0) falhas[i] = m.arg[2];
+        }
         if (tubos[i] >= 0) tubo_fechar((u32)tubos[i], TUBO_ESCRITA);
         if (i > 0 && tubos[i - 1] >= 0) tubo_fechar((u32)tubos[i - 1], TUBO_LEITURA);
     }
-    for (u32 i = 0; i < n; i++) if (pids[i] >= 0) avisar_fim(cmds[i].argv[0], codigos[i]);
+    if (grupo) primeiro_plano(antes);
+    for (u32 i = 0; i < n; i++) if (pids[i] >= 0) avisar_fim(cmds[i].argv[0], codigos[i], falhas[i]);
     for (u32 i = 0; i < n_abertos; i++) arq_fechar((u32)abertos[i]);
 }
 
@@ -312,6 +442,11 @@ static void executar_linha(void)
         if (n) escreve("Linha invalida (veja: ajuda)\n", COR(COR_VERMELHO_CLARO));
         return;
     }
+    if (n == 1 && (str_igual(cmds[0].argv[0], "sair") || str_igual(cmds[0].argv[0], "exit"))) {
+        if (do_boot) escreve("Este e o shell do sistema: ele nao sai.\n", COR(COR_CINZA_CLARO));
+        else sys_sair(0);
+        return;
+    }
     if (n == 1 && !cmds[0].entrada && !cmds[0].saida && interno(&cmds[0])) return;
     rodar(cmds, n);
 }
@@ -319,13 +454,25 @@ static void executar_linha(void)
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
+    do_boot = sys_pid() == PID_SHELL;
+
+    /* Quem sou eu: o root não aparece no prompt; os outros, sim. */
+    identidade_t id;
+    char quem[NOME_CONTA_MAX];
+    quem[0] = '\0';
+    if (sys_identidade(0, &id) == 0 && id.uid != UID_ROOT) nome_usuario(id.uid, quem, sizeof quem);
 
     /* Fui reiniciado pelo núcleo? Ele guarda quantas vezes e por quê. */
     msg_t eu;
     sys_tarefa_info((u32)sys_pid(), &eu);
     u32 reinicios = eu.arg[1], falha = eu.arg[2];
 
-    if (reinicios) {
+    if (do_boot) modo_init();                 /* instalado num disco? vira o init */
+
+    if (!do_boot) {
+        sinal_tratar(SINAL_INT, (void (*)(int))SINAL_IGNORAR);   /* o Ctrl+C é para os comandos */
+    } else if (reinicios) {
+        primeiro_plano(0);          /* o anterior pode ter morrido com um comando rodando */
         escreve("\n[nucleo] O shell anterior foi encerrado: ", COR(COR_VERMELHO_CLARO));
         escreve(falha < sizeof(EXCECOES) / sizeof(EXCECOES[0]) ? EXCECOES[falha] : "excecao",
                 COR(COR_BRANCO));
@@ -339,11 +486,16 @@ int main(int argc, char **argv)
     }
 
     for (;;) {
+        if (quem[0]) {
+            escreve(quem, COR(COR_VERDE_CLARO));
+            escreve("@", COR(COR_CINZA_CLARO));
+        }
         escreve(SISTEMA_PROMPT, COR(COR_CIANO_CLARO));
         escreve(":", COR(COR_CINZA_CLARO));
         escreve(ambiente()->pasta, COR(COR_AZUL_CLARO));
         escreve("> ", COR(COR_AMARELO));
         long n = ler(linha, LINHA_MAX);
+        if (n == 0 && !do_boot) { escreve("\n", 0); return 0; }   /* Ctrl+D: fim */
         if (n <= 0) continue;
         linha[n] = '\0';
         executar_linha();

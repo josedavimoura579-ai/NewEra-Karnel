@@ -22,7 +22,7 @@ memória compartilhada e sockets.
 
 Cada etapa termina com algo testável no QEMU.
 
-- [ ] **Etapa 1 — sinais e `kill`**
+- [x] **Etapa 1 — sinais e `kill`** (núcleo 3.3; [livro, capítulo 8](livro/08-sinais.md))
   - sinais no núcleo: enviar, tratar (função do programa, com volta pelo
     núcleo), ignorar; o padrão encerra o processo
   - grupos de processos: **Ctrl+C** encerra o comando do primeiro plano
@@ -31,34 +31,112 @@ Cada etapa termina com algo testável no QEMU.
   - comando `kill`; o shell mostra quem foi interrompido
   - *Teste: Ctrl+C num programa em laço e num pipe travado; um tratador de
     SIGINT roda e o programa continua.*
-- [ ] **Etapa 2 — discos, partições e montagens**
+  - Feito: `SYS_SINAL`, `SYS_SINAL_TRATAR`, `SYS_SINAL_VOLTAR`,
+    `SYS_SINAL_MASCARA`, `SYS_GRUPO`; o quadro do sinal (registradores, FPU,
+    máscara, siginfo) vai na pilha do programa; o terminal manda o SIGINT ao
+    grupo do primeiro plano (`TERM_GRUPO`); `kill` e `sleep`; o `testelibc`
+    ganhou 22 testes de sinais (inclusive sinais no meio de contas com
+    vírgula). Quem espera a resposta de um servidor não é interrompido por
+    um tratador (o sinal espera a resposta, como o `SA_RESTART`); ainda não
+    há `SIGSTOP`/`SIGCONT` de verdade (controle de tarefas).
+- [x] **Etapa 2 — discos, partições e montagens** (núcleo 3.4; [livro, capítulo 9](livro/09-discos-particoes-montagens.md))
   - o driver ATA com os quatro discos dos dois canais; partições MBR
   - `particionar` (o fdisk do NovaEra), `montar` e `desmontar`
   - *Teste: um disco com duas partições, uma FAT32 montada onde se quiser.*
-- [ ] **Etapa 3 — o ext2**
+  - Feito: o driver acha os 4 discos (sda a sdd) e lê a MBR; o dispositivo
+    é disco × 8 + partição e o LBA conta do começo da partição. O servidor
+    de arquivos é a raiz e guarda a tabela de montagens (responde
+    `ARQ_OUTRO_SERVIDOR`); o servidor FAT32 cuida de até 4 volumes.
+    Comandos: `discos`, `particionar`, `montar`, `desmontar`, e o
+    `formatar DISPOSITIVO`. Conferido com o Linux: `sfdisk`/`fdisk -l` leem
+    a tabela, o `fsck.fat` aprova a partição, e um disco particionado no
+    Linux é montado em `/disco` no boot.
+- [x] **Etapa 3 — o ext2** (núcleo 3.5; [livro, capítulo 10](livro/10-o-ext2.md))
   - servidor ext2: pastas, arquivos, links, permissões guardadas no disco
   - `formatar -t ext2` (o mkfs.ext2 do NovaEra)
   - *Teste: o `fsck.ext2` do Linux aprova o que o NovaEra grava, e o
     NovaEra lê um disco feito pelo `mkfs.ext2`.*
-- [ ] **Etapa 4 — usuários e permissões**
+  - Feito: o servidor `ext2` (PID 9) lê e grava blocos de 1, 2 e 4 KiB,
+    inodes de 128 ou 256 bytes, blocos indiretos (até o triplo), pastas,
+    links (a contagem; apagar um nome não apaga o arquivo enquanto houver
+    outro), permissões e dono no inode (`ARQ_INFO` devolve o modo). O
+    `formatar -t ext2` faz o que o `mkfs.ext2` faz (sparse_super,
+    filetype, lost+found). O `montar` pergunta a cada servidor (FAT32,
+    ext2) quem reconhece o disco. Conferido: o `e2fsck -f` aprova sem
+    nenhum erro (blocos de 1 e 4 KiB, arquivos de 800 KB, apagar pastas e
+    sobrescrever), e um disco feito pelo `mkfs.ext2` do Linux (com
+    resize_inode, dir_index, ext_attr) é lido e gravado. Ainda não: criar
+    links (`ln`) e links simbólicos; um disco ext3/ext4 é recusado.
+- [x] **Etapa 4 — usuários e permissões** (núcleo 3.6; [livro, capítulo 11](livro/11-usuarios-e-permissoes.md))
   - usuário e grupo de cada processo no núcleo; os servidores de arquivos
     conferem as permissões
   - `/etc/passwd`, `/etc/group`, `/etc/sombra`; `login`, `su`, **`sudo`**,
     `passwd`, `adduser`, `chmod`, `chown`, `id`, `whoami`, `ls -l`
   - *Teste: um usuário comum não lê a `/etc/sombra` nem escreve em `/bin`;
     com `sudo`, escreve.*
-- [ ] **Etapa 5 — boot pelo disco**
+  - Feito: a identidade (uid, gid, até 8 grupos) em cada processo
+    (`SYS_IDENTIDADE`, `SYS_IDENTIDADE_MUDAR` só para o root); sinais só
+    para os próprios processos. O servidor de contas (PID 10) confere as
+    senhas (SHA-256 com sal, 1000 rodadas) e muda a identidade de quem
+    pediu: `login`, `su`, `sudo` (grupo `sudo` ou `wheel`), `passwd`. O
+    ramfs e o ext2 conferem `rwx` (com o x das pastas no caminho e o sticky
+    do `/tmp`); o FAT32 aparece como 0777; disco cru e montar, só o root.
+    Comandos: `adduser`, `chmod`, `chown`, `id`, `whoami`, `ls -l`, e o
+    shell como `/bin/sh`. O terminal esconde a senha (`TERM_ECO`). Os
+    usuários ainda moram no `/etc` da memória: ficam no disco na Etapa 5.
+- [x] **Etapa 5 — boot pelo disco** (núcleo 3.7; [livro, capítulo 12](livro/12-instalando-no-disco.md))
   - o GRUB no disco (`instalar-boot`); a raiz no ext2; um `init` que monta
     os discos (`/etc/montagens`) e chama o `login`
   - *Teste: o sistema instalado no disco dá boot sem a ISO.*
-- [ ] **Etapa 6 — threads e mutex**
+  - Feito: o núcleo guarda a linha de boot (`SYS_LINHA_BOOT`); com
+    `root=sdXN`, o shell do boot monta aquela partição em `/` (o servidor
+    de arquivos aceita montagem na raiz) e chama o `/bin/init`, que monta o
+    `/etc/montagens` e repete o `login`. `instalar-sistema` (copia
+    `/bin`, `/etc`, `/usr`, `/boot`; o `kernel.bin` agora vai no initrd) e
+    `instalar-boot` (o `boot.img` na MBR, o `disco.img` do GRUB nos setores
+    1 a 2047, o `grub.cfg`). `desligar` (grava, desmonta e desliga pelo
+    ACPI; `-r` reinicia). Conferido: instalar num disco vazio, ligar só
+    pelo disco, criar usuário, religar e ele continua lá; o `e2fsck` vê o
+    disco "clean". Corrigido no ext2: sobrescrever um arquivo grande
+    reaproveitava um bloco ainda no cache sem zerar.
+- [x] **Etapa 6 — threads e mutex** (núcleo 3.8; [livro, capítulo 13](livro/13-threads.md))
   - threads no núcleo (o mesmo espaço de memória); espera/acorda
   - nlibc: `pthread_create`, `pthread_join`, `pthread_mutex_*`
-- [ ] **Etapa 7 — `mmap` e memória compartilhada**
+  - Feito: `SYS_THREAD_CRIAR`/`SYS_THREAD_SAIR` (tarefas no mesmo espaço,
+    com uma líder que guarda o heap, a pilha principal e o pai; falha ou
+    `exit` em qualquer thread encerra todas), `SYS_FUTEX_ESPERAR`/
+    `SYS_FUTEX_ACORDAR` (o join, o mutex e as condições). Até 64 tarefas.
+    Operações atômicas em `sys.s` (`xchg`, `lock cmpxchg`, `lock xadd`).
+    nlibc: `pthread.h` (create, join, exit, detach, self, mutex, cond,
+    once) e `sched.h`; o `malloc` e o stdio com trava. O `testelibc` ganhou
+    9 testes (80000 somas com 4 threads, produtor e consumidor, 100 threads
+    seguidas, `exit` e falha numa thread); `exemplos/threads.c`. Corrigido:
+    o `nefs-ld` não ligava o `x` do programa que gera, e o `cp` agora
+    mantém o modo da origem.
+- [x] **Etapa 7 — `mmap` e memória compartilhada** (núcleo 3.9; [livro, capítulo 14](livro/14-memoria-compartilhada.md))
   - `mmap` anônimo; memória compartilhada entre processos (`shm_open`)
-- [ ] **Etapa 8 — sockets locais (`AF_UNIX`)**
+  - Feito: `SYS_MMAP`/`SYS_MUNMAP` (região 0x71000000-0x7F000000, só
+    leitura ou leitura e escrita) e `SYS_SHM_ABRIR`/`SYS_SHM_TAMANHO`/
+    `SYS_SHM_APAGAR` (objetos com nome, dono e modo, até 2 MiB; as páginas
+    marcadas nos bits livres da tabela não são liberadas com o processo).
+    O futex passou a usar o endereço físico: mutex e condições funcionam
+    entre programas. nlibc: `sys/mman.h` (`mmap`, `munmap`, `shm_open`,
+    `shm_unlink`) e `ftruncate`. `testelibc`: 9 testes (83/83), entre eles
+    pai e filho somando 40000 com um mutex compartilhado;
+    `exemplos/compartilhada.c`. Ainda não: `mmap` de arquivos.
+- [x] **Etapa 8 — sockets locais (`AF_UNIX`)** (núcleo 3.10; [livro, capítulo 15](livro/15-sockets.md))
   - um servidor de sockets: `socket`, `bind`, `listen`, `accept`, `connect`
   - a base do X11, do Wayland e do D-Bus (Fases 5 a 7)
+  - Feito: o servidor `sockets` (PID 11): nomes, fila de conexões,
+    `accept` que espera, buffer de 16 KiB por lado, escrita em bloco (até
+    64 KiB por pedido, com `SYS_COPIAR_DE`), `SOCK_ESTADO` (para o `poll`),
+    `SOCK_PAR` (o `socketpair`); recolhe os sockets de quem morreu sem
+    fechar. nlibc: `sys/socket.h`, `sys/un.h`, `poll.h` (`socket`, `bind`,
+    `listen`, `accept`, `connect`, `socketpair`, `send`, `recv`, `poll`).
+    `testelibc`: 15 testes (98/98), entre eles 200 KB sem errar um byte;
+    `exemplos/sockets.c` (um servidor, três clientes, `poll`). Ainda não:
+    o nome como arquivo na pasta, `SOCK_DGRAM`, passar descritores
+    (`SCM_RIGHTS`) e sockets de rede.
 - [ ] **Etapa 9 — o modo manual (estilo Arch)**
   - o Livro 2: instalar o NovaEra à mão, passo a passo
   - a ISO de instalação

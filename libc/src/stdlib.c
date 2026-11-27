@@ -1,5 +1,6 @@
 /* nlibc - stdlib.h (menos malloc e strtod, que têm arquivos próprios) */
 #include <stdlib.h>
+#include <signal.h>
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
@@ -37,7 +38,11 @@ _Noreturn void _Exit(int codigo)
 _Noreturn void abort(void)
 {
     __stdio_esvaziar_todos();
-    sys_sair(134);                               /* como o SIGABRT do Unix: 128 + 6 */
+    sys_sinal_mascara(SINAL_DESBLOQUEAR, 1u << SIGABRT);
+    raise(SIGABRT);                              /* um tratador pode rodar... */
+    signal(SIGABRT, SIG_DFL);                    /* ...mas, se voltar, acaba igual */
+    raise(SIGABRT);
+    sys_sair(127);
     for (;;) ;
 }
 

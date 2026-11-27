@@ -507,7 +507,7 @@ static const char *const fontes_raiz[] = {
     "kernel.c", "novaera.h", "boot.s", "cpu.s", "linker.ld", "build.sh",
     "sistema.conf", "programas.lista", "logo.txt", "LICENSE", NULL };
 static const char *const fontes_pastas[] = {
-    "usuario", "libc", "ferramentas", "exemplos", "portes", "nefs/livro", NULL };
+    "usuario", "libc", "ferramentas", "exemplos", "portes", "nefs/livro", "etc", NULL };
 static const char *const fontes_fora[] = { "portes/fontes", "ferramentas/testes", NULL };
 
 /* ------------------------------- Portes ---------------------------------- */
@@ -791,11 +791,15 @@ static void cmd_compilar(int argc, char **argv)
     tx_f(&es, "NOME=%s\nVERSAO=%s\nLEMA=%s\nPURO=%s\n", nome, versao, lema, puro);
     tar_dados("etc/sistema", es.d, es.n);
     if (existe("logo.txt")) tar_arquivo("etc/logo.txt", "logo.txt", 0);
+    if (eh_pasta("etc")) tar_arvore("etc", "etc", NULL);    /* passwd, group, sombra */
     tar_arquivo("usr/lib/nefs/libc.a", "build/libc/libc.a", 0);
     tar_arvore("usr/include", "libc/include", NULL);
     tar_arvore("usr/share/nefs/exemplos", "exemplos", NULL);
     tar_arvore("usr/share/nefs/livro", "nefs/livro", NULL);
     if (existe(GRUB_ELTORITO)) tar_arquivo("usr/lib/nefs/grub/eltorito.img", GRUB_ELTORITO, 0);
+    if (existe("ferramentas/grub/boot.img")) tar_arquivo("usr/lib/nefs/grub/boot.img", "ferramentas/grub/boot.img", 0);
+    if (existe("ferramentas/grub/disco.img")) tar_arquivo("usr/lib/nefs/grub/disco.img", "ferramentas/grub/disco.img", 0);
+    tar_arquivo("boot/kernel.bin", "build/kernel.bin", 0);     /* para o instalar-sistema */
     for (int i = 0; i < receitas.n; i++) {
         const char *ex = var(&portes[i].v, "EXEMPLOS", NULL);
         if (ex && portes[i].fonte) {

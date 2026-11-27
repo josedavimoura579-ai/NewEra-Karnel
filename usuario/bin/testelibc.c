@@ -7,6 +7,13 @@
  */
 #include <errno.h>
 #include <limits.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <pthread.h>
+#include <signal.h>
 #include <spawn.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -286,8 +293,398 @@ static void testa_processos(char *eu)
             "4 processos com ponto flutuante ao mesmo tempo (FPU salva na troca)");
 }
 
+/* -------------------------------- Sinais ---------------------------------- */
+
+#include <sched.h>
+static void sched_yield_ou_nada(void) { sched_yield(); }
+
+static int    recebidos, ultimo;
+static double no_tratador;
+int *nulo;                              /* global (não static): o compilador não sabe que é 0 */
+
+static void tratador(int s)
+{
+    recebidos++;
+    ultimo = s;
+    no_tratador = contas(1000);         /* mexe na FPU: o núcleo tem de devolvê-la */
+}
+
+static void tratador_segv(int s)
+{
+    (void)s;
+    _exit(42);                          /* voltar refaria a mesma leitura */
+}
+
+static int filho(char *eu, const char *modo)
+{
+    char *args[] = { eu, (char *)modo, NULL };
+    pid_t pid;
+    if (posix_spawnp(&pid, eu, NULL, NULL, args, NULL) != 0) return -1;
+    return pid;
+}
+
+static int espera(pid_t pid)
+{
+    int status = -1;
+    if (pid <= 0 || waitpid(pid, &status, 0) != pid) return -1;
+    return status;
+}
+
+static void testa_sinais(char *eu)
+{
+    double antes = contas(2000);
+    confere(signal(SIGUSR1, tratador) == SIG_DFL, "signal devolve o tratador antigo (SIG_DFL)");
+    confere(raise(SIGUSR1) == 0 && recebidos == 1 && ultimo == SIGUSR1, "raise chama o tratador");
+    confere(bits_iguais(antes, contas(2000)) && no_tratador > 0, "a FPU volta intacta depois do tratador");
+    confere(signal(SIGUSR1, tratador) == tratador, "signal devolve o tratador instalado");
+
+    sigset_t m;
+    sigemptyset(&m);
+    sigaddset(&m, SIGUSR1);
+    sigprocmask(SIG_BLOCK, &m, NULL);
+    raise(SIGUSR1);
+    confere(recebidos == 1, "sinal bloqueado fica pendente");
+    sigprocmask(SIG_UNBLOCK, &m, NULL);
+    confere(recebidos == 2, "desbloqueado, ele chega");
+
+    signal(SIGUSR2, SIG_IGN);
+    confere(raise(SIGUSR2) == 0, "sinal ignorado não encerra");
+    signal(SIGCHLD, SIG_DFL);
+
+    int fds[2];
+    signal(SIGPIPE, SIG_IGN);
+    pipe(fds);
+    close(fds[0]);
+    errno = 0;
+    confere(write(fds[1], "x", 1) == -1 && errno == EPIPE, "pipe sem leitor: EPIPE (com SIGPIPE ignorado)");
+    close(fds[1]);
+    signal(SIGPIPE, SIG_DFL);
+
+    int st = espera(filho(eu, "--pipe"));
+    confere(st != -1 && WIFSIGNALED(st) && WTERMSIG(st) == SIGPIPE, "pipe sem leitor: SIGPIPE encerra");
+    st = espera(filho(eu, "--falha"));
+    confere(st != -1 && WIFSIGNALED(st) && WTERMSIG(st) == SIGSEGV, "ler o endereço 0: SIGSEGV");
+    st = espera(filho(eu, "--trata-falha"));
+    confere(st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 42, "tratador de SIGSEGV roda");
+    st = espera(filho(eu, "--abort"));
+    confere(st != -1 && WIFSIGNALED(st) && WTERMSIG(st) == SIGABRT, "abort: SIGABRT");
+
+    pid_t p = filho(eu, "--laco");
+    confere(p > 0 && kill(p, 0) == 0, "kill(pid, 0): o filho existe");
+    confere(p > 0 && getpgid(p) == getpgrp(), "o filho herda o grupo");
+    confere(kill(p, SIGTERM) == 0, "kill SIGTERM");
+    st = espera(p);
+    confere(st != -1 && WIFSIGNALED(st) && WTERMSIG(st) == SIGTERM, "WIFSIGNALED e WTERMSIG");
+    confere(kill(p, SIGTERM) == -1 && errno == ESRCH, "kill num processo que acabou: ESRCH");
+
+    /* Sinais no meio de uma conta: o filho é interrompido em qualquer ponto
+     * e a conta tem de dar o mesmo resultado (a FPU é salva no sinal). */
+    p = filho(eu, "--fpu-sinal");
+    for (int i = 0; i < 5; i++) { usleep(30000); kill(p, SIGUSR1); }
+    st = espera(p);
+    confere(st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 0, "sinais no meio de contas com vírgula");
+    signal(SIGUSR1, SIG_DFL);
+}
+
+/* -------------------------------- Threads --------------------------------- */
+
+static pthread_mutex_t trava = PTHREAD_MUTEX_INITIALIZER;
+static long contador;
+
+static void *somar(void *arg)
+{
+    for (int i = 0; i < 20000; i++) {
+        pthread_mutex_lock(&trava);
+        contador++;
+        pthread_mutex_unlock(&trava);
+        if (i % 1000 == 0) sched_yield_ou_nada();
+    }
+    return arg;
+}
+
+static void *dobro(void *arg) { return (void *)((long)arg * 2); }
+
+/* produtor e consumidor: uma fila de 4 lugares */
+static pthread_mutex_t fila_trava = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  tem_item = PTHREAD_COND_INITIALIZER, tem_lugar = PTHREAD_COND_INITIALIZER;
+static int fila[4], fila_n, fila_ini, consumidos_soma;
+
+static void *produtor(void *arg)
+{
+    (void)arg;
+    for (int i = 1; i <= 100; i++) {
+        pthread_mutex_lock(&fila_trava);
+        while (fila_n == 4) pthread_cond_wait(&tem_lugar, &fila_trava);
+        fila[(fila_ini + fila_n++) % 4] = i;
+        pthread_cond_signal(&tem_item);
+        pthread_mutex_unlock(&fila_trava);
+    }
+    return NULL;
+}
+
+static void *consumidor(void *arg)
+{
+    (void)arg;
+    for (int i = 0; i < 100; i++) {
+        pthread_mutex_lock(&fila_trava);
+        while (fila_n == 0) pthread_cond_wait(&tem_item, &fila_trava);
+        consumidos_soma += fila[fila_ini];
+        fila_ini = (fila_ini + 1) % 4;
+        fila_n--;
+        pthread_cond_signal(&tem_lugar);
+        pthread_mutex_unlock(&fila_trava);
+    }
+    return NULL;
+}
+
+static void *sair_7(void *arg) { (void)arg; exit(7); }
+static void *falhar(void *arg) { (void)arg; return (void *)(long)*nulo; }
+static void *contas_thread(void *arg) { (void)arg; return contas(200000) == contas(200000) ? (void *)1 : NULL; }
+
+static void testa_threads(char *eu)
+{
+    pthread_t t[4];
+    int criadas = 0;
+    for (int i = 0; i < 4; i++) if (pthread_create(&t[i], NULL, somar, (void *)(long)i) == 0) criadas++;
+    long soma_ret = 0;
+    for (int i = 0; i < criadas; i++) { void *r; pthread_join(t[i], &r); soma_ret += (long)r; }
+    confere(criadas == 4 && contador == 80000, "4 threads somando com mutex: 80000");
+    confere(soma_ret == 0 + 1 + 2 + 3, "pthread_join devolve o valor de cada thread");
+
+    void *r = NULL;
+    pthread_t d;
+    confere(pthread_create(&d, NULL, dobro, (void *)21) == 0 && pthread_join(d, &r) == 0 && (long)r == 42,
+            "pthread_create + join: 21 * 2 = 42");
+
+    pthread_t p, c;
+    pthread_create(&p, NULL, produtor, NULL);
+    pthread_create(&c, NULL, consumidor, NULL);
+    pthread_join(p, NULL);
+    pthread_join(c, NULL);
+    confere(consumidos_soma == 5050, "produtor e consumidor com pthread_cond: 1 + ... + 100");
+
+    int ok = 1;                                 /* muitas threads, uma depois da outra */
+    for (int i = 0; i < 100 && ok; i++) {
+        if (pthread_create(&d, NULL, dobro, (void *)(long)i) != 0 || pthread_join(d, &r) != 0 || (long)r != 2 * i) ok = 0;
+    }
+    confere(ok, "100 threads criadas e esperadas em sequência");
+
+    pthread_t f[3];
+    int certas = 0;
+    for (int i = 0; i < 3; i++) pthread_create(&f[i], NULL, contas_thread, NULL);
+    for (int i = 0; i < 3; i++) { pthread_join(f[i], &r); certas += r != NULL; }
+    confere(certas == 3, "threads fazendo contas com vírgula ao mesmo tempo");
+
+    int st = espera(filho(eu, "--thread-exit"));
+    confere(st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 7, "exit() numa thread encerra o programa todo");
+    st = espera(filho(eu, "--thread-falha"));
+    confere(st != -1 && WIFSIGNALED(st) && WTERMSIG(st) == SIGSEGV, "falha numa thread: SIGSEGV no programa todo");
+    st = espera(filho(eu, "--principal-sai"));
+    confere(st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 0, "a principal sai com pthread_exit; a outra termina");
+}
+
+/* --------------------------- mmap e memória compartilhada ------------------ */
+
+typedef struct {
+    pthread_mutex_t trava;            /* um mutex DENTRO da memória compartilhada */
+    long contador;
+    char recado[64];
+} comum_t;
+
+static comum_t *abrir_comum(int criar)
+{
+    int fd = shm_open("/testelibc", criar ? (O_CREAT | O_RDWR) : O_RDWR, 0600);
+    if (fd < 0) return NULL;
+    if (criar && ftruncate(fd, sizeof(comum_t)) < 0) { close(fd); return NULL; }
+    void *p = mmap(NULL, sizeof(comum_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
+    return p == MAP_FAILED ? NULL : p;
+}
+
+static void somar_comum(comum_t *c)
+{
+    for (int i = 0; i < 20000; i++) {
+        pthread_mutex_lock(&c->trava);
+        c->contador++;
+        pthread_mutex_unlock(&c->trava);
+        if (i % 1000 == 0) sched_yield_ou_nada();
+    }
+}
+
+static void testa_mmap(char *eu)
+{
+    size_t tam = 1024 * 1024;
+    unsigned char *m = mmap(NULL, tam, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    int ok = m != MAP_FAILED;
+    for (size_t i = 0; ok && i < tam; i += 4096) if (m[i] != 0) ok = 0;   /* vem zerada */
+    for (size_t i = 0; ok && i < tam; i++) m[i] = (unsigned char)(i * 7);
+    for (size_t i = 0; ok && i < tam; i++) if (m[i] != (unsigned char)(i * 7)) ok = 0;
+    confere(ok, "mmap de 1 MiB: zerado, escreve e lê");
+    confere(ok && munmap(m, tam) == 0, "munmap");
+
+    int st = espera(filho(eu, "--munmap"));
+    confere(st != -1 && WIFSIGNALED(st) && WTERMSIG(st) == SIGSEGV, "usar depois do munmap: SIGSEGV");
+    st = espera(filho(eu, "--so-leitura"));
+    confere(st != -1 && WIFSIGNALED(st) && WTERMSIG(st) == SIGSEGV, "escrever em PROT_READ: SIGSEGV");
+
+    shm_unlink("/testelibc");
+    comum_t *c = abrir_comum(1);
+    confere(c != NULL, "shm_open + ftruncate + mmap");
+    if (!c) return;
+    pthread_mutex_init(&c->trava, NULL);
+    strcpy(c->recado, "ola, filho");
+    pid_t p = filho(eu, "--shm");
+    somar_comum(c);                         /* o filho soma junto, ao mesmo tempo */
+    st = espera(p);
+    confere(st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 0, "o filho leu o recado do pai");
+    texto(c->recado, "oi, pai", "o pai lê o que o filho escreveu");
+    confere(c->contador == 40000, "pai e filho somando com um mutex compartilhado: 40000");
+    confere(shm_unlink("/testelibc") == 0 && shm_open("/testelibc", O_RDWR, 0) == -1 && errno == ENOENT,
+            "shm_unlink: o nome some");
+    munmap(c, sizeof(comum_t));
+}
+
+/* -------------------------------- Sockets ---------------------------------- */
+
+static struct sockaddr_un endereco(const char *nome)
+{
+    struct sockaddr_un a;
+    memset(&a, 0, sizeof a);
+    a.sun_family = AF_UNIX;
+    strcpy(a.sun_path, nome);
+    return a;
+}
+
+static int ler_tudo(int fd, char *buf, int n)
+{
+    int tot = 0, r;
+    while (tot < n && (r = (int)read(fd, buf + tot, (size_t)(n - tot))) > 0) tot += r;
+    return tot;
+}
+
+#define GRANDE 200000
+
+static int cliente(void)
+{
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    struct sockaddr_un a = endereco("/tmp/teste.sock");
+    if (fd < 0 || connect(fd, (struct sockaddr *)&a, sizeof a) < 0) return 1;
+    if (write(fd, "ping", 4) != 4) return 2;
+    char r[8] = {0};
+    if (ler_tudo(fd, r, 4) != 4 || strcmp(r, "pong")) return 3;
+    static char dados[GRANDE];
+    for (int i = 0; i < GRANDE; i++) dados[i] = (char)(i * 13);
+    if (write(fd, dados, GRANDE) != GRANDE) return 4;
+    close(fd);
+    return 0;
+}
+
+static void testa_sockets(char *eu)
+{
+    int par[2];
+    char b[16] = {0};
+    confere(socketpair(AF_UNIX, SOCK_STREAM, 0, par) == 0, "socketpair");
+    struct pollfd pf = { par[1], POLLIN, 0 };
+    confere(poll(&pf, 1, 50) == 0, "poll sem dados: espera e volta 0");
+    write(par[0], "abc", 3);
+    confere(poll(&pf, 1, 50) == 1 && (pf.revents & POLLIN), "poll com dados: POLLIN");
+    confere(read(par[1], b, sizeof b) == 3 && !memcmp(b, "abc", 3), "socketpair: de um lado para o outro");
+    write(par[1], "xyz", 3);
+    confere(read(par[0], b, sizeof b) == 3 && !memcmp(b, "xyz", 3), "socketpair: e de volta");
+    close(par[1]);
+    confere(read(par[0], b, sizeof b) == 0, "o outro lado fechou: read devolve 0");
+    signal(SIGPIPE, SIG_IGN);
+    errno = 0;
+    confere(write(par[0], "q", 1) == -1 && errno == EPIPE, "escrever sem ninguém do outro lado: EPIPE");
+    signal(SIGPIPE, SIG_DFL);
+    close(par[0]);
+
+    int s = socket(AF_UNIX, SOCK_STREAM, 0);
+    struct sockaddr_un a = endereco("/tmp/teste.sock");
+    confere(s >= 0 && bind(s, (struct sockaddr *)&a, sizeof a) == 0 && listen(s, 4) == 0,
+            "socket + bind + listen");
+    int s2 = socket(AF_UNIX, SOCK_STREAM, 0);
+    confere(bind(s2, (struct sockaddr *)&a, sizeof a) == -1 && errno == EADDRINUSE, "o mesmo nome duas vezes: EADDRINUSE");
+    close(s2);
+    struct sockaddr_un nada = endereco("/tmp/ninguem.sock");
+    s2 = socket(AF_UNIX, SOCK_STREAM, 0);
+    confere(connect(s2, (struct sockaddr *)&nada, sizeof nada) == -1 && errno == ECONNREFUSED,
+            "conectar onde ninguém ouve: ECONNREFUSED");
+    close(s2);
+
+    pid_t p = filho(eu, "--cliente");
+    int c = accept(s, NULL, NULL);
+    confere(c >= 0, "accept");
+    char r[8] = {0};
+    confere(ler_tudo(c, r, 4) == 4 && !strcmp(r, "ping"), "o servidor recebe ping");
+    write(c, "pong", 4);
+    static char dados[GRANDE];
+    int n = ler_tudo(c, dados, GRANDE), ok = n == GRANDE;
+    for (int i = 0; ok && i < GRANDE; i++) if (dados[i] != (char)(i * 13)) ok = 0;
+    confere(ok, "200 KB pelo socket, sem errar um byte");
+    confere(read(c, r, 1) == 0, "o cliente fechou: fim");
+    int st = espera(p);
+    confere(st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 0, "o cliente recebeu pong");
+    close(c);
+    close(s);
+}
+
 int main(int argc, char **argv)
 {
+    if (argc == 2 && !strcmp(argv[1], "--cliente")) return cliente();
+    if (argc == 2 && !strcmp(argv[1], "--munmap")) {
+        char *m = mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        m[0] = 1;
+        munmap(m, 8192);
+        return m[0];
+    }
+    if (argc == 2 && !strcmp(argv[1], "--so-leitura")) {
+        char *m = mmap(NULL, 4096, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        m[0] = 1;
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--shm")) {
+        comum_t *c = abrir_comum(0);
+        if (!c || strcmp(c->recado, "ola, filho")) return 1;
+        somar_comum(c);
+        strcpy(c->recado, "oi, pai");
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--thread-exit")) {
+        pthread_t t;
+        pthread_create(&t, NULL, sair_7, NULL);
+        for (;;) sched_yield_ou_nada();
+    }
+    if (argc == 2 && !strcmp(argv[1], "--thread-falha")) {
+        pthread_t t;
+        pthread_create(&t, NULL, falhar, NULL);
+        pthread_join(t, NULL);
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--principal-sai")) {
+        pthread_t t;
+        pthread_create(&t, NULL, contas_thread, NULL);
+        pthread_exit(NULL);
+    }
+    if (argc == 2 && !strcmp(argv[1], "--laco")) for (;;) ;
+    if (argc == 2 && !strcmp(argv[1], "--falha")) return *nulo;
+    if (argc == 2 && !strcmp(argv[1], "--trata-falha")) { signal(SIGSEGV, tratador_segv); return *nulo; }
+    if (argc == 2 && !strcmp(argv[1], "--abort")) abort();
+    if (argc == 2 && !strcmp(argv[1], "--fpu-sinal")) {
+        signal(SIGUSR1, tratador);
+        double e = contas(200000);
+        while (recebidos < 5) {                 /* getpid(): obriga a reler 'recebidos' */
+            if (getpid() <= 0 || !bits_iguais(contas(200000), e)) return 1;
+        }
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--pipe")) {
+        int fds[2];
+        pipe(fds);
+        close(fds[0]);
+        write(fds[1], "x", 1);
+        return 0;
+    }
     if (argc > 2 && !strcmp(argv[1], "--contas")) {
         /* filho do teste de FPU: a conta tem de dar o que o pai calculou */
         return bits_iguais(contas(3000000), strtod(argv[2], NULL)) ? 0 : 1;
@@ -301,6 +698,10 @@ int main(int argc, char **argv)
     testa_arquivos();
     testa_getopt();
     testa_processos(argv[0]);
+    testa_sinais(argv[0]);
+    testa_threads(argv[0]);
+    testa_mmap(argv[0]);
+    testa_sockets(argv[0]);
     printf("%s: %d de %d testes passaram\n", falhas ? "FALHAS" : "OK", total - falhas, total);
     return falhas;
 }

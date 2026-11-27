@@ -1,5 +1,6 @@
 /* nlibc - errno, strerror, perror, assert */
 #include <errno.h>
+#include <signal.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,7 +12,7 @@ int __erro_c(long e)
 {
     switch (e) {
     case ERRO_INVALIDO:      return EINVAL;
-    case ERRO_SEM_PERMISSAO: return EPERM;
+    case ERRO_SEM_PERMISSAO: return EACCES;
     case ERRO_PID:           return ECHILD;
     case ERRO_NAO_ACHADO:    return ENOENT;
     case ERRO_SEM_MEMORIA:   return ENOMEM;
@@ -20,15 +21,41 @@ int __erro_c(long e)
     case ERRO_EXISTE:        return EEXIST;
     case ERRO_DISCO:         return EIO;
     case ERRO_SEM_ESPACO:    return ENOSPC;
+    case ERRO_INTERROMPIDO:  return EINTR;
+    case ERRO_TUBO:          return EPIPE;
+    case ERRO_OCUPADO:       return EBUSY;
+    case ERRO_DE_NOVO:       return EAGAIN;
     }
     return EIO;
 }
 
+const char *const sys_siglist[NSIG] = {
+    "Sinal 0", "Desligou (SIGHUP)", "Interrompido (SIGINT)", "Saiu (SIGQUIT)",
+    "Instrucao invalida (SIGILL)", "Armadilha (SIGTRAP)", "Abortado (SIGABRT)",
+    "Erro de barramento (SIGBUS)", "Erro aritmetico (SIGFPE)", "Morto (SIGKILL)",
+    "Sinal do usuario 1 (SIGUSR1)", "Falha de segmentacao (SIGSEGV)",
+    "Sinal do usuario 2 (SIGUSR2)", "Pipe sem leitor (SIGPIPE)", "Alarme (SIGALRM)",
+    "Terminado (SIGTERM)", "Falha da pilha (SIGSTKFLT)", "Filho terminou (SIGCHLD)",
+    "Continuar (SIGCONT)", "Parado (SIGSTOP)", "Parado pelo teclado (SIGTSTP)",
+    "Parado: le o terminal (SIGTTIN)", "Parado: escreve no terminal (SIGTTOU)",
+    "Dados urgentes (SIGURG)", "Limite de CPU (SIGXCPU)", "Limite de arquivo (SIGXFSZ)",
+    "Alarme virtual (SIGVTALRM)", "Alarme de perfil (SIGPROF)",
+    "Janela mudou (SIGWINCH)", "E/S possivel (SIGIO)", "Energia (SIGPWR)",
+    "Chamada invalida (SIGSYS)"
+};
+
 char *strsignal(int s)
 {
     static char buf[24];
-    snprintf(buf, sizeof buf, "sinal %d", s);
+    if (s > 0 && s < NSIG) return (char *)sys_siglist[s];
+    snprintf(buf, sizeof buf, "Sinal desconhecido %d", s);
     return buf;
+}
+
+void psignal(int s, const char *texto)
+{
+    if (texto && *texto) fprintf(stderr, "%s: %s\n", texto, strsignal(s));
+    else fprintf(stderr, "%s\n", strsignal(s));
 }
 
 char *strerror(int e)
@@ -58,6 +85,13 @@ char *strerror(int e)
     case ENAMETOOLONG: return "Caminho longo demais (o NovaEra aceita ate 63 letras)";
     case ENOSYS:  return "Ainda nao existe no NovaEra";
     case ENOTEMPTY: return "A pasta nao esta vazia";
+    case EBUSY:   return "Em uso";
+    case ENODEV:  return "Nao suportado por este dispositivo";
+    case ENOTSOCK: return "Nao e um socket";
+    case EPROTONOSUPPORT: return "Protocolo nao suportado";
+    case EAFNOSUPPORT: return "Familia de enderecos nao suportada (so AF_UNIX)";
+    case EADDRINUSE: return "O nome ja esta em uso";
+    case ECONNREFUSED: return "Conexao recusada (ninguem ouvindo)";
     }
     return "Erro desconhecido";
 }

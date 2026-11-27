@@ -11,8 +11,15 @@ QEMU="$(command -v qemu-system-x86_64 || true)"   # o NovaEra é 64 bits
 [ -n "$QEMU" ] || { echo "QEMU não encontrado. No Termux: pkg install qemu-system-x86-64-headless"; exit 1; }
 
 MODO="${1:-curses}"
-BASE=(-kernel kernel.bin -m 64M -nic none)
-[ -f initrd.tar ] && BASE+=(-initrd initrd.tar)   # os programas que o shell executa
+if [ "$MODO" = "disco" ]; then
+    # O NovaEra instalado no disco.img (instalar-sistema + instalar-boot):
+    # a BIOS lê o disco e o GRUB dele dá o boot. Nada de -kernel/-initrd.
+    BASE=(-m 64M -nic none)
+    MODO="curses"
+else
+    BASE=(-kernel kernel.bin -m 64M -nic none)
+    [ -f initrd.tar ] && BASE+=(-initrd initrd.tar)   # os programas que o shell executa
+fi
 
 # O disco do NovaEra (/disco): um arquivo de 64 MiB, criado no primeiro uso.
 # Dentro do NovaEra, rode "formatar" uma vez. O que você guardar lá fica.
@@ -49,5 +56,5 @@ case "$MODO" in
         echo "Para encerrar: Ctrl+C aqui no Termux."
         exec "$QEMU" "${BASE[@]}" -vnc :1 ;;
     *)
-        echo "Uso: ./run.sh [curses|vnc|debug]"; exit 1 ;;
+        echo "Uso: ./run.sh [curses|vnc|debug|disco]"; exit 1 ;;
 esac
