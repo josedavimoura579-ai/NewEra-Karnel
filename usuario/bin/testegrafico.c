@@ -1,13 +1,14 @@
 /*
  * usuario/bin/testegrafico.c - confere a biblioteca de desenho (grafico.h).
  *
- *   testegrafico [imagens...]
+ *   testegrafico [-ppm ARQ] [-fonte FONTE.ttf] [imagens...]
  *
  * Desenha uma cena na memória (linhas, círculos, transparência, degradê,
  * texto, uma imagem ampliada) e mostra a "impressão digital" (FNV-1a) dos
  * pontos; para cada imagem dada, o tamanho e a impressão digital dela.
  * O mesmo código compila no Linux: os números têm de ser iguais nos dois.
- * Com -ppm ARQ, salva a cena num arquivo PPM.
+ * Com -ppm ARQ, salva a cena num arquivo PPM. Com -fonte, escreve com a
+ * fonte TrueType em três tamanhos e mostra a impressão digital do texto.
  */
 #include <stdio.h>
 #include <string.h>
@@ -26,9 +27,12 @@ static unsigned hash(const gr_imagem_t *im)
 
 int main(int argc, char **argv)
 {
-    const char *ppm = NULL;
+    const char *ppm = NULL, *ttf = NULL;
     int i = 1;
-    if (argc > 2 && !strcmp(argv[1], "-ppm")) { ppm = argv[2]; i = 3; }
+    for (; i + 1 < argc && argv[i][0] == '-'; i += 2) {
+        if (!strcmp(argv[i], "-ppm")) ppm = argv[i + 1];
+        else if (!strcmp(argv[i], "-fonte")) ttf = argv[i + 1];
+    }
 
     gr_imagem_t *cena = gr_nova(320, 240);
     gr_degrade(cena, 0, 0, 320, 240, GR_NOITE, GR_RGB(27, 58, 107), 1);
@@ -46,6 +50,31 @@ int main(int argc, char **argv)
     gr_copiar(cena, 240, 100, pequena);
     printf("cena 320x240: %08x\n", hash(cena));
     if (ppm && gr_salvar_ppm(cena, ppm) == 0) printf("salva em %s\n", ppm);
+
+    if (ttf) {
+        gr_fonte_t *f = gr_fonte_abrir(ttf);
+        const char *nome = strrchr(ttf, '/') ? strrchr(ttf, '/') + 1 : ttf;
+        if (!f) printf("%s: não abriu\n", nome);
+        else {
+            gr_imagem_t *t = gr_nova(480, 200);
+            gr_preencher(t, 0, 0, 480, 200, GR_NOITE);
+            int y = 4;
+            for (int tam = 16; tam <= 64; tam *= 2) {
+                gr_fonte_texto(t, f, 6, y, "ação, coração, Você", tam, GR_BRANCO);
+                y += gr_fonte_altura(f, tam);
+            }
+            gr_fonte_texto(t, f, 300, 8, "AV Wa\nTôç €", 20, GR_RGBA(255, 160, 0, 200));
+            printf("%s: texto %08x, largura %d, altura %d\n", nome, hash(t),
+                   gr_fonte_largura(f, "ação, coração, Você", 32), gr_fonte_altura(f, 32));
+            if (ppm) {
+                char outro[256];
+                snprintf(outro, sizeof outro, "%s-texto.ppm", ppm);
+                if (gr_salvar_ppm(t, outro) == 0) printf("salvo em %s\n", outro);
+            }
+            gr_liberar(t);
+            gr_fonte_fechar(f);
+        }
+    }
 
     for (; i < argc; i++) {
         gr_imagem_t *im = gr_carregar(argv[i]);

@@ -88,11 +88,21 @@ Cada etapa termina com algo testável no QEMU (e uma foto da tela).
     desenha uma cena e calcula um hash dos pontos: os números no NovaEra e
     no Linux são iguais (a cena e as três fotos; o PNG e o BMP batem também
     com o Python/PIL).
-- [ ] **Etapa 4 — letras bonitas**
+- [x] **Etapa 4 — letras bonitas** ([livro, capítulo 19](livro/19-letras-bonitas.md))
   - o porte do **stb_truetype** e a fonte **DejaVu Sans**
   - texto com contorno suave (anti-aliasing), em qualquer tamanho, com
     acentos (UTF-8)
   - *Teste: um texto com "ação, coração, Você" em três tamanhos.*
+  - Feito: a **stb_truetype** 1.26 do jeito que veio, na libc
+    (`fonte.c`): `gr_fonte_abrir`, `gr_fonte_texto`, `gr_fonte_largura`,
+    `gr_fonte_altura`. A cobertura de cada ponto vira a transparência; o
+    kerning da fonte; as letras em quartos de ponto; um cache das letras
+    pintadas. A **DejaVu Sans** 2.37 (normal e negrito) em `letras/`,
+    instalada em `/usr/share/fonts/dejavu/`. A libc ganhou a `math.h`
+    (sqrt, exp, log, pow, sin, cos, atan...; as exatas iguais às do
+    Linux). O comando `letras` (de 12 a 120 pontos). O `testegrafico
+    -fonte` escreve em três tamanhos: o hash é igual no NovaEra e no
+    Linux, nas duas fontes.
 - [ ] **Etapa 5 — o servidor de janelas**
   - um servidor novo no anel 3: os programas se conectam por um socket e
     desenham na sua memória compartilhada; o servidor compõe a tela

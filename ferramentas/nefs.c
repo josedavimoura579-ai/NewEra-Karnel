@@ -507,7 +507,7 @@ static const char *const fontes_raiz[] = {
     "kernel.c", "novaera.h", "boot.s", "cpu.s", "linker.ld", "build.sh",
     "sistema.conf", "programas.lista", "logo.txt", "LICENSE", NULL };
 static const char *const fontes_pastas[] = {
-    "usuario", "libc", "ferramentas", "exemplos", "portes", "nefs/livro", "nefs/guia", "etc", NULL };
+    "usuario", "libc", "ferramentas", "exemplos", "letras", "portes", "nefs/livro", "nefs/guia", "etc", NULL };
 static const char *const fontes_fora[] = { "portes/fontes", "ferramentas/testes", NULL };
 
 /* ------------------------------- Portes ---------------------------------- */
@@ -795,6 +795,7 @@ static void cmd_compilar(int argc, char **argv)
     tar_arquivo("usr/lib/nefs/libc.a", "build/libc/libc.a", 0);
     tar_arvore("usr/include", "libc/include", NULL);
     tar_arvore("usr/share/nefs/exemplos", "exemplos", NULL);
+    if (eh_pasta("letras")) tar_arvore("usr/share/fonts/dejavu", "letras", NULL);   /* as fontes TrueType */
     tar_arvore("usr/share/nefs/livro", "nefs/livro", NULL);
     if (eh_pasta("nefs/guia")) tar_arvore("usr/share/nefs/guia", "nefs/guia", NULL);
     if (existe(GRUB_ELTORITO)) tar_arquivo("usr/lib/nefs/grub/eltorito.img", GRUB_ELTORITO, 0);
