@@ -97,6 +97,7 @@ A pasta [`livro/`](livro/) tem o Livro 1, em português:
 20. [O servidor de janelas](livro/20-o-servidor-de-janelas.md)
 21. [A biblioteca das janelas](livro/21-a-biblioteca-das-janelas.md)
 22. [O terminal gráfico](livro/22-o-terminal-grafico.md)
+23. [O modo gráfico no boot](livro/23-o-modo-grafico-no-boot.md)
 
 ### Livro 2: o guia de instalação (`nefs guia`)
 

@@ -1,0 +1,4 @@
+# /etc/modo: como o sistema instalado liga.
+#   grafico  a tela de entrada gráfica (se houver a tela; o padrão)
+#   texto    o login de texto, sempre
+grafico

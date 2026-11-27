@@ -164,13 +164,27 @@ Cada etapa termina com algo testável no QEMU (e uma foto da tela).
     calculadora, e recolhe os filhos que terminam. Conferido: dois
     terminais, um com `sleep 20` e o outro com `ps` e Ctrl+C; o `sleep`
     continuou até o fim.
-- [ ] **Etapa 8 — o modo gráfico no boot**
+- [x] **Etapa 8 — o modo gráfico no boot** ([livro, capítulo 23](livro/23-o-modo-grafico-no-boot.md))
   - o `init` liga o servidor de janelas e uma **tela de login gráfica**
     (com a logo); o modo texto continua sendo uma opção (no GRUB e no
     `/etc`)
   - um papel de parede e um lugar reservado para o mascote
   - *Teste: o sistema instalado liga direto no login gráfico; entrar abre
     um terminal gráfico.*
+  - Feito: o `init` mostra o `login-grafico` quando a linha de boot tem
+    `grafico` e o `/etc/modo` não diz `texto`; sem tela gráfica (código
+    3), volta ao login de texto. O GRUB do `instalar-boot` tem o modo
+    gráfico como padrão e o modo texto como segunda opção. A tela de
+    entrada (a da prévia): papel de parede, hora, nome do computador, logo,
+    usuário e senha (Tab, Enter, clique), o aviso do root sem senha e o
+    lugar do mascote. A thread principal confere a senha e começa
+    `janelas --sessao term` como o usuário, na pasta pessoal; Ctrl+Q sai
+    da sessão. Novos: `TERM_ACORDAR` (largar o teclado), `gr_tela_soltar`
+    / `VIDEO_TELA_FECHAR` com `arg[0] = 1` (passar a tela sem piscar o
+    console), o papel de parede em `usuario/papel.h` (ou uma foto pelo
+    `/etc/papel`). Conferido num disco instalado: entrar como root abre o
+    terminal em `/root`; senha errada é recusada; Ctrl+Q volta à entrada;
+    sem `grafico`, o login de texto.
 - [ ] **Etapa 9 — o livro e o lançamento**
   - o Livro 1 ganha os capítulos da parte gráfica; o guia de instalação,
     o modo gráfico

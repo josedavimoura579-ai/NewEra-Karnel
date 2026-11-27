@@ -5,7 +5,10 @@
  *   1. monta os discos listados no /etc/montagens (o /etc/fstab do Linux):
  *        # dispositivo   pasta
  *        sda2            /dados
- *   2. mostra o login; quando a pessoa sai, mostra de novo.
+ *   2. mostra a entrada; quando a pessoa sai, mostra de novo:
+ *        - no modo gráfico ("grafico" na linha de boot, a opção padrão do
+ *          GRUB), a tela de entrada gráfica (/bin/login-grafico);
+ *        - no modo texto, ou com "texto" no /etc/modo, o login de texto.
  */
 #include "contas.h"
 #include "sistema.h"     /* gerado de sistema.conf pelo build.sh */
@@ -46,6 +49,27 @@ static void montar_tudo(void)
     ufree(t);
 }
 
+static int comeca(const char *s, const char *com)
+{
+    while (*com) if (*s++ != *com++) return 0;
+    return 1;
+}
+
+/* O modo gráfico: "grafico" na linha de boot e nada de "texto" no /etc/modo */
+static int modo_grafico(void)
+{
+    msg_t m;
+    sys_linha_boot(&m);
+    int tem = 0;
+    for (const char *p = m.texto; *p; p++)
+        if (comeca(p, "grafico") && (p == m.texto || p[-1] == ' ')) tem = 1;
+    if (!tem) return 0;
+    char *t = texto_de("/etc/modo");
+    int texto = t && comeca(t, "texto");
+    ufree(t);
+    return !texto;
+}
+
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
@@ -57,6 +81,17 @@ int main(int argc, char **argv)
     char campo_root[HASH_MAX];
     int sem_senha = sombra && sombra_de(sombra, "root", campo_root, sizeof campo_root) && !campo_root[0];
     ufree(sombra);
+
+    if (modo_grafico()) {
+        for (u32 seguidas = 0; seguidas < 5; ) {
+            u32 t0 = sys_tempo();
+            char *args[] = { "login-grafico", 0 };
+            long r = rodar_e_esperar("/bin/login-grafico", args);
+            if (r < 0 || (!SAIDA_FOI_SINAL(r) && (r & 0xFF) == 3)) break;   /* sem tela gráfica */
+            seguidas = sys_tempo() - t0 < 300 ? seguidas + 1 : 0;          /* falhando logo de cara? */
+        }
+        escreve("[init] sem a tela gráfica: o login de texto.\n", COR(COR_AMARELO));
+    }
 
     for (;;) {
         escreve("\n", 0);

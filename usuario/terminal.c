@@ -255,7 +255,8 @@ int main(int argc, char **argv)
     msg_t m;
     for (;;) {
         sys_receber(PID_QUALQUER, &m);
-        tty_t *t = tty_de(m.tipo == TERM_GRUPO || m.tipo == TERM_ECO || m.tipo == TERM_CRU ? m.arg[1] : m.arg[0]);
+        int no_arg1 = m.tipo == TERM_GRUPO || m.tipo == TERM_ECO || m.tipo == TERM_CRU || m.tipo == TERM_ACORDAR;
+        tty_t *t = tty_de(no_arg1 ? m.arg[1] : m.arg[0]);
 
         if (m.tipo == MSG_TECLA && m.origem == PID_TECLADO) {
             tecla(&ttys[0], (char)m.arg[0]);
@@ -290,6 +291,15 @@ int main(int argc, char **argv)
             t->primeiro_plano = m.arg[0];
             if (!t->primeiro_plano) { t->cru = 0; t->eco = 1; }   /* o shell retomou: modo normal */
             responder(m.origem, MSG_OK, antes);
+        } else if (m.tipo == TERM_ACORDAR) {
+            for (u32 i = 0; i < t->leitores_n; i++) {
+                if (t->leitores[i].pid != m.arg[0]) continue;
+                responder(t->leitores[i].pid, MSG_ERRO, (u32)(-ERRO_INTERROMPIDO));
+                for (u32 k = i + 1; k < t->leitores_n; k++) t->leitores[k - 1] = t->leitores[k];
+                t->leitores_n--;
+                break;
+            }
+            responder(m.origem, MSG_OK, 0);
         } else if (m.tipo == TERM_CRU) {
             t->cru = m.arg[0] != 0;
             if (t->cru) t->linha_n = 0;

@@ -67,14 +67,17 @@ void gr_tela_mostrar(gr_imagem_t *tela, int x, int y, int l, int a)
 
 void gr_tela_mostrar_tudo(gr_imagem_t *tela) { gr_tela_mostrar(tela, 0, 0, tela->largura, tela->altura); }
 
-void gr_tela_fechar(gr_imagem_t *tela)
+static void devolver(gr_imagem_t *tela, unsigned manter)
 {
     msg_t r;
     if (!tela) return;
-    video(VIDEO_TELA_FECHAR, 0, 0, 0, 0, &r);
+    video(VIDEO_TELA_FECHAR, manter, 0, 0, 0, &r);
     sys_munmap((u64)tela->pontos, (u64)tela->largura * (u64)tela->altura * 4);
     free(tela);
 }
+
+void gr_tela_fechar(gr_imagem_t *tela) { devolver(tela, 0); }
+void gr_tela_soltar(gr_imagem_t *tela) { devolver(tela, 1); }
 
 int gr_mouse(int *x, int *y, int *botoes)
 {

@@ -567,16 +567,22 @@ static int vivo(u32 pid)
     return m.arg[0] != ESTADO_LIVRE && m.arg[0] != ESTADO_MORTO && m.arg[0] != ESTADO_ZUMBI;
 }
 
-static void tela_fechar(void)
+static int console_velho;                   /* a tela ainda mostra a imagem do último dono */
+
+static void tela_fechar_com(int manter)
 {
     if (!dono) return;
     sys_munmap((u64)quadro_dono, (u64)LARG * ALT * 4);
     dono = 0;
     quadro_dono = 0;
+    if (manter) { console_velho = 1; return; }   /* (outro programa já vai abrir: sem piscar o console) */
+    console_velho = 0;
     seta_esconder();
     g_redesenhar();
     seta_mostrar();
 }
+
+static void tela_fechar(void) { tela_fechar_com(0); }
 
 static void tela_pedido(const msg_t *m)
 {
@@ -594,11 +600,12 @@ static void tela_pedido(const msg_t *m)
         if (v < 0) { tela_responder(quem, v, 0, 0); return; }
         quadro_dono = (u32 *)v;
         dono = quem;
+        console_velho = 0;
         tela_responder(quem, 0, LARG, ALT);
         return;
     }
     if (quem != dono) { tela_responder(quem, ERRO_SEM_PERMISSAO, 0, 0); return; }
-    if (m->tipo == VIDEO_TELA_FECHAR) { tela_fechar(); tela_responder(quem, 0, 0, 0); return; }
+    if (m->tipo == VIDEO_TELA_FECHAR) { tela_fechar_com(m->arg[0] == 1); tela_responder(quem, 0, 0, 0); return; }
     /* VIDEO_TELA_MOSTRAR: copia o retângulo pedido */
     u32 x = m->arg[0], y = m->arg[1], l = m->arg[2], a = m->arg[3];
     if (x >= LARG || y >= ALT) { tela_responder(quem, 0, 0, 0); return; }
@@ -618,6 +625,12 @@ static void tela_pedido(const msg_t *m)
 static void saida(u32 cp, u8 cor)
 {
     if (!grafico) { putc((char)(cp < 128 ? cp : cp437_latin(cp)), cor); return; }
+    if (console_velho && !dono) {                /* alguém escreveu: o console volta */
+        console_velho = 0;
+        seta_esconder();
+        g_redesenhar();
+        seta_mostrar();
+    }
     if (cp == '\n' || cp == '\b') g_putc(0, (int)cp, cor);
     else g_putc(glifo_de(cp), 0, cor);
 }

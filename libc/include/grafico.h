@@ -80,6 +80,7 @@ gr_imagem_t *gr_tela_abrir(void);                       /* NULL se não há tela
 void gr_tela_mostrar(gr_imagem_t *tela, int x, int y, int l, int a);
 void gr_tela_mostrar_tudo(gr_imagem_t *tela);
 void gr_tela_fechar(gr_imagem_t *tela);                 /* o terminal volta */
+void gr_tela_soltar(gr_imagem_t *tela);                 /* devolve, mas a imagem fica (outro vai abrir) */
 
 /* O mouse: espera ele fazer algo; devolve o giro da roda */
 int gr_mouse(int *x, int *y, int *botoes);
