@@ -13,9 +13,16 @@
  *    que estava digitado adiantado. Sem comando rodando, só pula de linha.
  *  - TERM_ECO 0 esconde o que se digita (para as senhas).
  *  - TERM_CRU 1 é o modo "cru": cada tecla vai na hora para quem lê, sem
- *    eco nem edição (o servidor de janelas usa). O Ctrl+C continua valendo,
- *    e o modo volta ao normal quando o shell retoma o terminal.
+ *    eco nem edição, e o Ctrl+C também vai como uma tecla (o servidor de
+ *    janelas usa). O modo volta ao normal quando o shell retoma o terminal.
  *  - MSG_ESCREVER de qualquer programa vai para o servidor de vídeo.
+ *
+ *  E os TERMINAIS VIRTUAIS (os "pty" do Unix): além do console (o canal 0:
+ *  o teclado e a tela de verdade), cada canal 1..TERM_PTY_MAX é um terminal
+ *  inteiro, com a sua linha, o seu eco e o seu Ctrl+C. Quem o criou (o
+ *  programa "term", numa janela) faz o papel do teclado e da tela: manda as
+ *  teclas (TERM_PTY_TECLAS) e lê o que os programas escreveram
+ *  (TERM_PTY_LER). Os programas nem sabem a diferença.
  *
  *  É a entrada e a saída padrão de todo programa que não foi redirecionado
  *  para um arquivo ou um pipe. No Linux isso mora dentro do kernel; aqui é
@@ -27,29 +34,39 @@
 #define LINHA_MAX   200u
 #define FILA_TAM   1024u          /* linhas prontas, esperando um leitor */
 #define MAX_LEITORES  8u
-
-static char linha[LINHA_MAX];     /* a linha sendo digitada */
-static u32  linha_n;
-
-static char fila[FILA_TAM];       /* bytes de linhas já terminadas (FIFO) */
-static u32  fila_ini, fila_n;
+#define SAIDA_TAM  16384u         /* terminal virtual: o que foi escrito, esperando o dono ler */
+#define MAX_ESCRITORES 8u         /* quem escreveu com a saída cheia, esperando espaço */
 
 typedef struct { u32 pid, max, buffer; } leitor_t;
-static leitor_t leitores[MAX_LEITORES];   /* quem está esperando uma linha */
-static u32      leitores_n;
-static u32      fins;                     /* Ctrl+D digitados, ainda não entregues */
-static u32      primeiro_plano;           /* grupo que recebe o Ctrl+C (0 = nenhum) */
-static int      eco = 1;                  /* 0: não mostra o que se digita (senhas) */
-static int      cru;                      /* 1: cada tecla vai na hora, sem eco (TERM_CRU) */
 
-static void tela(const char *dados, u32 n, u8 cor)
+typedef struct {
+    int      usado;
+    char     linha[LINHA_MAX];    /* a linha sendo digitada */
+    u32      linha_n;
+    char     fila[FILA_TAM];      /* bytes de linhas já terminadas (FIFO) */
+    u32      fila_ini, fila_n;
+    leitor_t leitores[MAX_LEITORES];   /* quem está esperando uma linha */
+    u32      leitores_n;
+    u32      fins;                /* Ctrl+D digitados, ainda não entregues */
+    u32      primeiro_plano;      /* grupo que recebe o Ctrl+C (0 = nenhum) */
+    int      eco, cru;
+    /* só nos terminais virtuais: */
+    u32      dono;                /* quem criou (o programa da janela) */
+    u8       saida[SAIDA_TAM];    /* o que os programas escreveram (FIFO) */
+    u32      saida_ini, saida_n;
+    u8       cor;                 /* a última cor posta na saída */
+    leitor_t mestre;              /* o dono esperando saída (pid 0 = ninguém) */
+    msg_t    escritores[MAX_ESCRITORES];
+    u32      escritores_n;
+} tty_t;
+
+static tty_t ttys[TERM_PTY_MAX + 1];      /* [0] = o console */
+
+static tty_t *tty_de(u32 canal)
 {
-    msg_t m;
-    msg_zera(&m);
-    m.tipo   = MSG_VIDEO_ESCREVER;
-    m.arg[0] = cor ? cor : COR(COR_BRANCO);
-    for (u32 i = 0; i < n && i < MSG_TEXTO_MAX - 1; i++) m.texto[i] = dados[i];
-    sys_enviar(PID_VIDEO, &m);
+    canal &= ~CANAL_DONO;
+    if (canal > TERM_PTY_MAX || !ttys[canal].usado) return 0;
+    return &ttys[canal];
 }
 
 static void responder(u32 para, u32 tipo, u32 a0)
@@ -61,118 +78,239 @@ static void responder(u32 para, u32 tipo, u32 a0)
     sys_responder(para, &r);
 }
 
-/* Entrega linhas prontas a quem está esperando, na ordem de chegada. */
-static void atender_leitores(void)
+static u32 saida_livre(tty_t *t) { return SAIDA_TAM - t->saida_n; }
+
+static void saida_poe(tty_t *t, u8 b)
 {
-    while (leitores_n && (fila_n || fins)) {
-        leitor_t l = leitores[0];
-        if (!fila_n) {                          /* Ctrl+D: "acabou" */
-            fins--;
+    if (!saida_livre(t)) return;
+    t->saida[(t->saida_ini + t->saida_n) % SAIDA_TAM] = b;
+    t->saida_n++;
+}
+
+/* O dono está esperando? Entrega o que houver. */
+static void atender_mestre(tty_t *t)
+{
+    if (!t->mestre.pid || !t->saida_n) return;
+    u8 buf[4096];
+    u32 n = 0;
+    while (n < t->saida_n && n < t->mestre.max && n < sizeof buf) {
+        buf[n] = t->saida[(t->saida_ini + n) % SAIDA_TAM];
+        n++;
+    }
+    if (sys_copiar_para(t->mestre.pid, buf, t->mestre.buffer, n) >= 0) {
+        t->saida_ini = (t->saida_ini + n) % SAIDA_TAM;
+        t->saida_n -= n;
+        responder(t->mestre.pid, MSG_OK, n);
+    }
+    t->mestre.pid = 0;
+}
+
+/* Escreve no terminal: o console vai para o vídeo; um virtual, para a saída */
+static void tela(tty_t *t, const char *dados, u32 n, u8 cor)
+{
+    if (!cor) cor = COR(COR_BRANCO);
+    if (t == &ttys[0]) {
+        msg_t m;
+        msg_zera(&m);
+        m.tipo   = MSG_VIDEO_ESCREVER;
+        m.arg[0] = cor;
+        for (u32 i = 0; i < n && i < MSG_TEXTO_MAX - 1; i++) m.texto[i] = dados[i];
+        sys_enviar(PID_VIDEO, &m);
+        return;
+    }
+    if (cor != t->cor && saida_livre(t) >= 3) {
+        saida_poe(t, 27);
+        saida_poe(t, TERM_COR);
+        saida_poe(t, cor);
+        t->cor = cor;
+    }
+    for (u32 i = 0; i < n; i++) saida_poe(t, (u8)dados[i]);
+    atender_mestre(t);
+}
+
+/* Entrega linhas prontas a quem está esperando, na ordem de chegada. */
+static void atender_leitores(tty_t *t)
+{
+    while (t->leitores_n && (t->fila_n || t->fins)) {
+        leitor_t l = t->leitores[0];
+        if (!t->fila_n) {                       /* Ctrl+D: "acabou" */
+            t->fins--;
             responder(l.pid, MSG_OK, 0);
-            for (u32 i = 1; i < leitores_n; i++) leitores[i - 1] = leitores[i];
-            leitores_n--;
+            for (u32 i = 1; i < t->leitores_n; i++) t->leitores[i - 1] = t->leitores[i];
+            t->leitores_n--;
             continue;
         }
         u32 n = 0;
         char buf[LINHA_MAX + 1];
-        while (n < fila_n && n < l.max && n < sizeof(buf)) {
-            buf[n] = fila[(fila_ini + n) % FILA_TAM];
+        while (n < t->fila_n && n < l.max && n < sizeof(buf)) {
+            buf[n] = t->fila[(t->fila_ini + n) % FILA_TAM];
             if (buf[n++] == '\n') break;        /* uma linha por leitura */
         }
         if (sys_copiar_para(l.pid, buf, l.buffer, n) >= 0) {
-            fila_ini = (fila_ini + n) % FILA_TAM;
-            fila_n  -= n;
+            t->fila_ini = (t->fila_ini + n) % FILA_TAM;
+            t->fila_n  -= n;
             responder(l.pid, MSG_OK, n);
         }
         /* (se o leitor morreu, a linha fica para o próximo) */
-        for (u32 i = 1; i < leitores_n; i++) leitores[i - 1] = leitores[i];
-        leitores_n--;
+        for (u32 i = 1; i < t->leitores_n; i++) t->leitores[i - 1] = t->leitores[i];
+        t->leitores_n--;
     }
 }
 
 /* Ctrl+C: quem estava esperando uma linha acorda com "interrompido" (antes
  * do sinal: assim ninguém fica na lista esperando para sempre) e o grupo
  * do primeiro plano recebe o SIGINT. */
-static void interromper(void)
+static void interromper(tty_t *t)
 {
-    tela("^C\n", 3, COR(COR_CINZA_CLARO));
-    linha_n = 0;
-    eco = 1;
-    cru = 0;
-    if (!primeiro_plano) {                      /* no prompt do shell: linha vazia */
-        fila_n = fila_ini = 0;
-        fila[0] = '\n';
-        fila_n = 1;
-        atender_leitores();
+    tela(t, "^C\n", 3, COR(COR_CINZA_CLARO));
+    t->linha_n = 0;
+    t->eco = 1;
+    t->cru = 0;
+    if (!t->primeiro_plano) {                   /* no prompt do shell: linha vazia */
+        t->fila_n = t->fila_ini = 0;
+        t->fila[0] = '\n';
+        t->fila_n = 1;
+        atender_leitores(t);
         return;
     }
-    fila_n = fila_ini = fins = 0;
-    for (u32 i = 0; i < leitores_n; i++)
-        responder(leitores[i].pid, MSG_ERRO, (u32)(-ERRO_INTERROMPIDO));
-    leitores_n = 0;
-    sys_sinal(-(long)primeiro_plano, SINAL_INT);
+    t->fila_n = t->fila_ini = t->fins = 0;
+    for (u32 i = 0; i < t->leitores_n; i++)
+        responder(t->leitores[i].pid, MSG_ERRO, (u32)(-ERRO_INTERROMPIDO));
+    t->leitores_n = 0;
+    sys_sinal(-(long)t->primeiro_plano, SINAL_INT);
 }
 
-static void tecla(char c)
+static void tecla(tty_t *t, char c)
 {
-    if (c == 3) {                               /* Ctrl+C */
-        interromper();
-    } else if (cru) {                           /* a tecla vai como veio */
-        if (fila_n < FILA_TAM) fila[(fila_ini + fila_n++) % FILA_TAM] = c;
-        atender_leitores();
-    } else if (c == 4) {                               /* Ctrl+D */
-        if (linha_n == 0) { fins++; tela("^D\n", 3, COR(COR_CINZA_CLARO)); atender_leitores(); }
+    if (t->cru) {                               /* a tecla vai como veio (até o Ctrl+C) */
+        if (t->fila_n < FILA_TAM) t->fila[(t->fila_ini + t->fila_n++) % FILA_TAM] = c;
+        atender_leitores(t);
+    } else if (c == 3) {                        /* Ctrl+C */
+        interromper(t);
+    } else if (c == 4) {                        /* Ctrl+D */
+        if (t->linha_n == 0) { t->fins++; tela(t, "^D\n", 3, COR(COR_CINZA_CLARO)); atender_leitores(t); }
     } else if (c == '\b') {
-        if (linha_n > 0) { linha_n--; if (eco) tela("\b", 1, 0); }
+        if (t->linha_n > 0) { t->linha_n--; if (t->eco) tela(t, "\b", 1, 0); }
     } else if (c == '\n') {
-        tela("\n", 1, 0);
-        for (u32 i = 0; i <= linha_n && fila_n < FILA_TAM; i++) {
-            fila[(fila_ini + fila_n) % FILA_TAM] = i < linha_n ? linha[i] : '\n';
-            fila_n++;
+        tela(t, "\n", 1, 0);
+        for (u32 i = 0; i <= t->linha_n && t->fila_n < FILA_TAM; i++) {
+            t->fila[(t->fila_ini + t->fila_n) % FILA_TAM] = i < t->linha_n ? t->linha[i] : '\n';
+            t->fila_n++;
         }
-        linha_n = 0;
-        atender_leitores();
-    } else if (c >= 32 && c < 127 && linha_n < LINHA_MAX - 1) {
-        linha[linha_n++] = c;
-        if (eco) tela(&c, 1, 0);
+        t->linha_n = 0;
+        atender_leitores(t);
+    } else if (c >= 32 && c < 127 && t->linha_n < LINHA_MAX - 1) {
+        t->linha[t->linha_n++] = c;
+        if (t->eco) tela(t, &c, 1, 0);
     }
+}
+
+/* MSG_ESCREVER; num terminal virtual com a saída cheia, a resposta espera */
+static int escrever(tty_t *t, msg_t *m)
+{
+    u32 n = m->arg[2] < MSG_TEXTO_MAX ? m->arg[2] : MSG_TEXTO_MAX - 1;
+    if (t != &ttys[0] && saida_livre(t) < n + 3) return 0;
+    tela(t, m->texto, n, (u8)m->arg[1]);
+    responder(m->origem, MSG_OK, n);
+    return 1;
+}
+
+static void atender_escritores(tty_t *t)
+{
+    while (t->escritores_n && escrever(t, &t->escritores[0])) {
+        for (u32 i = 1; i < t->escritores_n; i++) t->escritores[i - 1] = t->escritores[i];
+        t->escritores_n--;
+    }
+}
+
+static void tty_iniciar(tty_t *t)
+{
+    mem_zera(t, sizeof *t);
+    t->usado = 1;
+    t->eco = 1;
+}
+
+/* O dono de um terminal virtual morreu sem fechar? */
+static int vivo(u32 pid)
+{
+    msg_t m;
+    if (sys_tarefa_info(pid, &m) < 0) return 0;
+    return m.arg[0] != ESTADO_LIVRE && m.arg[0] != ESTADO_MORTO && m.arg[0] != ESTADO_ZUMBI;
+}
+
+static void pty_fechar(tty_t *t)
+{
+    for (u32 i = 0; i < t->leitores_n; i++) responder(t->leitores[i].pid, MSG_OK, 0);   /* fim da entrada */
+    for (u32 i = 0; i < t->escritores_n; i++) responder(t->escritores[i].origem, MSG_ERRO, (u32)(-ERRO_TUBO));
+    if (t->mestre.pid) responder(t->mestre.pid, MSG_OK, 0);
+    if (t->primeiro_plano) sys_sinal(-(long)t->primeiro_plano, SINAL_HUP);
+    t->usado = 0;
 }
 
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
+    tty_iniciar(&ttys[0]);
 
     msg_t m;
     for (;;) {
         sys_receber(PID_QUALQUER, &m);
+        tty_t *t = tty_de(m.tipo == TERM_GRUPO || m.tipo == TERM_ECO || m.tipo == TERM_CRU ? m.arg[1] : m.arg[0]);
 
         if (m.tipo == MSG_TECLA && m.origem == PID_TECLADO) {
-            tecla((char)m.arg[0]);
+            tecla(&ttys[0], (char)m.arg[0]);
+        } else if (m.tipo == TERM_PTY_CRIAR) {
+            u32 c = 0;
+            for (u32 i = 1; i <= TERM_PTY_MAX && !c; i++) {
+                if (ttys[i].usado && !vivo(ttys[i].dono)) pty_fechar(&ttys[i]);   /* sobrou de alguém */
+                if (!ttys[i].usado) c = i;
+            }
+            if (!c) { responder(m.origem, MSG_ERRO, (u32)(-ERRO_LOTADO)); continue; }
+            tty_iniciar(&ttys[c]);
+            ttys[c].dono = m.origem;
+            responder(m.origem, MSG_OK, c);
+        } else if (!t) {
+            if (m.origem != PID_KERNEL) responder(m.origem, MSG_ERRO, (u32)(-ERRO_INVALIDO));
+        } else if (m.tipo == TERM_PTY_LER && t != &ttys[0]) {
+            if (t->mestre.pid) { responder(m.origem, MSG_ERRO, (u32)(-ERRO_LOTADO)); continue; }
+            t->mestre.pid = m.origem;
+            t->mestre.max = m.arg[1];
+            t->mestre.buffer = m.arg[2];
+            atender_mestre(t);
+            atender_escritores(t);
+        } else if (m.tipo == TERM_PTY_TECLAS && t != &ttys[0]) {
+            u32 n = m.arg[2] < MSG_TEXTO_MAX ? m.arg[2] : MSG_TEXTO_MAX;
+            for (u32 i = 0; i < n; i++) tecla(t, m.texto[i]);
+            responder(m.origem, MSG_OK, n);
+        } else if (m.tipo == TERM_PTY_FECHAR && t != &ttys[0]) {
+            pty_fechar(t);
+            responder(m.origem, MSG_OK, 0);
         } else if (m.tipo == TERM_GRUPO) {
-            u32 antes = primeiro_plano;
-            primeiro_plano = m.arg[0];
-            if (!primeiro_plano) { cru = 0; eco = 1; }   /* o shell retomou: modo normal */
+            u32 antes = t->primeiro_plano;
+            t->primeiro_plano = m.arg[0];
+            if (!t->primeiro_plano) { t->cru = 0; t->eco = 1; }   /* o shell retomou: modo normal */
             responder(m.origem, MSG_OK, antes);
         } else if (m.tipo == TERM_CRU) {
-            cru = m.arg[0] != 0;
-            if (cru) linha_n = 0;
+            t->cru = m.arg[0] != 0;
+            if (t->cru) t->linha_n = 0;
             responder(m.origem, MSG_OK, 0);
         } else if (m.tipo == TERM_ECO) {
-            eco = m.arg[0] != 0;
+            t->eco = m.arg[0] != 0;
             responder(m.origem, MSG_OK, 0);
         } else if (m.tipo == MSG_ESCREVER) {
-            u32 n = m.arg[2] < MSG_TEXTO_MAX ? m.arg[2] : MSG_TEXTO_MAX - 1;
-            tela(m.texto, n, (u8)m.arg[1]);
-            responder(m.origem, MSG_OK, n);
+            if (!escrever(t, &m)) {
+                if (t->escritores_n == MAX_ESCRITORES) responder(m.origem, MSG_ERRO, (u32)(-ERRO_LOTADO));
+                else t->escritores[t->escritores_n++] = m;     /* a resposta vem quando o dono ler */
+            }
         } else if (m.tipo == MSG_LER) {
-            if (leitores_n == MAX_LEITORES) {
+            if (t->leitores_n == MAX_LEITORES) {
                 responder(m.origem, MSG_ERRO, (u32)(-ERRO_LOTADO));
             } else {
-                leitores[leitores_n].pid    = m.origem;
-                leitores[leitores_n].max    = m.arg[1];
-                leitores[leitores_n].buffer = m.arg[2];
-                leitores_n++;
-                atender_leitores();       /* a resposta vem quando houver linha */
+                t->leitores[t->leitores_n].pid    = m.origem;
+                t->leitores[t->leitores_n].max    = m.arg[1];
+                t->leitores[t->leitores_n].buffer = m.arg[2];
+                t->leitores_n++;
+                atender_leitores(t);      /* a resposta vem quando houver linha */
             }
         } else if (m.origem != PID_KERNEL) {
             responder(m.origem, MSG_ERRO, (u32)(-ERRO_INVALIDO));

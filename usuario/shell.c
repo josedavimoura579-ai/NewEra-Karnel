@@ -113,8 +113,8 @@ static void cmd_ajuda(void)
     escreve("Programas em /bin (veja: ls /bin):\n", COR(COR_CIANO_CLARO));
     escreve("  ls cat echo mkdir rm cp cmp base64 novafetch ola codigo memoria falha filho\n", c);
     escreve("  kill sleep  (sinais: Ctrl+C interrompe o comando; nefs livro 8)\n", c);
-    escreve("  janelas relogio calculadora rabisco bloco bolas  mouse ver letras\n", c);
-    escreve("      (modo grafico: bash run.sh grafico ou vnc; nefs livro 16 a 21)\n", c);
+    escreve("  janelas term relogio calculadora rabisco bloco bolas  mouse ver letras\n", c);
+    escreve("      (modo grafico: bash run.sh grafico ou vnc; nefs livro 16 a 22)\n", c);
     escreve("  adduser login su sudo passwd chmod chown id whoami  (nefs livro 11)\n", c);
     escreve("  instalar-sistema instalar-boot entrar gerar-montagens desligar data\n", c);
     escreve("      (instalar o NovaEra no disco, passo a passo: nefs guia)\n", c);
@@ -204,6 +204,11 @@ static void cmd_reboot(void)
 
 static void cmd_limpar(void)
 {
+    if (terminal_canal()) {                     /* num terminal virtual: quem limpa é a janela */
+        char c[3] = { 27, TERM_LIMPA, 0 };
+        escreve(c, 0);
+        return;
+    }
     msg_t m;
     msg_zera(&m);
     m.tipo = MSG_VIDEO_LIMPAR;
@@ -331,6 +336,7 @@ static u32 primeiro_plano(u32 grupo)
     msg_zera(&m);
     m.tipo   = TERM_GRUPO;
     m.arg[0] = grupo;
+    m.arg[1] = terminal_canal();
     if (sys_chamar(PID_TERMINAL, &m) < 0 || m.tipo != MSG_OK) return 0;
     return m.arg[0];
 }

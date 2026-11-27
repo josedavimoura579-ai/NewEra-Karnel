@@ -245,9 +245,27 @@ typedef struct {
  * comando que o shell está rodando. 0 = nenhum (o shell espera a linha). */
 #define TERM_GRUPO         32    /* arg[0] = grupo do primeiro plano; resposta: arg[0] = o anterior */
 #define TERM_ECO           33    /* arg[0] = 0: não mostra o que se digita (senhas); 1: mostra */
+/* (TERM_GRUPO, TERM_ECO e TERM_CRU valem para o terminal do canal arg[1]:
+ *  0 é o console; os outros são os terminais virtuais, abaixo.) */
 #define TERM_CRU           34    /* arg[0] = 1: o modo "cru": cada tecla vai na hora para quem lê,
                                     sem eco e sem editar a linha (jogos, janelas); 0: volta ao normal.
                                     Volta sozinho quando o shell retoma o terminal ou no Ctrl+C. */
+
+/* Terminais virtuais (os "pty" do Unix): o servidor de terminal atende
+ * vários terminais ao mesmo tempo. O canal 0 é o console (o teclado e a
+ * tela); cada terminal virtual é outro canal. Os programas usam o canal
+ * como sempre (MSG_LER, MSG_ESCREVER: a entrada e a saída padrão); o
+ * "dono" (o programa de terminal numa janela) faz o papel do teclado e da
+ * tela: manda as teclas e lê o que os programas escreveram. As cores vão
+ * no meio do texto: o byte 27, o byte 1 e a cor (como em MSG_ESCREVER). */
+#define TERM_PTY_CRIAR     35    /* resposta: arg[0] = o canal do terminal novo */
+#define TERM_PTY_LER       36    /* arg[0] = canal, arg[1] = máximo, arg[2] = endereço; espera ter
+                                    saída; resposta: arg[0] = bytes (0: o terminal foi fechado) */
+#define TERM_PTY_TECLAS    37    /* arg[0] = canal, arg[2] = n, texto = as teclas (como digitadas) */
+#define TERM_PTY_FECHAR    38    /* arg[0] = canal */
+#define TERM_PTY_MAX       8     /* terminais virtuais ao mesmo tempo */
+#define TERM_COR           1     /* depois do 27: a cor vem no próximo byte */
+#define TERM_LIMPA         2     /* depois do 27: limpa a tela (o comando limpar) */
 
 /* Sockets locais (PID_SOCKETS), como os AF_UNIX do Linux: um programa
  * "ouve" num nome (/tmp/servidor.sock) e outros se conectam a ele. Cada

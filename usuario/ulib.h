@@ -338,11 +338,21 @@ static inline void escreve(const char *s, u8 cor)
     escreve_em(a->saida, a->saida_canal, s, str_tam(s), cor);
 }
 
+/* O terminal deste programa: o canal da entrada ou da saída padrão, se
+ * uma delas for o terminal; senão, o console (0). */
+static inline u32 terminal_canal(void)
+{
+    ambiente_t *a = ambiente();
+    if (a->entrada == PID_TERMINAL) return a->entrada_canal & ~CANAL_DONO;
+    if (a->saida == PID_TERMINAL) return a->saida_canal & ~CANAL_DONO;
+    return 0;
+}
+
 /* Mensagens de erro vão sempre para o terminal (a "saída de erro"), mesmo
  * quando a saída padrão foi ligada a um pipe ou a um arquivo. */
 static inline void escreve_erro(const char *s)
 {
-    escreve_em(PID_TERMINAL, 0, s, str_tam(s), COR(COR_VERMELHO_CLARO));
+    escreve_em(PID_TERMINAL, terminal_canal(), s, str_tam(s), COR(COR_VERMELHO_CLARO));
 }
 
 static inline void escreve_num(u32 n, u8 cor)
@@ -546,6 +556,7 @@ static inline void terminal_eco(int ligado)
     msg_zera(&m);
     m.tipo   = TERM_ECO;
     m.arg[0] = (u32)ligado;
+    m.arg[1] = terminal_canal();
     sys_chamar(PID_TERMINAL, &m);
 }
 
