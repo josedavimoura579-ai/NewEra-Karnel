@@ -35,6 +35,15 @@ static int grafico;                         /* 1 = a tela é a BGA */
 static u32 *tela;                           /* os pontos: 0x00RRGGBB */
 static u32 g_lin, g_col;
 
+/* O texto do terminal, guardado: para redesenhar depois de uma tela cheia. */
+static u16 g_letras[G_LINHAS][G_COLUNAS];
+static u8  g_cores[G_LINHAS][G_COLUNAS];
+
+/* A tela cheia de um programa (VIDEO_TELA_ABRIR): enquanto ela estiver
+ * aberta, o texto vai só para a grade, sem aparecer. */
+static u32  dono;                           /* 0 = ninguém */
+static u32 *quadro_dono;
+
 /* As 16 cores do modo texto, em RGB (um pouco mais suaves que as da VGA) */
 static const u32 PALETA[16] = {
     0x0B1220, 0x2457C5, 0x2E9E4F, 0x2EC4D6, 0xC23B3B, 0x9B4DCA, 0xC77D1E, 0xC8CDD6,
@@ -173,18 +182,24 @@ static u32 cor_fundo(u8 cor)
 
 static void g_celula(u32 l, u32 c, u32 glifo, u8 cor)
 {
+    if (l < G_LINHAS && c < G_COLUNAS) { g_letras[l][c] = (u16)glifo; g_cores[l][c] = cor; }
+    if (dono) return;
     letra(c * FONTE_LARGURA, TOPO + l * FONTE_ALTURA, glifo, PALETA[cor & 15], cor_fundo(cor), 1);
 }
 
 static void g_cursor(int mostrar)
 {
-    if (g_lin >= G_LINHAS || g_col >= G_COLUNAS) return;
+    if (dono || g_lin >= G_LINHAS || g_col >= G_COLUNAS) return;
     u32 y = TOPO + g_lin * FONTE_ALTURA + FONTE_ALTURA - 2;
     retangulo(g_col * FONTE_LARGURA, y, FONTE_LARGURA, 2, mostrar ? 0xC8CDD6 : PALETA[0]);
 }
 
 static void g_rolar(void)
 {
+    for (u32 l = 0; l + 1 < G_LINHAS; l++)
+        for (u32 c = 0; c < G_COLUNAS; c++) { g_letras[l][c] = g_letras[l + 1][c]; g_cores[l][c] = g_cores[l + 1][c]; }
+    for (u32 c = 0; c < G_COLUNAS; c++) { g_letras[G_LINHAS - 1][c] = (u16)glifo_de(' '); g_cores[G_LINHAS - 1][c] = 0; }
+    if (dono) return;
     u64 *d = (u64 *)(tela + TOPO * LARG);
     const u64 *o = (const u64 *)(tela + (TOPO + FONTE_ALTURA) * LARG);
     u64 n = (u64)(G_LINHAS - 1) * FONTE_ALTURA * LARG / 2;
@@ -194,8 +209,21 @@ static void g_rolar(void)
 
 static void g_limpar(void)
 {
-    retangulo(0, TOPO, LARG, ALT - TOPO, PALETA[0]);
+    for (u32 l = 0; l < G_LINHAS; l++)
+        for (u32 c = 0; c < G_COLUNAS; c++) { g_letras[l][c] = (u16)glifo_de(' '); g_cores[l][c] = 0; }
+    if (!dono) retangulo(0, TOPO, LARG, ALT - TOPO, PALETA[0]);
     g_lin = g_col = 0;
+}
+
+/* Depois de uma tela cheia: o topo e o terminal, de novo. */
+static void g_redesenhar(void)
+{
+    topo();
+    for (u32 l = 0; l < G_LINHAS; l++)
+        for (u32 c = 0; c < G_COLUNAS; c++)
+            letra(c * FONTE_LARGURA, TOPO + l * FONTE_ALTURA, g_letras[l][c],
+                  PALETA[g_cores[l][c] & 15], cor_fundo(g_cores[l][c]), 1);
+    g_cursor(1);
 }
 
 static void g_putc(u32 glifo, int especial, u8 cor)
@@ -520,6 +548,72 @@ static void mouse_movimento(const msg_t *m)
     mouse_evento(m->arg[3] != 0);
 }
 
+/* ------------------------------ Tela cheia -------------------------------- */
+
+static void tela_responder(u32 para, long erro, u32 a0, u32 a1)
+{
+    msg_t r;
+    msg_zera(&r);
+    r.tipo   = erro ? MSG_ERRO : MSG_OK;
+    r.arg[0] = erro ? (u32)(-erro) : a0;
+    r.arg[1] = a1;
+    sys_responder(para, &r);
+}
+
+static int vivo(u32 pid)
+{
+    msg_t m;
+    if (sys_tarefa_info(pid, &m) < 0) return 0;
+    return m.arg[0] != ESTADO_LIVRE && m.arg[0] != ESTADO_MORTO && m.arg[0] != ESTADO_ZUMBI;
+}
+
+static void tela_fechar(void)
+{
+    if (!dono) return;
+    sys_munmap((u64)quadro_dono, (u64)LARG * ALT * 4);
+    dono = 0;
+    quadro_dono = 0;
+    seta_esconder();
+    g_redesenhar();
+    seta_mostrar();
+}
+
+static void tela_pedido(const msg_t *m)
+{
+    u32 quem = m->origem;
+    if (!grafico) { tela_responder(quem, ERRO_INVALIDO, 0, 0); return; }
+    if (m->tipo == VIDEO_TELA_ABRIR) {
+        if (dono && dono != quem && vivo(dono)) { tela_responder(quem, ERRO_OCUPADO, 0, 0); return; }
+        tela_fechar();
+        mmap_t p;
+        p.tam = (u64)LARG * ALT * 4;
+        p.objeto = m->arg[0];
+        p.prot = PROT_LER;
+        p.reservado = 0;
+        long v = sys_mmap(&p);
+        if (v < 0) { tela_responder(quem, v, 0, 0); return; }
+        quadro_dono = (u32 *)v;
+        dono = quem;
+        tela_responder(quem, 0, LARG, ALT);
+        return;
+    }
+    if (quem != dono) { tela_responder(quem, ERRO_SEM_PERMISSAO, 0, 0); return; }
+    if (m->tipo == VIDEO_TELA_FECHAR) { tela_fechar(); tela_responder(quem, 0, 0, 0); return; }
+    /* VIDEO_TELA_MOSTRAR: copia o retângulo pedido */
+    u32 x = m->arg[0], y = m->arg[1], l = m->arg[2], a = m->arg[3];
+    if (x >= LARG || y >= ALT) { tela_responder(quem, 0, 0, 0); return; }
+    if (l > LARG - x) l = LARG - x;
+    if (a > ALT - y) a = ALT - y;
+    seta_esconder();
+    for (u32 j = 0; j < a; j++) {
+        u32 *d = tela + (y + j) * LARG + x;
+        const u32 *o = quadro_dono + (y + j) * LARG + x;
+        for (u32 i = 0; i < l; i++) d[i] = o[i];
+    }
+    seta_mostrar();
+    tela_responder(quem, 0, 0, 0);
+}
+
 /* No modo gráfico, cada código Unicode vira um desenho da fonte. */
 static void saida(u32 cp, u8 cor)
 {
@@ -581,6 +675,11 @@ int main(int argc, char **argv)
             } else mouse_esperar(m.origem);
             continue;
         }
+        if (m.tipo == VIDEO_TELA_ABRIR || m.tipo == VIDEO_TELA_MOSTRAR || m.tipo == VIDEO_TELA_FECHAR) {
+            tela_pedido(&m);
+            continue;
+        }
+        if (dono && !vivo(dono)) tela_fechar();     /* o dono da tela cheia morreu sem fechar */
         seta_esconder();                            /* o texto pode passar embaixo da seta */
         if (m.tipo == MSG_VIDEO_ESCREVER) {
             for (u32 i = 0; i < MSG_TEXTO_MAX && m.texto[i]; i++) {

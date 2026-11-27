@@ -69,12 +69,25 @@ Cada etapa termina com algo testável no QEMU (e uma foto da tela).
     dedo no VNC; sem dados nele, volta ao PS/2 relativo. Conferido com um
     cliente VNC de teste: o dedo em sete pontos (cantos e meio) e a seta
     exatamente lá.
-- [ ] **Etapa 3 — desenhar: a biblioteca gráfica**
+- [x] **Etapa 3 — desenhar: a biblioteca gráfica** ([livro, capítulo 18](livro/18-desenhar.md))
   - pontos, linhas, retângulos, preencher, copiar áreas, transparência
   - imagens: o porte do **stb_image** (PNG, JPEG, BMP)
   - um visualizador de imagens (`ver foto.png`)
   - *Teste: o visualizador mostra um PNG; os desenhos batem com uma imagem
     de referência feita no Linux.*
+  - Feito: a `grafico.h` na libc (pontos, linhas, retângulos, círculos,
+    degradê, copiar, escalar, texto com a fonte 8×16; cores `0xAARRGGBB`
+    com transparência). A **tela emprestada**: o programa cria uma memória
+    compartilhada do tamanho da tela e o vídeo passa a mostrá-la
+    (`VIDEO_TELA_ABRIR`/`MOSTRAR`/`FECHAR`); o terminal continua numa grade
+    e é redesenhado na volta, e o vídeo pega a tela de volta se o dono
+    morrer. A memória compartilhada passou de 2 para 8 MiB por objeto. O
+    **stb_image** 2.30 do jeito que veio (`libc/src/stb/`), compilado
+    pelo cproc no próprio NovaEra. O `ver` (clique ou Enter para voltar) e
+    três fotos em `/usr/share/nefs/exemplos/imagens/`. O `testegrafico`
+    desenha uma cena e calcula um hash dos pontos: os números no NovaEra e
+    no Linux são iguais (a cena e as três fotos; o PNG e o BMP batem também
+    com o Python/PIL).
 - [ ] **Etapa 4 — letras bonitas**
   - o porte do **stb_truetype** e a fonte **DejaVu Sans**
   - texto com contorno suave (anti-aliasing), em qualquer tamanho, com
