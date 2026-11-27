@@ -8,8 +8,8 @@
 #                initrd  recebe o initrd mapeado (só leitura)
 #                -       nenhuma (um programa comum)
 #
-#  ATENÇÃO: as 10 primeiras linhas são os servidores do sistema, nesta
-#  ordem (PIDs 1 a 10 em novaera.h). Novos servidores entram depois deles.
+#  ATENÇÃO: as 11 primeiras linhas são os servidores do sistema, nesta
+#  ordem (PIDs 1 a 11 em novaera.h). Novos servidores entram depois deles.
 #  Os comandos do shell (ls, cat...) não ficam aqui: ficam em usuario/bin/
 #  e vão para o initrd. Máximo: 15 servidores.
 # ===========================================================================
@@ -23,3 +23,4 @@ disco       driver
 fat         -
 ext2        -
 contas      -
+sockets     -

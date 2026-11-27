@@ -219,6 +219,7 @@ NewEra-Karnel/
 │   ├── fat.c         #   os discos FAT32 (PID 8)
 │   ├── ext2.c        #   os discos ext2, com dono e permissões (PID 9)
 │   ├── contas.c      #   usuários e senhas: login, su, sudo, passwd (PID 10)
+│   ├── sockets.c     #   sockets locais AF_UNIX (PID 11)
 │   └── bin/          #   os comandos: ls, cat, echo, mkdir, rm, novafetch...
 ├── build.sh          # Compila os programas, embute-os e liga o kernel.bin
 ├── libc/             # A libc do NovaEra: include/ (cabeçalhos), src/, crt0.s
@@ -468,6 +469,7 @@ degraus, e cada fase já entrega algo usável. Detalhes em
   - [x] Etapa 5 — **instalar no disco e ligar por ele**: `instalar-sistema`, `instalar-boot` (o GRUB no disco), o `init` com login e o `/etc/montagens`, `desligar` ([livro, capítulo 12](nefs/livro/12-instalando-no-disco.md))
   - [x] Etapa 6 — **threads**: `pthread_create`, `pthread_join`, mutex e condições, com futex no núcleo ([livro, capítulo 13](nefs/livro/13-threads.md))
   - [x] Etapa 7 — **`mmap` e memória compartilhada** entre programas (`shm_open`), com mutex entre processos ([livro, capítulo 14](nefs/livro/14-memoria-compartilhada.md))
+  - [x] Etapa 8 — **sockets locais** (`AF_UNIX`): `socket`, `bind`, `listen`, `accept`, `connect`, `socketpair`, `poll`; um servidor no anel 3 (PID 11) ([livro, capítulo 15](nefs/livro/15-sockets.md))
 - [ ] **Fase 5 — gráficos**: framebuffer em alta resolução, mouse, fontes e um servidor de janelas no anel 3
 - [ ] **Fase 6 — a área de trabalho do NovaEra e o modo pronto**: painel, menu, janelas, gerenciador de arquivos e terminal gráfico (no estilo do XFCE), pacotes e um **instalador estilo Debian/Ubuntu** com a opção "com área de trabalho"
 - [ ] **Fase 7 — rede e o XFCE4 de verdade**: TCP/IP, porte do GCC ou do clang, do X11, do GTK e do **XFCE4**

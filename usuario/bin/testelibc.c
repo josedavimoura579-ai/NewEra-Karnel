@@ -7,6 +7,9 @@
  */
 #include <errno.h>
 #include <limits.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <pthread.h>
@@ -541,8 +544,94 @@ static void testa_mmap(char *eu)
     munmap(c, sizeof(comum_t));
 }
 
+/* -------------------------------- Sockets ---------------------------------- */
+
+static struct sockaddr_un endereco(const char *nome)
+{
+    struct sockaddr_un a;
+    memset(&a, 0, sizeof a);
+    a.sun_family = AF_UNIX;
+    strcpy(a.sun_path, nome);
+    return a;
+}
+
+static int ler_tudo(int fd, char *buf, int n)
+{
+    int tot = 0, r;
+    while (tot < n && (r = (int)read(fd, buf + tot, (size_t)(n - tot))) > 0) tot += r;
+    return tot;
+}
+
+#define GRANDE 200000
+
+static int cliente(void)
+{
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    struct sockaddr_un a = endereco("/tmp/teste.sock");
+    if (fd < 0 || connect(fd, (struct sockaddr *)&a, sizeof a) < 0) return 1;
+    if (write(fd, "ping", 4) != 4) return 2;
+    char r[8] = {0};
+    if (ler_tudo(fd, r, 4) != 4 || strcmp(r, "pong")) return 3;
+    static char dados[GRANDE];
+    for (int i = 0; i < GRANDE; i++) dados[i] = (char)(i * 13);
+    if (write(fd, dados, GRANDE) != GRANDE) return 4;
+    close(fd);
+    return 0;
+}
+
+static void testa_sockets(char *eu)
+{
+    int par[2];
+    char b[16] = {0};
+    confere(socketpair(AF_UNIX, SOCK_STREAM, 0, par) == 0, "socketpair");
+    struct pollfd pf = { par[1], POLLIN, 0 };
+    confere(poll(&pf, 1, 50) == 0, "poll sem dados: espera e volta 0");
+    write(par[0], "abc", 3);
+    confere(poll(&pf, 1, 50) == 1 && (pf.revents & POLLIN), "poll com dados: POLLIN");
+    confere(read(par[1], b, sizeof b) == 3 && !memcmp(b, "abc", 3), "socketpair: de um lado para o outro");
+    write(par[1], "xyz", 3);
+    confere(read(par[0], b, sizeof b) == 3 && !memcmp(b, "xyz", 3), "socketpair: e de volta");
+    close(par[1]);
+    confere(read(par[0], b, sizeof b) == 0, "o outro lado fechou: read devolve 0");
+    signal(SIGPIPE, SIG_IGN);
+    errno = 0;
+    confere(write(par[0], "q", 1) == -1 && errno == EPIPE, "escrever sem ninguém do outro lado: EPIPE");
+    signal(SIGPIPE, SIG_DFL);
+    close(par[0]);
+
+    int s = socket(AF_UNIX, SOCK_STREAM, 0);
+    struct sockaddr_un a = endereco("/tmp/teste.sock");
+    confere(s >= 0 && bind(s, (struct sockaddr *)&a, sizeof a) == 0 && listen(s, 4) == 0,
+            "socket + bind + listen");
+    int s2 = socket(AF_UNIX, SOCK_STREAM, 0);
+    confere(bind(s2, (struct sockaddr *)&a, sizeof a) == -1 && errno == EADDRINUSE, "o mesmo nome duas vezes: EADDRINUSE");
+    close(s2);
+    struct sockaddr_un nada = endereco("/tmp/ninguem.sock");
+    s2 = socket(AF_UNIX, SOCK_STREAM, 0);
+    confere(connect(s2, (struct sockaddr *)&nada, sizeof nada) == -1 && errno == ECONNREFUSED,
+            "conectar onde ninguém ouve: ECONNREFUSED");
+    close(s2);
+
+    pid_t p = filho(eu, "--cliente");
+    int c = accept(s, NULL, NULL);
+    confere(c >= 0, "accept");
+    char r[8] = {0};
+    confere(ler_tudo(c, r, 4) == 4 && !strcmp(r, "ping"), "o servidor recebe ping");
+    write(c, "pong", 4);
+    static char dados[GRANDE];
+    int n = ler_tudo(c, dados, GRANDE), ok = n == GRANDE;
+    for (int i = 0; ok && i < GRANDE; i++) if (dados[i] != (char)(i * 13)) ok = 0;
+    confere(ok, "200 KB pelo socket, sem errar um byte");
+    confere(read(c, r, 1) == 0, "o cliente fechou: fim");
+    int st = espera(p);
+    confere(st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 0, "o cliente recebeu pong");
+    close(c);
+    close(s);
+}
+
 int main(int argc, char **argv)
 {
+    if (argc == 2 && !strcmp(argv[1], "--cliente")) return cliente();
     if (argc == 2 && !strcmp(argv[1], "--munmap")) {
         char *m = mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         m[0] = 1;
@@ -612,6 +701,7 @@ int main(int argc, char **argv)
     testa_sinais(argv[0]);
     testa_threads(argv[0]);
     testa_mmap(argv[0]);
+    testa_sockets(argv[0]);
     printf("%s: %d de %d testes passaram\n", falhas ? "FALHAS" : "OK", total - falhas, total);
     return falhas;
 }

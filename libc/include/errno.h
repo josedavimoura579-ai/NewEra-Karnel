@@ -29,4 +29,9 @@ extern int errno;
 #define ENOTEMPTY 39
 #define EBUSY   16
 #define ENODEV  19
+#define ENOTSOCK 88
+#define EPROTONOSUPPORT 93
+#define EAFNOSUPPORT 97
+#define EADDRINUSE 98
+#define ECONNREFUSED 111
 #endif

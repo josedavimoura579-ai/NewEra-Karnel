@@ -95,7 +95,7 @@ ssize_t write(int fd, const void *buf, size_t n)
     if (!f) return -1;
     long r = escreve_em(f->servidor, f->canal, buf, n, COR(COR_BRANCO));
     if (r == ERRO_INTERROMPIDO) { errno = EINTR; return -1; }
-    if (r < 0 && e_tubo(f)) {                   /* ninguém mais lê: SIGPIPE, como no Unix */
+    if (r == ERRO_TUBO || (r < 0 && e_tubo(f))) {  /* ninguém mais lê: SIGPIPE, como no Unix */
         errno = EPIPE;
         if (r == ERRO_TUBO) raise(SIGPIPE);
         return -1;

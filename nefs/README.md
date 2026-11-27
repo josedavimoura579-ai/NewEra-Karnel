@@ -89,6 +89,7 @@ A pasta [`livro/`](livro/) tem o Livro 1, em português:
 12. [Instalando o NovaEra no disco](livro/12-instalando-no-disco.md)
 13. [Threads: um programa fazendo várias coisas ao mesmo tempo](livro/13-threads.md)
 14. [Memória compartilhada: dois programas, a mesma memória](livro/14-memoria-compartilhada.md)
+15. [Sockets: uma linha de conversa entre programas](livro/15-sockets.md)
 
 ## Construindo a ISO do NEFS
 

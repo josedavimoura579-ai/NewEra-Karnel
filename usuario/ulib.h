@@ -297,7 +297,14 @@ static inline long escreve_em(u32 servidor, u32 canal, const char *dados, u64 n,
             m.arg[0] = canal;
             m.arg[2] = (u32)k;
             m.arg[3] = (u32)(u64)(dados + total);
-            if (sys_chamar(servidor, &m) < 0 || m.tipo == MSG_ERRO || m.arg[0] == 0) return ERRO_INVALIDO;
+            long r = sys_chamar(servidor, &m);
+            if (r == ERRO_INTERROMPIDO) return total ? (long)total : r;
+            if (r < 0) return ERRO_INVALIDO;
+            if (m.tipo == MSG_ERRO) {
+                if (total) return (long)total;
+                return m.arg[0] == (u32)(-ERRO_TUBO) ? ERRO_TUBO : -(long)m.arg[0];
+            }
+            if (m.arg[0] == 0) return total ? (long)total : ERRO_INVALIDO;
             total += m.arg[0];
         }
         return (long)total;

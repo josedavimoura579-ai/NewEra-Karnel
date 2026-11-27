@@ -124,9 +124,19 @@ Cada etapa termina com algo testável no QEMU.
     `shm_unlink`) e `ftruncate`. `testelibc`: 9 testes (83/83), entre eles
     pai e filho somando 40000 com um mutex compartilhado;
     `exemplos/compartilhada.c`. Ainda não: `mmap` de arquivos.
-- [ ] **Etapa 8 — sockets locais (`AF_UNIX`)**
+- [x] **Etapa 8 — sockets locais (`AF_UNIX`)** (núcleo 3.10; [livro, capítulo 15](livro/15-sockets.md))
   - um servidor de sockets: `socket`, `bind`, `listen`, `accept`, `connect`
   - a base do X11, do Wayland e do D-Bus (Fases 5 a 7)
+  - Feito: o servidor `sockets` (PID 11): nomes, fila de conexões,
+    `accept` que espera, buffer de 16 KiB por lado, escrita em bloco (até
+    64 KiB por pedido, com `SYS_COPIAR_DE`), `SOCK_ESTADO` (para o `poll`),
+    `SOCK_PAR` (o `socketpair`); recolhe os sockets de quem morreu sem
+    fechar. nlibc: `sys/socket.h`, `sys/un.h`, `poll.h` (`socket`, `bind`,
+    `listen`, `accept`, `connect`, `socketpair`, `send`, `recv`, `poll`).
+    `testelibc`: 15 testes (98/98), entre eles 200 KB sem errar um byte;
+    `exemplos/sockets.c` (um servidor, três clientes, `poll`). Ainda não:
+    o nome como arquivo na pasta, `SOCK_DGRAM`, passar descritores
+    (`SCM_RIGHTS`) e sockets de rede.
 - [ ] **Etapa 9 — o modo manual (estilo Arch)**
   - o Livro 2: instalar o NovaEra à mão, passo a passo
   - a ISO de instalação

@@ -87,6 +87,11 @@ char *strerror(int e)
     case ENOTEMPTY: return "A pasta nao esta vazia";
     case EBUSY:   return "Em uso";
     case ENODEV:  return "Nao suportado por este dispositivo";
+    case ENOTSOCK: return "Nao e um socket";
+    case EPROTONOSUPPORT: return "Protocolo nao suportado";
+    case EAFNOSUPPORT: return "Familia de enderecos nao suportada (so AF_UNIX)";
+    case EADDRINUSE: return "O nome ja esta em uso";
+    case ECONNREFUSED: return "Conexao recusada (ninguem ouvindo)";
     }
     return "Erro desconhecido";
 }

@@ -22,7 +22,7 @@ typedef unsigned long long u64;
 
 /* A versão do NÚCLEO. A do sistema (a "distribuição") fica em sistema.conf,
  * como o /etc/os-release do Linux: o núcleo não sabe qual é a distro. */
-#define NOVAERA_VERSAO     "3.9"
+#define NOVAERA_VERSAO     "3.10"
 #define NOVAERA_ARQUITETURA "x86_64"
 
 /* ---------------------- Chamadas de sistema (int 0x80) -------------------
@@ -47,7 +47,7 @@ typedef unsigned long long u64;
 #define SYS_COPIAR_DE   16   /* (pid, copia_t*)  copia da memória de quem me CHAMOU para a minha */
 #define SYS_AMBIENTE    17   /* (msg*)           entrada, saída padrão e pasta atual */
 #define SYS_PASTA       18   /* (caminho)        muda a pasta atual          */
-#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.9 x86_64" (como o uname) */
+#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.10 x86_64" (como o uname) */
 #define SYS_SINAL       20   /* (pid, sinal)     envia um sinal; pid < 0: ao grupo -pid; 0: ao meu grupo */
 #define SYS_SINAL_TRATAR 21  /* (sinal, sinal_acao_t*) troca o tratador; devolve o antigo na mesma struct */
 #define SYS_SINAL_VOLTAR 22  /* ()               fim do tratador: volta ao ponto interrompido */
@@ -97,6 +97,7 @@ typedef unsigned long long u64;
 #define PID_FAT      8       /* os discos FAT32 montados         */
 #define PID_EXT2     9       /* os discos ext2 montados          */
 #define PID_CONTAS   10      /* usuários e senhas (login, su, sudo, passwd) */
+#define PID_SOCKETS  11      /* sockets locais (AF_UNIX)         */
 #define PID_QUALQUER 0xFFFFFFFFu   /* em SYS_RECEBER: aceita de qualquer um */
 
 /* ------------------------------ Mensagem --------------------------------
@@ -218,6 +219,21 @@ typedef struct {
  * comando que o shell está rodando. 0 = nenhum (o shell espera a linha). */
 #define TERM_GRUPO         32    /* arg[0] = grupo do primeiro plano; resposta: arg[0] = o anterior */
 #define TERM_ECO           33    /* arg[0] = 0: não mostra o que se digita (senhas); 1: mostra */
+
+/* Sockets locais (PID_SOCKETS), como os AF_UNIX do Linux: um programa
+ * "ouve" num nome (/tmp/servidor.sock) e outros se conectam a ele. Cada
+ * conexão é uma linha de conversa nos dois sentidos. Ler e escrever é o
+ * mesmo MSG_LER / MSG_ESCREVER dos arquivos (com arg[3] = o endereço, até
+ * ESCRITA_MAX); fechar é ARQ_FECHAR. arg[0] = o socket (o canal). */
+#define SOCK_CRIAR         80    /* resposta: arg[0] = o socket */
+#define SOCK_LIGAR         81    /* arg[0] = socket, texto = o nome (o bind) */
+#define SOCK_OUVIR         82    /* arg[0] = socket, arg[1] = fila (o listen) */
+#define SOCK_ACEITAR       83    /* arg[0] = socket; espera uma conexão; resposta: arg[0] = o socket novo */
+#define SOCK_CONECTAR      84    /* arg[0] = socket, texto = o nome (o connect) */
+#define SOCK_ESTADO        85    /* resposta: arg[0] = bytes para ler, arg[1] = conexões esperando,
+                                    arg[2] = 1 se o outro lado fechou, arg[3] = espaço para escrever */
+#define SOCK_PAR           86    /* dois sockets já ligados (o socketpair); resposta: arg[0], arg[1] */
+#define SOCK_BUF           16384u
 
 /* Servidor de contas (PID_CONTAS). texto = "usuario\0senha\0" (até 31
  * letras cada). Os arquivos: /etc/passwd, /etc/group e /etc/sombra. */
