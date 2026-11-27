@@ -133,10 +133,10 @@ int main(int argc, char **argv)
              "# /boot/grub/grub.cfg: o menu do GRUB (instalar-boot)\n"
              "set timeout=3\n"
              "menuentry \"NovaEra (%s)\" {\n"
-             "    multiboot /boot/kernel.bin root=%s\n"
-             "}\n"
-             "menuentry \"NovaEra (%s, modo grafico)\" {\n"
              "    multiboot /boot/kernel.bin root=%s grafico\n"
+             "}\n"
+             "menuentry \"NovaEra (%s, modo texto)\" {\n"
+             "    multiboot /boot/kernel.bin root=%s\n"
              "}\n", nome, nome, nome, nome);
     if (gravar(c, cfg) < 0) { fprintf(stderr, "instalar-boot: não consegui gravar %s\n", c); return 1; }
 

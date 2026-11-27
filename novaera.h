@@ -130,7 +130,7 @@ typedef struct {
 #define VIDEO_TELA_ABRIR   12    /* arg[0] = o id do objeto (SYS_SHM_ABRIR); resposta: arg[0] = largura,
                                     arg[1] = altura */
 #define VIDEO_TELA_MOSTRAR 13    /* arg[0] = x, arg[1] = y, arg[2] = largura, arg[3] = altura: copia para a tela */
-#define VIDEO_TELA_FECHAR  14
+#define VIDEO_TELA_FECHAR  14    /* devolve a tela; arg[0] = 1: deixa a imagem (outro programa vai abrir) */
 #define MSG_TECLA          20    /* teclado -> terminal: arg[0] = caractere */
 #define MSG_REINICIAR      21    /* o driver do teclado controla a linha RESET (só o root) */
 #define MSG_DESLIGAR       22    /* desliga a máquina (ACPI do QEMU/VirtualBox; só o root) */
@@ -263,6 +263,8 @@ typedef struct {
                                     saída; resposta: arg[0] = bytes (0: o terminal foi fechado) */
 #define TERM_PTY_TECLAS    37    /* arg[0] = canal, arg[2] = n, texto = as teclas (como digitadas) */
 #define TERM_PTY_FECHAR    38    /* arg[0] = canal */
+#define TERM_ACORDAR       39    /* arg[0] = um pid (ou thread) esperando uma linha, arg[1] = canal: ele
+                                    acorda com "interrompido" (para largar o teclado sem Ctrl+C) */
 #define TERM_PTY_MAX       8     /* terminais virtuais ao mesmo tempo */
 #define TERM_COR           1     /* depois do 27: a cor vem no próximo byte */
 #define TERM_LIMPA         2     /* depois do 27: limpa a tela (o comando limpar) */

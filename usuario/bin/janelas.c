@@ -5,6 +5,8 @@
  *   janelas                    abre e já começa: um terminal (term), o relogio e a calculadora
  *   janelas PROG...            abre e começa estes programas
  *   janelas -                  só o servidor (os programas vêm depois)
+ *   janelas --sessao PROG...   a sessão de quem entrou pela tela de entrada
+ *                              (login-grafico): Ctrl+Q sai da sessão
  *
  * Cada programa desenha a SUA janela numa memória compartilhada e conversa
  * com o servidor por um socket local (janela.h). O servidor só faz três
@@ -40,6 +42,7 @@
 #include <grafico.h>
 #include <janela.h>
 #include "ulib.h"
+#include "papel.h"
 
 #define MAX_JANELAS  16
 #define MAX_FILHOS   16
@@ -68,7 +71,7 @@ static janela_t janelas[MAX_JANELAS];
 static janela_t *ordem[MAX_JANELAS];  /* ordem[0] é a de trás; ordem[n-1], a da frente */
 static int n_janelas, proximo_id = 1, abertas_ate_agora;
 static pid_t filhos[MAX_FILHOS];
-static int n_filhos;
+static int n_filhos, sessao;
 
 /* o mouse */
 static janela_t *arrastando, *capturou;   /* a janela arrastada / que recebe o mouse até soltar */
@@ -172,7 +175,7 @@ static void fazer_fundo(void)
 {
     int l = tela->largura, a = tela->altura;
     fundo = gr_nova(l, a);
-    gr_degrade(fundo, 0, 0, l, a, GR_NOITE, GR_RGB(27, 58, 107), 1);
+    papel_de_parede(fundo);
     gr_imagem_t *logo = gr_carregar("/usr/share/nefs/exemplos/imagens/logo.png");
     if (logo) { gr_escalar(fundo, l / 2 - 80, a / 2 - 130, 160, 160, logo); gr_liberar(logo); }
     int w = gr_fonte_largura(negrito, "NovaEra", 48);
@@ -180,8 +183,9 @@ static void fazer_fundo(void)
     x += gr_fonte_texto(fundo, negrito, x, a / 2 + 40, "Nova", 48, GR_RGBA(255, 255, 255, 110));
     gr_fonte_texto(fundo, negrito, x, a / 2 + 40, "Era", 48, GR_RGBA(255, 106, 0, 130));
     gr_preencher(fundo, 0, a - 26, l, 26, GR_RGBA(0, 0, 0, 110));
-    gr_fonte_texto(fundo, normal, 12, a - 21, "Arraste as janelas pela barra de título   ·   "
-                   "o X fecha   ·   Ctrl+Q sai", 14, GR_RGB(159, 179, 207));
+    gr_fonte_texto(fundo, normal, 12, a - 21, sessao ? "Arraste as janelas pela barra de título   ·   "
+                   "o X fecha   ·   Ctrl+Q sai da sessão" : "Arraste as janelas pela barra de título   ·   "
+                   "o X fecha   ·   Ctrl+Q sai", 14, GR_RGB(220, 228, 240));
 }
 
 /* ------------------------------ Conversar ------------------------------- */
@@ -480,7 +484,8 @@ static void sair(int codigo)
 {
     for (int i = 0; i < n_filhos; i++) kill(filhos[i], SIGTERM);
     terminal_cru(0);
-    gr_tela_fechar(tela);
+    if (sessao) gr_tela_soltar(tela);       /* a tela de entrada volta já: sem piscar o console */
+    else gr_tela_fechar(tela);
     exit(codigo);
 }
 
@@ -523,6 +528,7 @@ static void *thread_aceitar(void *arg)
 
 int main(int argc, char **argv)
 {
+    if (argc > 1 && !strcmp(argv[1], "--sessao")) { sessao = 1; argv++; argc--; }
     negrito = gr_fonte_abrir(GR_FONTE_NEGRITO);
     normal = gr_fonte_abrir(GR_FONTE_NORMAL);
     if (!negrito || !normal) { fprintf(stderr, "janelas: não achei as fontes em /usr/share/fonts/dejavu\n"); return 1; }

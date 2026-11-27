@@ -4,6 +4,8 @@
 #   ./run.sh vnc      -> tela gráfica via app cliente VNC (localhost:5901)
 #   ./run.sh debug    -> como o padrão, mas QEMU sai em vez de reiniciar e grava
 #                        interrupções/resets em qemu-debug.log
+#   ./run.sh disco    -> o NovaEra instalado no disco.img, em texto (curses)
+#   ./run.sh disco vnc -> o NovaEra instalado, com a tela de entrada gráfica (VNC)
 cd "$(dirname "$0")"
 [ -f kernel.bin ] || { echo "kernel.bin não existe. Rode ./build.sh primeiro."; exit 1; }
 
@@ -17,7 +19,14 @@ if [ "$MODO" = "disco" ]; then
     # O NovaEra instalado no disco.img (instalar-sistema + instalar-boot):
     # a BIOS lê o disco e o GRUB dele dá o boot. Nada de -kernel/-initrd.
     BASE=(-m 64M -nic none)
-    MODO="curses"
+    if [ "${2:-}" = "vnc" ]; then
+        MODO="vnc"
+    else
+        # O curses só mostra texto: com uma placa sem o modo gráfico (cirrus),
+        # o NovaEra liga direto no login de texto, mesmo pela opção gráfica do GRUB.
+        BASE+=(-vga cirrus)
+        MODO="curses"
+    fi
 else
     BASE=(-kernel kernel.bin -m 64M -nic none "${APPEND[@]}")
     [ -f initrd.tar ] && BASE+=(-initrd initrd.tar)   # os programas que o shell executa

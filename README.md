@@ -499,6 +499,7 @@ degraus, e cada fase já entrega algo usável. Detalhes em
   - [x] Etapa 5 — **o servidor de janelas**: arrastar, trazer para a frente, fechar; o comando `janelas` com `rabisco`, `bloco` e `bolas` ([livro, capítulo 20](nefs/livro/20-o-servidor-de-janelas.md))
   - [x] Etapa 6 — **a biblioteca das janelas**: botões, caixas de texto, mudar o tamanho; o `relogio` e a `calculadora` ([livro, capítulo 21](nefs/livro/21-a-biblioteca-das-janelas.md))
   - [x] Etapa 7 — **o terminal gráfico**: o shell numa janela (`term`), vários ao mesmo tempo, cada um com o seu Ctrl+C ([livro, capítulo 22](nefs/livro/22-o-terminal-grafico.md))
+  - [x] Etapa 8 — **o modo gráfico no boot**: o sistema instalado liga numa tela de entrada gráfica; o modo texto continua como opção ([livro, capítulo 23](nefs/livro/23-o-modo-grafico-no-boot.md))
 - [ ] **Fase 6 — a área de trabalho do NovaEra e o modo pronto**: painel, menu, janelas, gerenciador de arquivos e terminal gráfico (no estilo do XFCE), pacotes e um **instalador estilo Debian/Ubuntu** com a opção "com área de trabalho"
 - [ ] **Fase 7 — rede e o XFCE4 de verdade**: TCP/IP, porte do GCC ou do clang, do X11, do GTK e do **XFCE4**
 
