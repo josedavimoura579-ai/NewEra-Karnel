@@ -91,6 +91,7 @@ A pasta [`livro/`](livro/) tem o Livro 1, em português:
 14. [Memória compartilhada: dois programas, a mesma memória](livro/14-memoria-compartilhada.md)
 15. [Sockets: uma linha de conversa entre programas](livro/15-sockets.md)
 16. [A tela gráfica](livro/16-a-tela-grafica.md)
+17. [O mouse](livro/17-o-mouse.md)
 
 ### Livro 2: o guia de instalação (`nefs guia`)
 

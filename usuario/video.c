@@ -216,6 +216,8 @@ static void g_putc(u32 glifo, int especial, u8 cor)
     g_cursor(1);
 }
 
+static void seta_mostrar(void);
+
 /* ---- A placa BGA: portas 0x1CE (índice) e 0x1CF (valor); a memória da
  * tela é a 1ª região (BAR0) do dispositivo no barramento PCI. ---- */
 #define BGA_INDICE 0x1CE
@@ -282,6 +284,7 @@ static int grafico_iniciar(void)
     }
     g_col = 0;
     g_cursor(1);
+    seta_mostrar();
     return 1;
 }
 
@@ -386,6 +389,131 @@ static u8 cp437_latin(u32 cp)
     return '?';
 }
 
+/* -------------------------------- A seta ----------------------------------
+ * O desenho da seta (12 × 19): '#' = contorno preto, '.' = branco. Antes
+ * de desenhar, guarda o que havia embaixo; para mover ou para escrever
+ * texto ali, devolve o que estava (esconder) e desenha de novo (mostrar). */
+#define SETA_L 12u
+#define SETA_A 19u
+static const char *const SETA[SETA_A] = {
+    "#           ", "##          ", "#.#         ", "#..#        ", "#...#       ",
+    "#....#      ", "#.....#     ", "#......#    ", "#.......#   ", "#........#  ",
+    "#.........# ", "#..........#", "#......#####", "#...#..#    ", "#..# #..#   ",
+    "#.#  #..#   ", "##    #..#  ", "      #..#  ", "       ##   "
+};
+static u32 seta_embaixo[SETA_L * SETA_A];
+static int seta_x = LARG / 2, seta_y = ALT / 2, seta_visivel;
+static u32 seta_botoes;
+static long seta_roda;
+
+static void seta_esconder(void)
+{
+    if (!seta_visivel) return;
+    for (u32 j = 0; j < SETA_A; j++)
+        for (u32 i = 0; i < SETA_L; i++)
+            if (SETA[j][i] != ' ') ponto((u32)seta_x + i, (u32)seta_y + j, seta_embaixo[j * SETA_L + i]);
+    seta_visivel = 0;
+}
+
+static void seta_mostrar(void)
+{
+    if (seta_visivel || !grafico) return;
+    for (u32 j = 0; j < SETA_A; j++)
+        for (u32 i = 0; i < SETA_L; i++) {
+            u32 x = (u32)seta_x + i, y = (u32)seta_y + j;
+            if (SETA[j][i] == ' ' || x >= LARG || y >= ALT) continue;
+            seta_embaixo[j * SETA_L + i] = tela[y * LARG + x];
+            tela[y * LARG + x] = SETA[j][i] == '#' ? 0x000000 : 0xFFFFFF;
+        }
+    seta_visivel = 1;
+}
+
+/* ----------------- Quem quer saber do mouse (MOUSE_ESPERAR) ---------------
+ * Cada programa que pergunta ganha uma fila de eventos. O servidor nunca
+ * espera ninguém: quem pergunta e não há evento fica sem resposta até
+ * chegar um (a resposta é adiada, como nos pipes). Movimentos seguidos com
+ * os mesmos botões viram um só (o último). */
+#define OBSERVADORES 4u
+#define FILA_EV      16u
+typedef struct { u32 x, y, botoes; long roda; } evento_t;
+typedef struct {
+    u32 pid;                     /* 0 = livre */
+    int esperando;
+    evento_t fila[FILA_EV];
+    u32 ini, n;
+} observador_t;
+static observador_t obs[OBSERVADORES];
+
+static int ob_responder(observador_t *o)
+{
+    evento_t *e = &o->fila[o->ini];
+    msg_t r;
+    msg_zera(&r);
+    r.tipo   = MSG_OK;
+    r.arg[0] = e->x;
+    r.arg[1] = e->y;
+    r.arg[2] = e->botoes;
+    r.arg[3] = (u32)e->roda;
+    o->ini = (o->ini + 1) % FILA_EV;
+    o->n--;
+    o->esperando = 0;
+    if (sys_responder(o->pid, &r) < 0) { o->pid = 0; return 0; }   /* foi embora */
+    return 1;
+}
+
+static void mouse_evento(u32 roda_mudou)
+{
+    for (u32 i = 0; i < OBSERVADORES; i++) {
+        observador_t *o = &obs[i];
+        if (!o->pid) continue;
+        evento_t *ult = o->n ? &o->fila[(o->ini + o->n - 1) % FILA_EV] : 0;
+        if (ult && ult->botoes == seta_botoes && !roda_mudou && !ult->roda && !o->esperando) {
+            ult->x = (u32)seta_x;                    /* só andou: atualiza o último */
+            ult->y = (u32)seta_y;
+        } else {
+            if (o->n == FILA_EV) { o->ini = (o->ini + 1) % FILA_EV; o->n--; }   /* cheia: perde o mais velho */
+            evento_t *e = &o->fila[(o->ini + o->n) % FILA_EV];
+            e->x = (u32)seta_x;
+            e->y = (u32)seta_y;
+            e->botoes = seta_botoes;
+            e->roda = roda_mudou ? seta_roda : 0;
+            o->n++;
+        }
+        if (o->esperando) ob_responder(o);
+    }
+    seta_roda = 0;
+}
+
+static void mouse_esperar(u32 quem)
+{
+    observador_t *o = 0;
+    for (u32 i = 0; i < OBSERVADORES && !o; i++) if (obs[i].pid == quem) o = &obs[i];
+    for (u32 i = 0; i < OBSERVADORES && !o; i++)
+        if (!obs[i].pid) { o = &obs[i]; mem_zera(o, sizeof *o); o->pid = quem; }
+    if (!o) {                                      /* lotado: o mais antigo sai */
+        o = &obs[0];
+        mem_zera(o, sizeof *o);
+        o->pid = quem;
+    }
+    o->esperando = 1;
+    if (o->n) ob_responder(o);
+}
+
+static void mouse_movimento(const msg_t *m)
+{
+    seta_esconder();
+    seta_x += (int)m->arg[0];
+    seta_y += (int)m->arg[1];
+    if (seta_x < 0) seta_x = 0;
+    if (seta_y < 0) seta_y = 0;
+    if (seta_x > (int)LARG - 1) seta_x = (int)LARG - 1;
+    if (seta_y > (int)ALT - 1) seta_y = (int)ALT - 1;
+    seta_botoes = m->arg[2] & 7;
+    seta_roda += (int)m->arg[3];
+    seta_mostrar();
+    mouse_evento(m->arg[3] != 0);
+}
+
 /* No modo gráfico, cada código Unicode vira um desenho da fonte. */
 static void saida(u32 cp, u8 cor)
 {
@@ -433,6 +561,21 @@ int main(int argc, char **argv)
     for (;;) {
         sys_receber(PID_QUALQUER, &m);
 
+        if (m.tipo == MSG_MOUSE && m.origem == PID_TECLADO) {
+            if (grafico) mouse_movimento(&m);
+            continue;
+        }
+        if (m.tipo == MOUSE_ESPERAR) {
+            if (!grafico) {                         /* o mouse só existe na tela gráfica */
+                msg_t r;
+                msg_zera(&r);
+                r.tipo = MSG_ERRO;
+                r.arg[0] = (u32)(-ERRO_INVALIDO);
+                sys_responder(m.origem, &r);
+            } else mouse_esperar(m.origem);
+            continue;
+        }
+        seta_esconder();                            /* o texto pode passar embaixo da seta */
         if (m.tipo == MSG_VIDEO_ESCREVER) {
             for (u32 i = 0; i < MSG_TEXTO_MAX && m.texto[i]; i++) {
                 escreve_byte((u8)m.texto[i], (u8)m.arg[0]);
@@ -443,5 +586,6 @@ int main(int argc, char **argv)
             else limpar();
         }
         if (!grafico) cursor_mover();
+        seta_mostrar();
     }
 }
