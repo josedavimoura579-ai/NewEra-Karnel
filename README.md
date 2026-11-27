@@ -9,6 +9,8 @@
 
 ### A Nova Era Começou
 
+<img src="arte/tela-grafica.png" alt="A tela gráfica do NovaEra" width="640">
+
 **Um microkernel x86_64 escrito do zero — nascido num smartphone, livre para o mundo inteiro.**
 
 ![Versão](https://img.shields.io/badge/vers%C3%A3o-3.0-blue)
@@ -318,6 +320,7 @@ O `run.sh` liga o NovaEra com 64 MiB de memória e um disco (`disco.img`, de 64 
 - **No celular, gire para a horizontal** ou diminua a fonte (gesto de pinça): o PC virtual precisa de 80×25 letras.
 - **Para sair do QEMU:** aperte **Alt+2**, digite `quit` e Enter. (No Termux, o Alt fica na barra de teclas extras; se ela não tiver, Esc e depois 2.)
 - **Janela gráfica:** `bash run.sh vnc` e conecte um app de VNC (bVNC, RealVNC...) em `localhost:5901`.
+- **Modo gráfico (1024×768):** `bash run.sh grafico` (numa janela, no computador) ou `bash run.sh vnc` (no Termux, com um app de VNC em `localhost:5901`).
 - **Instalado no disco:** depois de instalar o NovaEra no `disco.img` (`instalar-sistema` e `instalar-boot`; veja `nefs livro 12`), `bash run.sh disco` liga só pelo disco, com o login.
 
 **Em qualquer sistema**, direto com o QEMU:
@@ -489,6 +492,7 @@ degraus, e cada fase já entrega algo usável. Detalhes em
   - [x] Etapa 8 — **sockets locais** (`AF_UNIX`): `socket`, `bind`, `listen`, `accept`, `connect`, `socketpair`, `poll`; um servidor no anel 3 (PID 11) ([livro, capítulo 15](nefs/livro/15-sockets.md))
   - [x] Etapa 9 — **o modo manual (estilo Arch)**: o Livro 2 (`nefs guia`), `entrar` (chroot), `gerar-montagens`, `data`, `/etc/hostname`; a ISO de instalação
 - [ ] **Fase 5 — gráficos** (plano em 9 etapas: [`nefs/FASE5.md`](nefs/FASE5.md)): framebuffer em alta resolução, mouse, fontes e um servidor de janelas no anel 3
+  - [x] Etapa 1 — **a tela gráfica**: 1024×768 com a logo, o terminal desenhado com fonte própria (`run.sh grafico` / `run.sh vnc`) ([livro, capítulo 16](nefs/livro/16-a-tela-grafica.md))
 - [ ] **Fase 6 — a área de trabalho do NovaEra e o modo pronto**: painel, menu, janelas, gerenciador de arquivos e terminal gráfico (no estilo do XFCE), pacotes e um **instalador estilo Debian/Ubuntu** com a opção "com área de trabalho"
 - [ ] **Fase 7 — rede e o XFCE4 de verdade**: TCP/IP, porte do GCC ou do clang, do X11, do GTK e do **XFCE4**
 

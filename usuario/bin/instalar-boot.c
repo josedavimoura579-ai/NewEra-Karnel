@@ -134,7 +134,10 @@ int main(int argc, char **argv)
              "set timeout=3\n"
              "menuentry \"NovaEra (%s)\" {\n"
              "    multiboot /boot/kernel.bin root=%s\n"
-             "}\n", nome, nome);
+             "}\n"
+             "menuentry \"NovaEra (%s, modo grafico)\" {\n"
+             "    multiboot /boot/kernel.bin root=%s grafico\n"
+             "}\n", nome, nome, nome, nome);
     if (gravar(c, cfg) < 0) { fprintf(stderr, "instalar-boot: não consegui gravar %s\n", c); return 1; }
 
     printf("GRUB instalado em %s (%u setores); o sistema está em %s.\n", argv[1], setores_core, nome);

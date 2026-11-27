@@ -34,7 +34,7 @@ sua, e um servidor de janelas monta a tela. A área de trabalho completa
 
 Cada etapa termina com algo testável no QEMU (e uma foto da tela).
 
-- [ ] **Etapa 1 — a tela gráfica**
+- [x] **Etapa 1 — a tela gráfica** (núcleo 4.1; [livro, capítulo 16](livro/16-a-tela-grafica.md))
   - núcleo: mapear memória de dispositivo (só drivers) e o PCI
   - o driver da BGA (e o framebuffer do GRUB); 1024 × 768 × 32
   - o terminal desenhado com uma fonte bitmap 8×16 (128 × 48 letras): o
@@ -43,6 +43,16 @@ Cada etapa termina com algo testável no QEMU (e uma foto da tela).
   - `run.sh vnc` e `run.sh grafico`
   - *Teste: o NovaEra liga no QEMU com `-vga std`, mostra a logo e o shell
     funciona na tela gráfica.*
+  - Feito: `SYS_MAPEAR_FISICO` (só drivers; só memória de dispositivo,
+    nunca a RAM; marcada para não ser liberada como se fosse RAM); `inw`,
+    `outl` e `inl` em `sys.s`. O servidor de vídeo liga a BGA (achada pelo
+    PCI) com `grafico` na linha de boot: a faixa com a logo desenhada ponto
+    a ponto (16 amostras por ponto), o terminal em 128 × 43 letras com a
+    fonte 8×16 "Fixed" (domínio público, `ferramentas/fonte/gerar.py`) e
+    os acentos pelo Unicode; as mensagens do boot (em CP437) redesenhadas.
+    `run.sh grafico` e `run.sh vnc`; o menu do GRUB (ISO e `instalar-boot`)
+    tem a opção "modo gráfico"; o modo texto continua o padrão. Ainda não:
+    o framebuffer do GRUB (VBE) para PCs sem a BGA.
 - [ ] **Etapa 2 — o mouse**
   - o driver do mouse PS/2 (a IRQ 12): movimento, botões, roda
   - a seta na tela; quem quiser recebe os eventos

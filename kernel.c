@@ -313,6 +313,7 @@ static void memoria_iniciar(u64 mbi_endereco)
 /* Bits livres para o sistema: a página é de um objeto compartilhado (não
  * se libera com o processo) e qual objeto (bits 52-57). */
 #define PG_COMPARTILHADA (1ull << 9)
+#define PG_DISPOSITIVO   (1ull << 10)  /* memória de um dispositivo: não é RAM, não se libera */
 #define PG_OBJETO(e)     ((u32)(((e) >> 52) & 0x3F))
 
 /* Objetos de memória compartilhada (SYS_SHM_*): as páginas físicas, que
@@ -415,6 +416,7 @@ static void espaco_destruir(u64 *pml4)
                         shm_soltar(PG_OBJETO(pt[l]));    /* do objeto, não do processo */
                         continue;
                     }
+                    if (pt[l] & PG_DISPOSITIVO) continue;   /* a tela da placa: não é nossa */
                     if ((pt[l] & PG_PRESENTE) && fisico >= (u64)_kernel_fim &&
                         !(fisico >= ((u64)initrd & ~0xFFFull) && fisico < (u64)initrd + initrd_tam))
                         quadro_liberar(fisico);      /* a VGA e o initrd não são do processo */
@@ -1610,7 +1612,7 @@ static long mmap_soltar(tarefa_t *eu, u64 ini, u64 bytes)
         u64 *e = pte_de(eu->diretorio, v);
         if (!e || !(*e & PG_PRESENTE)) continue;
         if (*e & PG_COMPARTILHADA) shm_soltar(PG_OBJETO(*e));
-        else quadro_liberar(*e & PG_ENDERECO);
+        else if (!(*e & PG_DISPOSITIVO)) quadro_liberar(*e & PG_ENDERECO);
         *e = 0;
     }
     if ((u64)eu->diretorio == cr3_atual) cpu_carregar_cr3(cr3_atual);   /* esquece as traduções velhas */
@@ -2000,6 +2002,24 @@ static long syscall_executar(quadro_t *q)
         m->arg[1] = v[1] << 8 | v[2];
         m->arg[2] = v[3] << 16 | v[4] << 8 | v[5];
         return 0;
+    }
+
+    case SYS_MAPEAR_FISICO: {              /* a memória de um dispositivo (a tela) */
+        if (!(eu->flags & T_DRIVER)) return ERRO_SEM_PERMISSAO;
+        u64 ini = a & ~0xFFFull, fim = (a + b + QUADRO - 1) & ~0xFFFull;
+        int janela_vga = ini >= 0xA0000 && fim <= 0x100000;
+        if (!b || fim <= ini || (!janela_vga && ini < MEMORIA_NUCLEO) || fim - ini > 64ull * 1024 * 1024)
+            return ERRO_INVALIDO;              /* nunca a RAM de alguém */
+        u64 n = (fim - ini) / QUADRO;
+        u64 v = mmap_procura(eu->diretorio, n);
+        if (!v) return ERRO_SEM_MEMORIA;
+        for (u64 i = 0; i < n; i++)
+            if (!mapear(eu->diretorio, v + i * QUADRO, ini + i * QUADRO,
+                        PG_PRESENTE | PG_ESCRITA | PG_USUARIO | PG_DISPOSITIVO)) {
+                mmap_soltar(eu, v, i * QUADRO);
+                return ERRO_SEM_MEMORIA;
+            }
+        return (long)(v + (a & 0xFFF));
     }
 
     case SYS_NUCLEO: {
