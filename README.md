@@ -59,6 +59,16 @@ Acreditamos que **entender o que roda por baixo do seu computador é um direito*
 
 *NEFS = NovaEra From Scratch.*
 
+> **O NEFS não é um sistema operacional pronto.** É a oficina, no estilo do
+> [Linux From Scratch](https://www.linuxfromscratch.org/): uma tela preta com
+> comandos e um livro, para você montar o **seu** sistema sobre o NovaEra e
+> ver ele nascer. São duas coisas, com dois lançamentos:
+>
+> | | O que é | A ISO |
+> |---|---|---|
+> | **NovaEra** | o sistema pronto para usar: janelas, mouse, instalação no disco | `novaera-<versão>-x86_64.iso` |
+> | **NEFS** | a oficina para criar o seu próprio sistema | `nefs-<versão>-x86_64.iso` |
+
 **NEFS** é o nosso método para que qualquer programador, em qualquer lugar do mundo, **leia** um sistema operacional de ponta a ponta, **entenda** cada camada e **construa o seu próprio** a partir de um núcleo x86 puro.
 
 A ideia central é simples: *você só domina o que construiu desde o começo.*
@@ -228,7 +238,7 @@ NewEra-Karnel/
 ├── ferramentas/      # nefs-cpp, nefs-as, nefs-ld, nefs-ar: pré-processador, montador, ligador
 ├── exemplos/         # programas em C para compilar dentro do NovaEra (cproc)
 ├── portes/           # Programas de fora compilados para o NovaEra (QBE e cproc)
-├── nefs/             # O NEFS: comando nefs, Livro do NEFS e a ISO (separado do núcleo)
+├── nefs/             # O NEFS (a oficina): comando nefs, os livros e a ISO da oficina (separado do núcleo)
 ├── run.sh            # Atalho para rodar no QEMU (pensado para o Termux)
 ├── kernel.bin        # Binário pronto para rodar
 ├── initrd.tar        # Os programas do initrd, prontos (qemu -initrd)
@@ -372,15 +382,15 @@ Clique dentro da janela do QEMU (ou toque na tela do Termux) e digite:
 
 **O disco** usa FAT32: o que você gravar em `/disco` abre também no Windows, no Linux e no celular. Do lado de fora, sem ligar o NovaEra: `mdir -i disco.img ::/` e `mcopy -i disco.img ::/arquivo .` (pacote `mtools`; no Termux, `pkg install mtools`).
 
-### Instalando no disco (pela ISO)
+### Instalando no disco (pela ISO do NovaEra)
 
 Na página de **[lançamentos](https://github.com/josedavimoura579-ai/NewEra-Karnel/releases)**,
-baixe a `nefs-novaera-<versão>-x86_64.iso`: o NovaEra que liga pelo CD e se
-instala num disco, à mão, como o Arch Linux:
+baixe a `novaera-<versão>-x86_64.iso` (o lançamento **NovaEra**): o sistema
+que liga pelo CD e se instala num disco, à mão, como o Arch Linux:
 
 ```bash
 truncate -s 256M disco.img
-qemu-system-x86_64 -cdrom nefs-novaera-0.3-x86_64.iso -boot d -m 256M -vnc :1 \
+qemu-system-x86_64 -cdrom novaera-4.2-x86_64.iso -boot d -m 256M -vnc :1 \
     -drive file=disco.img,format=raw,index=0,media=disk
 ```
 
