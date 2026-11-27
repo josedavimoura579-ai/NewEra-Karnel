@@ -9,6 +9,20 @@ echo oi > /dados/oi.txt         o FAT32: abre no Windows e no celular
 nefs livro                      o Livro 1: como o NovaEra funciona
 ```
 
+## O modo gráfico
+
+```
+term                            mais um terminal (numa janela)
+relogio                         o relógio
+calculadora                     a calculadora
+echo texto > /etc/modo          ligar sempre em texto (como root)
+echo /home/ana/foto.jpg > /etc/papel    outro papel de parede
+```
+
+(Os três primeiros abrem uma janela nova a partir de um terminal da
+sessão; o terminal fica esperando a janela fechar.) Tudo sobre o modo
+gráfico está no Livro 1, capítulos 16 a 23.
+
 ## Atualizar o sistema
 
 Ligue por uma ISO (ou um NovaEra) mais nova, com o disco junto (no QEMU,

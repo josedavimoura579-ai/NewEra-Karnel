@@ -9,7 +9,7 @@
 # ===========================================================================
 set -eu
 
-NEFS_VERSAO="0.2"
+NEFS_VERSAO="0.3"
 
 # Onde está o código-fonte do NovaEra que serve de modelo para "nefs novo":
 #   na ISO:          /usr/share/nefs/novaera

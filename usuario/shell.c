@@ -506,8 +506,18 @@ int main(int argc, char **argv)
         escreve_num(reinicios, COR(COR_BRANCO));
         escreve(").\n\n", COR(COR_VERMELHO_CLARO));
     } else {
-        escreve("Shell do " SISTEMA_NOME " (processo 3, anel 3, 64 bits). Digite 'ajuda'.\n\n",
+        escreve("Shell do " SISTEMA_NOME " (processo 3, anel 3, 64 bits). Digite 'ajuda'.\n",
                 COR(COR_CINZA_CLARO));
+        msg_t lb;
+        sys_linha_boot(&lb);
+        int grafico = 0;
+        for (const char *p = lb.texto; *p; p++)
+            if (p[0] == 'g' && p[1] == 'r' && p[2] == 'a' && p[3] == 'f' && p[4] == 'i' && p[5] == 'c' && p[6] == 'o')
+                grafico = 1;
+        if (grafico && sys_pid() == PID_SHELL)
+            escreve("No modo grafico: digite janelas (terminais, relogio, calculadora; Ctrl+Q sai).\n",
+                    COR(COR_AMARELO));
+        escreve("\n", 0);
     }
 
     for (;;) {
