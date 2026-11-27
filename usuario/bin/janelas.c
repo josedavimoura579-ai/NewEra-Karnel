@@ -2,7 +2,7 @@
  * usuario/bin/janelas.c - o servidor de janelas do NovaEra (só no modo
  * gráfico).
  *
- *   janelas                    abre e já começa três exemplos: rabisco, bloco, bolas
+ *   janelas                    abre e já começa três exemplos: relogio, calculadora, bloco
  *   janelas PROG...            abre e começa estes programas
  *   janelas -                  só o servidor (os programas vêm depois)
  *
@@ -11,7 +11,8 @@
  * coisas:
  *   - COMPÕE a tela: o fundo e, por cima, cada janela, de trás para a
  *     frente, com a moldura (a barra de título, o X de fechar e a sombra);
- *   - leva o MOUSE: arrastar pela barra, trazer para a frente, fechar; os
+ *   - leva o MOUSE: arrastar pela barra, trazer para a frente, fechar,
+ *     mudar o tamanho pelo canto de baixo (se o programa deixar); os
  *     cliques dentro da janela vão para o programa dela;
  *   - leva o TECLADO para a janela da frente.
  * Se um programa morre, só a janela dele some. Ctrl+Q fecha tudo.
@@ -51,6 +52,7 @@ typedef struct {
     int   l, a;                      /* o tamanho do conteúdo */
     gr_imagem_t conteudo;            /* os pontos que o programa desenha */
     char  titulo[48];
+    int   redim;                     /* pode mudar de tamanho (JN_REDIMENSIONAVEL) */
 } janela_t;
 
 static pthread_mutex_t g = PTHREAD_MUTEX_INITIALIZER;
@@ -70,6 +72,12 @@ static int n_filhos;
 /* o mouse */
 static janela_t *arrastando, *capturou;   /* a janela arrastada / que recebe o mouse até soltar */
 static int arr_dx, arr_dy;
+static janela_t *redimensionando;         /* a janela mudando de tamanho (pelo canto) */
+static int red_x0, red_y0, red_l, red_a;  /* onde apertou; o tamanho novo */
+static ret_t contorno;                    /* o contorno do tamanho novo (l = 0: nenhum) */
+#define CANTO 14                          /* o canto de arrastar o tamanho */
+#define MIN_L 120
+#define MIN_A 60
 
 static int L(janela_t *j) { return j->l + 2; }              /* a moldura inteira */
 static int A(janela_t *j) { return j->a + BARRA + 1; }
@@ -103,6 +111,10 @@ static void moldura(gr_imagem_t *v, janela_t *j, int x, int y)
     gr_linha(v, cx - 3, cy - 3, cx + 3, cy + 3, GR_BRANCO);
     gr_linha(v, cx - 3, cy + 3, cx + 3, cy - 3, GR_BRANCO);
     copiar_opaco(v, x + 1, y + BARRA, &j->conteudo);
+    if (j->redim) {                                          /* o canto: três risquinhos */
+        int bx = x + L(j) - 2, by = y + A(j) - 2;
+        for (int k = 4; k <= 12; k += 4) gr_linha(v, bx - k, by, bx, by - k, GR_RGBA(90, 104, 130, 200));
+    }
 }
 
 /* Redesenha um retângulo da tela e manda o vídeo mostrar (só a thread principal) */
@@ -122,6 +134,10 @@ static void desenhar(int x, int y, int l, int a)
         janela_t *j = ordem[i];
         if (j->x >= x + l || j->y >= y + a || j->x + L(j) + SOMBRA <= x || j->y + A(j) + SOMBRA <= y) continue;
         moldura(&v, j, j->x - x, j->y - y);
+    }
+    if (contorno.l) {
+        gr_retangulo(&v, contorno.x - x, contorno.y - y, contorno.l, contorno.a, GR_CIANO);
+        gr_retangulo(&v, contorno.x - x + 1, contorno.y - y + 1, contorno.l - 2, contorno.a - 2, GR_CIANO);
     }
     gr_tela_mostrar(tela, x, y, l, a);
 }
@@ -211,6 +227,7 @@ static void tirar(janela_t *j)
     n_janelas--;
     if (arrastando == j) arrastando = NULL;
     if (capturou == j) capturou = NULL;
+    if (redimensionando == j) { redimensionando = NULL; compor(contorno.x, contorno.y, contorno.l, contorno.a); contorno.l = 0; }
     munmap(j->conteudo.pontos, (size_t)j->l * (size_t)j->a * 4);
     j->usada = 0;
     compor(x, y, l, a);
@@ -247,6 +264,7 @@ static void criar(int fd, jn_msg_t *m)
     j->conteudo._tela = 1;
     memcpy(j->titulo, m->titulo, sizeof j->titulo);
     j->titulo[sizeof j->titulo - 1] = 0;
+    j->redim = (m->botoes & JN_REDIMENSIONAVEL) != 0;
     /* em cascata, sem sair da tela */
     int k = abertas_ate_agora++ % 8;
     j->x = 60 + 70 * k;
@@ -264,6 +282,31 @@ static void criar(int fd, jn_msg_t *m)
     janela_t *antes = n_janelas > 1 ? ordem[n_janelas - 2] : NULL;
     if (antes) { evento(antes, JN_FOCO, 0, 0, 0, 0, 0, 0); compor_janela(antes); }
     compor_janela(j);
+}
+
+/* O programa redesenhou numa memória nova, do tamanho novo */
+static void trocar(janela_t *j, jn_msg_t *m)
+{
+    int maxl = tela->largura - 2, maxa = tela->altura - BARRA - 1;
+    m->shm[sizeof m->shm - 1] = 0;
+    if (m->l >= MIN_L && m->a >= MIN_A && m->l <= maxl && m->a <= maxa) {
+        int shm = shm_open(m->shm, O_RDWR, 0);
+        void *p = shm < 0 ? MAP_FAILED : mmap(NULL, (size_t)m->l * (size_t)m->a * 4, PROT_READ, MAP_SHARED, shm, 0);
+        if (shm >= 0) close(shm);
+        if (p != MAP_FAILED) {
+            int x = j->x, y = j->y, l = L(j) + SOMBRA, a = A(j) + SOMBRA;
+            munmap(j->conteudo.pontos, (size_t)j->l * (size_t)j->a * 4);
+            j->l = m->l;
+            j->a = m->a;
+            j->conteudo.pontos = p;
+            j->conteudo.largura = j->conteudo.passo = m->l;
+            j->conteudo.altura = m->a;
+            if (L(j) + SOMBRA > l) l = L(j) + SOMBRA;
+            if (A(j) + SOMBRA > a) a = A(j) + SOMBRA;
+            compor(x, y, l, a);
+        }
+    }
+    evento(j, JN_TROCADA, 0, 0, 0, 0, 0, 0);      /* (a memória velha pode ir embora) */
 }
 
 static janela_t *da_conexao(int fd, int id)
@@ -299,6 +342,8 @@ static void *conexao(void *arg)
             int x = m.x < 0 ? 0 : m.x, y = m.y < 0 ? 0 : m.y;
             int x1 = m.x + m.l > j->l ? j->l : m.x + m.l, y1 = m.y + m.a > j->a ? j->a : m.y + m.a;
             if (x1 > x && y1 > y) compor(j->x + 1 + x, j->y + BARRA + y, x1 - x, y1 - y);
+        } else if (m.tipo == JN_TROCAR && j) {
+            trocar(j, &m);
         } else if (m.tipo == JN_TITULO && j) {
             memcpy(j->titulo, m.titulo, sizeof j->titulo);
             j->titulo[sizeof j->titulo - 1] = 0;
@@ -350,6 +395,35 @@ static void mouse(int x, int y, int b, int roda)
         else arrastando = NULL;
         return;
     }
+    if (redimensionando) {
+        janela_t *j = redimensionando;
+        ret_t antes = contorno;
+        red_l = j->l + x - red_x0;
+        red_a = j->a + y - red_y0;
+        if (red_l < MIN_L) red_l = MIN_L;
+        if (red_a < MIN_A) red_a = MIN_A;
+        if (red_l > tela->largura - 2 - j->x) red_l = tela->largura - 2 - j->x;
+        if (red_a > tela->altura - BARRA - 1 - j->y) red_a = tela->altura - BARRA - 1 - j->y;
+        ret_t novo = { j->x, j->y, red_l + 2, red_a + BARRA + 1 };
+        if (!(b & GR_ESQUERDO)) {                       /* soltou: o programa redesenha no tamanho novo */
+            redimensionando = NULL;
+            contorno.l = 0;
+            compor(antes.x, antes.y, antes.l, antes.a);
+            if (red_l != j->l || red_a != j->a) {
+                jn_msg_t m;
+                memset(&m, 0, sizeof m);
+                m.tipo = JN_REDIMENSIONAR;
+                m.l = red_l;
+                m.a = red_a;
+                enviar(j, &m);
+            }
+            return;
+        }
+        contorno = novo;
+        if (antes.l) compor(antes.x, antes.y, antes.l, antes.a);
+        compor(novo.x, novo.y, novo.l, novo.a);
+        return;
+    }
     if (capturou) {                                     /* o botão foi apertado dentro dela */
         janela_t *j = capturou;
         evento(j, JN_MOUSE, soltou ? JN_SOLTOU : apertou ? JN_APERTOU : JN_MOVEU,
@@ -366,6 +440,12 @@ static void mouse(int x, int y, int b, int roda)
         int cx = j->x + L(j) - 16, cy = j->y + BARRA / 2;
         if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= 81) evento(j, JN_FECHAR, 0, 0, 0, 0, 0, 0);
         else if (apertou & GR_ESQUERDO) { arrastando = j; arr_dx = x - j->x; arr_dy = y - j->y; }
+        return;
+    }
+    if (j->redim && (apertou & GR_ESQUERDO) && x >= j->x + L(j) - CANTO && y >= j->y + A(j) - CANTO) {
+        redimensionando = j;                            /* o canto de baixo: mudar o tamanho */
+        red_x0 = x;
+        red_y0 = y;
         return;
     }
     capturou = j;
@@ -459,7 +539,7 @@ int main(int argc, char **argv)
     pthread_create(&t, NULL, thread_teclado, NULL);
 
     /* os programas para começar */
-    static char *padrao[] = { "janelas", "rabisco", "bloco", "bolas", NULL };
+    static char *padrao[] = { "janelas", "relogio", "calculadora", "bloco", NULL };
     char **progs = argc > 1 ? argv : padrao;
     for (int i = 1; progs[i] && n_filhos < MAX_FILHOS; i++) {
         if (!strcmp(progs[i], "-")) continue;

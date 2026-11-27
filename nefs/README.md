@@ -95,6 +95,7 @@ A pasta [`livro/`](livro/) tem o Livro 1, em português:
 18. [Desenhar](livro/18-desenhar.md)
 19. [Letras bonitas](livro/19-letras-bonitas.md)
 20. [O servidor de janelas](livro/20-o-servidor-de-janelas.md)
+21. [A biblioteca das janelas](livro/21-a-biblioteca-das-janelas.md)
 
 ### Livro 2: o guia de instalação (`nefs guia`)
 

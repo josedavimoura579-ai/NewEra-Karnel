@@ -21,6 +21,8 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <math.h>
+#include <time.h>
 
 static int total, falhas;
 
@@ -248,6 +250,27 @@ static double contas(long n)
     double x = 0.5;
     for (long i = 0; i < n; i++) x = x * 1.0000001 + 0.25 / (double)(i + 1);
     return x;
+}
+
+/* math.h e as datas de time.h */
+static void testa_math_tempo(void)
+{
+    confere(floor(-2.5) == -3 && ceil(-2.5) == -2 && trunc(-2.7) == -2 && round(2.5) == 3, "floor/ceil/trunc/round");
+    confere(fabs(sqrt(2.0) * sqrt(2.0) - 2) < 1e-15 && sqrt(144.0) == 12, "sqrt");
+    confere(fabs(pow(2, 10) - 1024) < 1e-12 && fabs(pow(2, 0.5) - sqrt(2.0)) < 1e-14, "pow");
+    confere(fabs(exp(log(10.0)) - 10) < 1e-13, "exp e log");
+    confere(fabs(sin(M_PI / 6) - 0.5) < 1e-14 && fabs(cos(M_PI / 3) - 0.5) < 1e-14, "sin e cos");
+    confere(fabs(atan2(1, 1) - M_PI / 4) < 1e-15 && fabs(acos(0) - M_PI_2) < 1e-15, "atan2 e acos");
+    time_t t = 0;
+    struct tm *g = gmtime(&t);
+    confere(g->tm_year == 70 && g->tm_mon == 0 && g->tm_mday == 1 && g->tm_wday == 4, "gmtime(0) = quinta, 1/1/1970");
+    t = 951782400;                                 /* 29/02/2000, uma terça */
+    g = gmtime(&t);
+    confere(g->tm_year == 100 && g->tm_mon == 1 && g->tm_mday == 29 && g->tm_wday == 2 && g->tm_yday == 59, "gmtime: 29/02/2000");
+    time_t agora = time(NULL);
+    struct tm l = *localtime(&agora);
+    confere(mktime(&l) == agora, "mktime(localtime(t)) = t");
+    confere(agora > 1700000000, "time() lê o relógio do computador");
 }
 
 static void testa_processos(char *eu)
@@ -694,6 +717,7 @@ int main(int argc, char **argv)
     testa_strtod();
     testa_conversoes();
     testa_strings();
+    testa_math_tempo();
     testa_memoria();
     testa_arquivos();
     testa_getopt();

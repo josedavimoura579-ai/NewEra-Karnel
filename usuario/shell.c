@@ -113,8 +113,8 @@ static void cmd_ajuda(void)
     escreve("Programas em /bin (veja: ls /bin):\n", COR(COR_CIANO_CLARO));
     escreve("  ls cat echo mkdir rm cp cmp base64 novafetch ola codigo memoria falha filho\n", c);
     escreve("  kill sleep  (sinais: Ctrl+C interrompe o comando; nefs livro 8)\n", c);
-    escreve("  janelas rabisco bloco bolas  mouse ver letras testegrafico\n", c);
-    escreve("      (modo grafico: bash run.sh grafico ou vnc; nefs livro 16 a 20)\n", c);
+    escreve("  janelas relogio calculadora rabisco bloco bolas  mouse ver letras\n", c);
+    escreve("      (modo grafico: bash run.sh grafico ou vnc; nefs livro 16 a 21)\n", c);
     escreve("  adduser login su sudo passwd chmod chown id whoami  (nefs livro 11)\n", c);
     escreve("  instalar-sistema instalar-boot entrar gerar-montagens desligar data\n", c);
     escreve("      (instalar o NovaEra no disco, passo a passo: nefs guia)\n", c);

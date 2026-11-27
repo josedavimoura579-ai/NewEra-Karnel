@@ -431,9 +431,88 @@ pid_t wait(int *status) { return waitpid(-1, status, 0); }
 
 clock_t clock(void) { return (clock_t)sys_tempo(); }
 
+/* dias desde 1/1/1970 até a data (calendário gregoriano) */
+static long dias_desde_1970(long ano, int mes, int dia)
+{
+    ano -= mes <= 2;
+    long era = (ano >= 0 ? ano : ano - 399) / 400;
+    long ae = ano - era * 400;                                /* 0-399 */
+    long ad = (153 * (mes + (mes > 2 ? -3 : 9)) + 2) / 5 + dia - 1;
+    long de = ae * 365 + ae / 4 - ae / 100 + ad;               /* dia da era */
+    return era * 146097 + de - 719468;
+}
+
 time_t time(time_t *t)
 {
-    time_t s = (time_t)(sys_tempo() / 100);
+    msg_t m;
+    time_t s;
+    if (sys_relogio(&m) < 0) s = (time_t)(sys_tempo() / 100);   /* sem relógio: desde o boot */
+    else s = dias_desde_1970((long)m.arg[0], (int)((m.arg[1] >> 8) & 0xFF), (int)(m.arg[1] & 0xFF)) * 86400L +
+             ((m.arg[2] >> 16) & 0xFF) * 3600L + ((m.arg[2] >> 8) & 0xFF) * 60L + (m.arg[2] & 0xFF);
     if (t) *t = s;
     return s;
 }
+
+static struct tm tm_estatico;
+
+struct tm *gmtime(const time_t *t)
+{
+    long s = (long)*t, dias = s / 86400, resto = s % 86400;
+    if (resto < 0) { resto += 86400; dias--; }
+    struct tm *r = &tm_estatico;
+    r->tm_hour = (int)(resto / 3600);
+    r->tm_min = (int)(resto / 60 % 60);
+    r->tm_sec = (int)(resto % 60);
+    r->tm_wday = (int)((dias % 7 + 11) % 7);                 /* 1/1/1970 foi quinta (4) */
+    /* o contrário de dias_desde_1970 */
+    long z = dias + 719468, era = (z >= 0 ? z : z - 146096) / 146097;
+    long de = z - era * 146097;
+    long ae = (de - de / 1460 + de / 36524 - de / 146096) / 365;
+    long ano = ae + era * 400, dda = de - (365 * ae + ae / 4 - ae / 100);
+    long mp = (5 * dda + 2) / 153;
+    int dia = (int)(dda - (153 * mp + 2) / 5 + 1), mes = (int)(mp < 10 ? mp + 3 : mp - 9);
+    ano += mes <= 2;
+    r->tm_mday = dia;
+    r->tm_mon = mes - 1;
+    r->tm_year = (int)(ano - 1900);
+    r->tm_yday = (int)(dias - dias_desde_1970(ano, 1, 1));
+    r->tm_isdst = 0;
+    return r;
+}
+
+/* O fuso: as horas a somar ao UTC, na 1ª linha do /etc/fuso (ex.: -3) */
+static long fuso_segundos(void)
+{
+    static int lido;
+    static long fuso;
+    if (lido) return fuso;
+    lido = 1;
+    int fd = open("/etc/fuso", O_RDONLY);
+    if (fd < 0) return 0;
+    char b[32];
+    long n = read(fd, b, sizeof b - 1);
+    close(fd);
+    if (n <= 0) return 0;
+    b[n] = 0;
+    fuso = strtol(b, NULL, 10) * 3600L;
+    return fuso;
+}
+
+struct tm *localtime(const time_t *t)
+{
+    time_t l = *t + fuso_segundos();
+    return gmtime(&l);
+}
+
+time_t mktime(struct tm *tm)
+{
+    long ano = tm->tm_year + 1900L + tm->tm_mon / 12;
+    int mes = tm->tm_mon % 12;
+    if (mes < 0) { mes += 12; ano--; }
+    time_t s = dias_desde_1970(ano, mes + 1, 1) * 86400L + (tm->tm_mday - 1) * 86400L +
+               tm->tm_hour * 3600L + tm->tm_min * 60L + tm->tm_sec - fuso_segundos();
+    *tm = *localtime(&s);                                      /* acerta os campos (e o dia da semana) */
+    return s;
+}
+
+double difftime(time_t a, time_t b) { return (double)(a - b); }

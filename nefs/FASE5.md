@@ -124,13 +124,24 @@ Cada etapa termina com algo testável no QEMU (e uma foto da tela).
     VNC de teste: arrastar, trazer para a frente, pintar, digitar no bloco
     e fechar o Bolas sem derrubar os outros, com os 64 MiB do `run.sh`.
     Ainda não: redimensionar (Etapa 6), minimizar.
-- [ ] **Etapa 6 — a biblioteca das janelas**
+- [x] **Etapa 6 — a biblioteca das janelas** ([livro, capítulo 21](livro/21-a-biblioteca-das-janelas.md))
   - para os programas: criar uma janela, desenhar nela, receber eventos
     (tecla, clique, redimensionar, fechar)
   - botões, caixas de texto e rótulos simples
   - exemplos: "olá, janela", um relógio, uma calculadora
   - *Teste: os exemplos compilados com o cproc dentro do NovaEra rodam
     em janelas.*
+  - Feito: os controles na `janela.h` (`jn_rotulo`, `jn_botao`,
+    `jn_caixa`, `jn_tratar`: o botão afunda, a caixa tem cursor e Tab).
+    Redimensionar (`JN_REDIMENSIONAVEL`): o servidor mostra um contorno; ao
+    soltar, a biblioteca cria uma memória nova e só solta a velha quando o
+    servidor confirma (`JN_TROCAR`/`JN_TROCADA`). O `time()` lê o relógio
+    do computador (segundos desde 1970), com `gmtime`, `localtime` e
+    `mktime`, e o `/etc/fuso` (-3, Brasília); o `data` usa. Exemplos: o
+    `relogio` (cresce com a janela), a `calculadora` (mouse ou teclado) e o
+    `ola.c` em `/usr/share/nefs/exemplos/janelas/`, compilado com o cproc
+    dentro do NovaEra e aberto com `janelas /tmp/ola`. O `testelibc`
+    ganhou a `math.h` e as datas (108 testes).
 - [ ] **Etapa 7 — o terminal gráfico**
   - terminais virtuais (os "pty"): o servidor de terminal atende vários
     terminais ao mesmo tempo
