@@ -185,8 +185,22 @@ Cada etapa termina com algo testável no QEMU (e uma foto da tela).
     `/etc/papel`). Conferido num disco instalado: entrar como root abre o
     terminal em `/root`; senha errada é recusada; Ctrl+Q volta à entrada;
     sem `grafico`, o login de texto.
-- [ ] **Etapa 9 — o livro e o lançamento**
+- [x] **Etapa 9 — o livro e o lançamento**
   - o Livro 1 ganha os capítulos da parte gráfica; o guia de instalação,
     o modo gráfico
   - o lançamento **NEFS 0.3**: a ISO que liga em modo gráfico
   - *Entrega: janelas, mouse e texto bonito na tela.*
+  - Feito: o Livro 1 ganhou os capítulos 16 a 23 (a tela gráfica, o mouse,
+    desenhar, as letras, o servidor e a biblioteca de janelas, o terminal
+    gráfico, o modo gráfico no boot). O Livro 2 (o guia de instalação)
+    liga a ISO em modo gráfico (VNC) ou em texto (`-display curses -vga
+    cirrus`), mostra o menu novo do GRUB e a tela de entrada. A ISO do
+    `nefs iso` liga em modo gráfico (o texto é a 2ª opção), e o shell dá a
+    dica do `janelas`. O NEFS passou a 0.3, com as notas novas no
+    lançamento. Conferido: a ISO liga no gráfico, o `janelas` abre; com
+    `-vga cirrus`, em texto; instalar pela ISO (particionar, formatar,
+    `instalar-sistema`, `instalar-boot`) e ligar só pelo disco dá a tela de
+    entrada gráfica, pelo GRUB.
+
+**A Fase 5 está completa.** A próxima é a Fase 6: a área de trabalho
+(painel, menu, gerenciador de arquivos) e o instalador gráfico.

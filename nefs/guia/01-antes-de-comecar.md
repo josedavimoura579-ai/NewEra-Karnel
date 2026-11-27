@@ -24,15 +24,21 @@ No QEMU (Linux, Termux, Windows), o disco é um arquivo:
 
 ```
 truncate -s 256M disco.img
-qemu-system-x86_64 -cdrom nefs-novaera-0.2-x86_64.iso -boot d -m 256M -display curses \
+qemu-system-x86_64 -cdrom nefs-novaera-0.3-x86_64.iso -boot d -m 256M \
     -drive file=disco.img,format=raw,index=0,media=disk
 ```
 
 O `-boot d` manda ligar pelo CD (a ISO). Sem ele, depois que o disco tiver
 o GRUB, o QEMU liga pelo disco.
 
-(Em `-display curses`, a tela aparece no próprio terminal. Para sair do
-QEMU: Esc e depois 2, digite `quit`.)
+A ISO liga no **modo gráfico** (1024 × 768, com o mouse). No Termux, a
+tela gráfica vai por VNC: acrescente `-vnc :1` e conecte um app de VNC em
+`localhost:5901`. Para ficar no próprio terminal, em texto, troque por
+`-display curses -vga cirrus` (a placa cirrus não tem o modo gráfico, e o
+NovaEra liga em texto sozinho). Para sair do QEMU no curses: Esc e depois
+2, digite `quit`.
+
+Os comandos deste guia são os mesmos nos dois modos.
 
 ## Convenções
 

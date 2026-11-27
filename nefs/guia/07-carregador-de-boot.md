@@ -14,9 +14,15 @@ Ele grava o **GRUB** no começo do disco `sda` e cria o menu
 ```
 set timeout=3
 menuentry "NovaEra (sda1)" {
+    multiboot /boot/kernel.bin root=sda1 grafico
+}
+menuentry "NovaEra (sda1, modo texto)" {
     multiboot /boot/kernel.bin root=sda1
 }
 ```
+
+A primeira opção (a que liga sozinha depois de 3 segundos) é o **modo
+gráfico**, com a tela de entrada; a segunda, o modo texto.
 
 Como um computador liga pelo disco:
 
@@ -26,4 +32,5 @@ Como um computador liga pelo disco:
 3. o GRUB acha a partição com o `/boot/grub/grub.cfg` e carrega o
    `kernel.bin` com `root=sda1`;
 4. o NovaEra monta a `sda1` em `/`, o `/bin/init` monta o `/etc/montagens`
-   e mostra o login.
+   e mostra a entrada: a tela gráfica (com `grafico` na linha de boot) ou o
+   login de texto.

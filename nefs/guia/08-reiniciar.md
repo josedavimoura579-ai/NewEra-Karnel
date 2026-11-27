@@ -8,7 +8,20 @@ O `desligar` grava tudo o que estava na memória dos servidores de disco e
 desliga. Agora ligue **sem a ISO**: só o disco.
 
 ```
-qemu-system-x86_64 -m 256M -display curses \
+qemu-system-x86_64 -m 256M -vnc :1 \
+    -drive file=disco.img,format=raw,index=0,media=disk
+```
+
+(No NovaEra compilado: `bash run.sh disco vnc`.)
+
+Aparece a **tela de entrada**: digite o seu usuário, Tab, a senha e Enter.
+A sessão abre com um terminal numa janela, na sua pasta pessoal. Ctrl+Q
+sai da sessão (e a tela de entrada volta).
+
+Em texto, no próprio terminal:
+
+```
+qemu-system-x86_64 -m 256M -display curses -vga cirrus \
     -drive file=disco.img,format=raw,index=0,media=disk
 ```
 

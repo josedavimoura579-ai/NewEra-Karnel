@@ -42,7 +42,11 @@ O plano em 9 etapas: [`FASE5.md`](FASE5.md).
 - **servidor de janelas** no anel 3: cada programa desenha na própria área
   de memória compartilhada e o servidor compõe a tela
 
-**Entrega:** janelas, mouse e texto bonito na tela.
+**Entrega:** janelas, mouse e texto bonito na tela. **Feito** (NEFS 0.3):
+a tela de 1024 × 768, o mouse, a `grafico.h` com fotos, a DejaVu com
+contorno suave, o servidor e a biblioteca de janelas, o terminal gráfico e
+a tela de entrada gráfica no sistema instalado. Ainda não: o framebuffer
+do GRUB (VBE) para PCs sem a placa BGA, e o mouse USB.
 
 ## Fase 6 — a área de trabalho do NovaEra e o modo pronto
 

@@ -13,7 +13,7 @@
 
 **Um microkernel x86_64 escrito do zero — nascido num smartphone, livre para o mundo inteiro.**
 
-![Versão](https://img.shields.io/badge/vers%C3%A3o-3.0-blue)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-4.2-blue)
 ![Arquitetura](https://img.shields.io/badge/arquitetura-x86__64-informational)
 ![Boot](https://img.shields.io/badge/boot-Multiboot-success)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-green)
@@ -380,14 +380,19 @@ instala num disco, à mão, como o Arch Linux:
 
 ```bash
 truncate -s 256M disco.img
-qemu-system-x86_64 -cdrom nefs-novaera-0.2-x86_64.iso -boot d -m 256M -display curses \
+qemu-system-x86_64 -cdrom nefs-novaera-0.3-x86_64.iso -boot d -m 256M -vnc :1 \
     -drive file=disco.img,format=raw,index=0,media=disk
 ```
 
+A ISO liga no modo gráfico: conecte um app de VNC em `localhost:5901` (no
+computador, tire o `-vnc :1` e a janela do QEMU aparece). Para ficar em
+texto, no próprio terminal: `-display curses -vga cirrus` no lugar de
+`-vnc :1`.
+
 Dentro dele, `nefs guia` mostra o passo a passo (o **Livro 2**:
 particionar, formatar, `instalar-sistema`, `entrar`, `instalar-boot`).
-Depois, ligue só pelo disco: `bash run.sh disco` (ou o mesmo QEMU sem
-`-cdrom` e `-boot d`), e o NovaEra pede o login.
+Depois, ligue só pelo disco: `bash run.sh disco vnc` (ou o mesmo QEMU sem
+`-cdrom` e `-boot d`), e aparece a tela de entrada gráfica.
 
 ### Compilando a partir do código-fonte
 
@@ -491,7 +496,7 @@ degraus, e cada fase já entrega algo usável. Detalhes em
   - [x] Etapa 7 — **`mmap` e memória compartilhada** entre programas (`shm_open`), com mutex entre processos ([livro, capítulo 14](nefs/livro/14-memoria-compartilhada.md))
   - [x] Etapa 8 — **sockets locais** (`AF_UNIX`): `socket`, `bind`, `listen`, `accept`, `connect`, `socketpair`, `poll`; um servidor no anel 3 (PID 11) ([livro, capítulo 15](nefs/livro/15-sockets.md))
   - [x] Etapa 9 — **o modo manual (estilo Arch)**: o Livro 2 (`nefs guia`), `entrar` (chroot), `gerar-montagens`, `data`, `/etc/hostname`; a ISO de instalação
-- [ ] **Fase 5 — gráficos** (plano em 9 etapas: [`nefs/FASE5.md`](nefs/FASE5.md)): framebuffer em alta resolução, mouse, fontes e um servidor de janelas no anel 3
+- [x] **Fase 5 — gráficos** (plano em 9 etapas: [`nefs/FASE5.md`](nefs/FASE5.md)): framebuffer em alta resolução, mouse, fontes e um servidor de janelas no anel 3
   - [x] Etapa 1 — **a tela gráfica**: 1024×768 com a logo, o terminal desenhado com fonte própria (`run.sh grafico` / `run.sh vnc`) ([livro, capítulo 16](nefs/livro/16-a-tela-grafica.md))
   - [x] Etapa 2 — **o mouse**: a seta na tela, cliques e roda; o comando `mouse` ([livro, capítulo 17](nefs/livro/17-o-mouse.md))
   - [x] Etapa 3 — **desenhar**: a biblioteca gráfica (`grafico.h`), fotos PNG/JPEG/BMP pelo stb_image e o visualizador `ver` ([livro, capítulo 18](nefs/livro/18-desenhar.md))
@@ -500,6 +505,7 @@ degraus, e cada fase já entrega algo usável. Detalhes em
   - [x] Etapa 6 — **a biblioteca das janelas**: botões, caixas de texto, mudar o tamanho; o `relogio` e a `calculadora` ([livro, capítulo 21](nefs/livro/21-a-biblioteca-das-janelas.md))
   - [x] Etapa 7 — **o terminal gráfico**: o shell numa janela (`term`), vários ao mesmo tempo, cada um com o seu Ctrl+C ([livro, capítulo 22](nefs/livro/22-o-terminal-grafico.md))
   - [x] Etapa 8 — **o modo gráfico no boot**: o sistema instalado liga numa tela de entrada gráfica; o modo texto continua como opção ([livro, capítulo 23](nefs/livro/23-o-modo-grafico-no-boot.md))
+  - [x] Etapa 9 — **o livro e o lançamento**: o Livro 1 com a parte gráfica (capítulos 16 a 23), o guia de instalação com o modo gráfico, e o **NEFS 0.3**: a ISO que liga em modo gráfico
 - [ ] **Fase 6 — a área de trabalho do NovaEra e o modo pronto**: painel, menu, janelas, gerenciador de arquivos e terminal gráfico (no estilo do XFCE), pacotes e um **instalador estilo Debian/Ubuntu** com a opção "com área de trabalho"
 - [ ] **Fase 7 — rede e o XFCE4 de verdade**: TCP/IP, porte do GCC ou do clang, do X11, do GTK e do **XFCE4**
 
