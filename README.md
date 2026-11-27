@@ -496,6 +496,7 @@ degraus, e cada fase já entrega algo usável. Detalhes em
   - [x] Etapa 2 — **o mouse**: a seta na tela, cliques e roda; o comando `mouse` ([livro, capítulo 17](nefs/livro/17-o-mouse.md))
   - [x] Etapa 3 — **desenhar**: a biblioteca gráfica (`grafico.h`), fotos PNG/JPEG/BMP pelo stb_image e o visualizador `ver` ([livro, capítulo 18](nefs/livro/18-desenhar.md))
   - [x] Etapa 4 — **letras bonitas**: fontes TrueType com o contorno suave (stb_truetype + DejaVu Sans); o comando `letras` ([livro, capítulo 19](nefs/livro/19-letras-bonitas.md))
+  - [x] Etapa 5 — **o servidor de janelas**: arrastar, trazer para a frente, fechar; o comando `janelas` com `rabisco`, `bloco` e `bolas` ([livro, capítulo 20](nefs/livro/20-o-servidor-de-janelas.md))
 - [ ] **Fase 6 — a área de trabalho do NovaEra e o modo pronto**: painel, menu, janelas, gerenciador de arquivos e terminal gráfico (no estilo do XFCE), pacotes e um **instalador estilo Debian/Ubuntu** com a opção "com área de trabalho"
 - [ ] **Fase 7 — rede e o XFCE4 de verdade**: TCP/IP, porte do GCC ou do clang, do X11, do GTK e do **XFCE4**
 

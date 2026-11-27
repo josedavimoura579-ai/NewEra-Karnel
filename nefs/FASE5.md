@@ -103,7 +103,7 @@ Cada etapa termina com algo testável no QEMU (e uma foto da tela).
     Linux). O comando `letras` (de 12 a 120 pontos). O `testegrafico
     -fonte` escreve em três tamanhos: o hash é igual no NovaEra e no
     Linux, nas duas fontes.
-- [ ] **Etapa 5 — o servidor de janelas**
+- [x] **Etapa 5 — o servidor de janelas** ([livro, capítulo 20](livro/20-o-servidor-de-janelas.md))
   - um servidor novo no anel 3: os programas se conectam por um socket e
     desenham na sua memória compartilhada; o servidor compõe a tela
   - barra de título, fechar, arrastar, trazer para a frente
@@ -111,6 +111,19 @@ Cada etapa termina com algo testável no QEMU (e uma foto da tela).
     da seta
   - *Teste: três janelas de programas diferentes, arrastadas e
     sobrepostas; fechar uma não derruba as outras.*
+  - Feito: o programa `janelas` (pega a tela emprestada; Ctrl+Q sai). Os
+    programas se conectam no socket `/tmp/janelas` e desenham numa
+    memória compartilhada; mensagens de tamanho fixo (`janela.h`, na libc:
+    `jn_abrir`, `jn_mostrar`, `jn_esperar`...). Moldura com título
+    (DejaVu), X de fechar e sombra; arrastar, trazer para a frente; o
+    clique vai para o programa com a posição dentro da janela; o teclado,
+    para a da frente, com o terminal no modo cru (`TERM_CRU`, novo). Uma
+    thread por programa: se ele morre, só a janela dele some. Só a thread
+    principal desenha (os pedidos viram "pedaços sujos" que se juntam).
+    Três exemplos: `rabisco`, `bloco`, `bolas`. Conferido com o cliente
+    VNC de teste: arrastar, trazer para a frente, pintar, digitar no bloco
+    e fechar o Bolas sem derrubar os outros, com os 64 MiB do `run.sh`.
+    Ainda não: redimensionar (Etapa 6), minimizar.
 - [ ] **Etapa 6 — a biblioteca das janelas**
   - para os programas: criar uma janela, desenhar nela, receber eventos
     (tecla, clique, redimensionar, fechar)
