@@ -104,6 +104,28 @@ outw:
     outw %ax, %dx
     ret
 
+# u16 inw(u16 porta) / void outl(u16 porta, u32 v) / u32 inl(u16 porta)
+# (a placa de vídeo BGA usa portas de 16 bits; o PCI, de 32)
+.globl inw
+inw:
+    movw %di, %dx
+    xorl %eax, %eax
+    inw %dx, %ax
+    ret
+
+.globl outl
+outl:
+    movw %di, %dx
+    movl %esi, %eax
+    outl %eax, %dx
+    ret
+
+.globl inl
+inl:
+    movw %di, %dx
+    inl %dx, %eax
+    ret
+
 # void outs16(u16 porta, const void *buf, u64 n) - escreve n palavras na porta
 # (o disco ATA entrega e recebe os setores assim: 256 palavras cada)
 .globl ins16

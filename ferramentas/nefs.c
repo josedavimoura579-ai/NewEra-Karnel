@@ -913,9 +913,14 @@ static void cmd_iso(int argc, char **argv)
 
     static const char cfg[] =
         "# GRUB da ISO do NovaEra (gerada por \"nefs iso\")\n"
-        "set timeout=0\n"
+        "set timeout=5\n"
         "menuentry \"NovaEra\" {\n"
         "    multiboot /boot/kernel.bin\n"
+        "    module /boot/initrd.tar initrd\n"
+        "    boot\n"
+        "}\n"
+        "menuentry \"NovaEra (modo grafico, 1024x768)\" {\n"
+        "    multiboot /boot/kernel.bin grafico\n"
         "    module /boot/initrd.tar initrd\n"
         "    boot\n"
         "}\n";

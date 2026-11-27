@@ -34,6 +34,8 @@ O que quase todo programa de Unix espera do sistema:
 
 ## Fase 5 — gráficos
 
+O plano em 9 etapas: [`FASE5.md`](FASE5.md).
+
 - framebuffer em alta resolução (VESA/VBE pelo GRUB)
 - driver de mouse PS/2 (e depois USB)
 - fontes TrueType (um rasterizador pequeno)

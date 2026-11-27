@@ -38,6 +38,7 @@ static inline long sys_nucleo(msg_t *m)                 { return syscall2(SYS_NU
 static inline long sys_linha_boot(msg_t *m)             { return syscall2(SYS_LINHA_BOOT, (u64)m, 0); }
 static inline long sys_raiz(const char *nova, msg_t *m)  { return syscall2(SYS_RAIZ, (u64)nova, (u64)m); }
 static inline long sys_relogio(msg_t *m)                 { return syscall2(SYS_RELOGIO, (u64)m, 0); }
+static inline long sys_mapear_fisico(u64 fisico, u64 bytes) { return syscall2(SYS_MAPEAR_FISICO, fisico, bytes); }
 
 
 /* Sinais. pid > 0: um processo; pid < 0: o grupo -pid; 0: o meu grupo. */
@@ -126,6 +127,9 @@ static inline long sys_copiar_de(u32 pid, void *meu, u64 dele, u64 bytes)
 
 void outb(u16 porta, u8 valor);       /* sys.s */
 void outw(u16 porta, u16 valor);
+u16  inw(u16 porta);
+void outl(u16 porta, u32 valor);
+u32  inl(u16 porta);
 u8   inb(u16 porta);
 
 /* Memória de dispositivo (sys.s). O cproc ainda não suporta "volatile":

@@ -11,13 +11,15 @@ QEMU="$(command -v qemu-system-x86_64 || true)"   # o NovaEra é 64 bits
 [ -n "$QEMU" ] || { echo "QEMU não encontrado. No Termux: pkg install qemu-system-x86-64-headless"; exit 1; }
 
 MODO="${1:-curses}"
+APPEND=()
+case "$MODO" in grafico|vnc) APPEND=(-append grafico) ;; esac   # a tela gráfica (1024x768)
 if [ "$MODO" = "disco" ]; then
     # O NovaEra instalado no disco.img (instalar-sistema + instalar-boot):
     # a BIOS lê o disco e o GRUB dele dá o boot. Nada de -kernel/-initrd.
     BASE=(-m 64M -nic none)
     MODO="curses"
 else
-    BASE=(-kernel kernel.bin -m 64M -nic none)
+    BASE=(-kernel kernel.bin -m 64M -nic none "${APPEND[@]}")
     [ -f initrd.tar ] && BASE+=(-initrd initrd.tar)   # os programas que o shell executa
 fi
 
@@ -52,9 +54,13 @@ case "$MODO" in
         aviso_tamanho
         exec "$QEMU" "${BASE[@]}" -no-reboot -display curses -d int,cpu_reset -D qemu-debug.log ;;
     vnc)
+        echo "Modo gráfico (1024x768) por VNC."
         echo "Abra um app cliente VNC (bVNC, RealVNC...) e conecte em: localhost:5901"
         echo "Para encerrar: Ctrl+C aqui no Termux."
-        exec "$QEMU" "${BASE[@]}" -vnc :1 ;;
+        exec "$QEMU" "${BASE[@]}" -vga std -vnc :1 ;;
+    grafico)
+        # numa janela (no computador; no Termux, use: bash run.sh vnc)
+        exec "$QEMU" "${BASE[@]}" -vga std ;;
     *)
-        echo "Uso: ./run.sh [curses|vnc|debug|disco]"; exit 1 ;;
+        echo "Uso: ./run.sh [curses|vnc|grafico|debug|disco]"; exit 1 ;;
 esac
