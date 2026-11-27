@@ -325,7 +325,7 @@ typedef struct {
     char nome[32];
     u32  dono, modo;
     u32  paginas;
-    u64 *quadros;                      /* um quadro com até 512 endereços físicos */
+    u64 *quadros[4];                   /* até 4 quadros de 512 endereços físicos: 8 MiB */
     u32  refs;                         /* páginas mapeadas, em todos os processos */
 } shm_t;
 static shm_t shms[SHM_MAX];
@@ -337,9 +337,9 @@ static void shm_soltar(u32 id)
     shm_t *o = &shms[id];
     if (o->refs) o->refs--;
     if (!o->apagado || o->refs) return;
-    for (u32 i = 0; i < o->paginas; i++) quadro_liberar(o->quadros[i]);
-    if (o->quadros) quadro_liberar((u64)o->quadros);
-    o->quadros = 0;
+    for (u32 i = 0; i < o->paginas; i++) quadro_liberar(o->quadros[i / 512][i % 512]);
+    for (u32 k = 0; k < 4; k++) if (o->quadros[k]) quadro_liberar((u64)o->quadros[k]);
+    mem_zera(o->quadros, sizeof(o->quadros));
     o->usado = 0;
 }
 
@@ -1637,7 +1637,7 @@ static long mmap_criar(tarefa_t *eu, u64 pedido)
     for (u64 i = 0; i < n; i++) {
         int ok;
         if (o) {
-            ok = mapear(eu->diretorio, v + i * QUADRO, o->quadros[i],
+            ok = mapear(eu->diretorio, v + i * QUADRO, o->quadros[i / 512][i % 512],
                         flags | PG_COMPARTILHADA | ((u64)c.objeto << 52));
             if (ok) o->refs++;
         } else {
@@ -1688,11 +1688,13 @@ static long shm_tamanho(u64 id, u64 bytes)
     if (bytes > SHM_MAX_BYTES) return ERRO_SEM_ESPACO;
     shm_t *o = &shms[id];
     u32 n = (u32)((bytes + QUADRO - 1) / QUADRO);
-    if (!o->quadros && !(o->quadros = (u64 *)quadro_alocar())) return ERRO_SEM_MEMORIA;
     while (o->paginas < n) {                                  /* só cresce */
+        u32 k = o->paginas / 512;
+        if (!o->quadros[k] && !(o->quadros[k] = (u64 *)quadro_alocar())) return ERRO_SEM_MEMORIA;
         u64 q = quadro_alocar();
         if (!q) return ERRO_SEM_MEMORIA;
-        o->quadros[o->paginas++] = q;
+        o->quadros[k][o->paginas % 512] = q;
+        o->paginas++;
     }
     return 0;
 }

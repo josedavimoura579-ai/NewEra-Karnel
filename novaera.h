@@ -22,7 +22,7 @@ typedef unsigned long long u64;
 
 /* A versão do NÚCLEO. A do sistema (a "distribuição") fica em sistema.conf,
  * como o /etc/os-release do Linux: o núcleo não sabe qual é a distro. */
-#define NOVAERA_VERSAO     "4.1"
+#define NOVAERA_VERSAO     "4.2"
 #define NOVAERA_ARQUITETURA "x86_64"
 
 /* ---------------------- Chamadas de sistema (int 0x80) -------------------
@@ -47,7 +47,7 @@ typedef unsigned long long u64;
 #define SYS_COPIAR_DE   16   /* (pid, copia_t*)  copia da memória de quem me CHAMOU para a minha */
 #define SYS_AMBIENTE    17   /* (msg*)           entrada, saída padrão e pasta atual */
 #define SYS_PASTA       18   /* (caminho)        muda a pasta atual          */
-#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 4.1 x86_64" (como o uname) */
+#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 4.2 x86_64" (como o uname) */
 #define SYS_SINAL       20   /* (pid, sinal)     envia um sinal; pid < 0: ao grupo -pid; 0: ao meu grupo */
 #define SYS_SINAL_TRATAR 21  /* (sinal, sinal_acao_t*) troca o tratador; devolve o antigo na mesma struct */
 #define SYS_SINAL_VOLTAR 22  /* ()               fim do tratador: volta ao ponto interrompido */
@@ -124,6 +124,13 @@ typedef struct {
 #define MSG_IRQ           1      /* núcleo -> driver: arg[0] = número da IRQ */
 #define MSG_VIDEO_ESCREVER 10    /* arg[0] = cor, texto = string            */
 #define MSG_VIDEO_LIMPAR   11
+/* Tela cheia (só no modo gráfico): um programa desenha numa memória
+ * compartilhada do tamanho da tela (largura × altura × 4 bytes, 0x00RRGGBB)
+ * e pede ao vídeo para mostrar. O terminal volta quando ele fecha (ou morre). */
+#define VIDEO_TELA_ABRIR   12    /* arg[0] = o id do objeto (SYS_SHM_ABRIR); resposta: arg[0] = largura,
+                                    arg[1] = altura */
+#define VIDEO_TELA_MOSTRAR 13    /* arg[0] = x, arg[1] = y, arg[2] = largura, arg[3] = altura: copia para a tela */
+#define VIDEO_TELA_FECHAR  14
 #define MSG_TECLA          20    /* teclado -> terminal: arg[0] = caractere */
 #define MSG_REINICIAR      21    /* o driver do teclado controla a linha RESET (só o root) */
 #define MSG_DESLIGAR       22    /* desliga a máquina (ACPI do QEMU/VirtualBox; só o root) */
@@ -399,7 +406,7 @@ typedef struct {
     u32 criar;                   /* 0 = só abre; 1 = cria se não existir; 2 = cria, e erro se existir */
     u32 modo;                    /* as permissões, se criar (0600...) */
 } shm_pedido_t;
-#define SHM_MAX_BYTES  (2u * 1024 * 1024)   /* cada objeto: até 2 MiB */
+#define SHM_MAX_BYTES  (8u * 1024 * 1024)   /* cada objeto: até 8 MiB (uma tela de 1024x768 tem 3) */
 
 /* Quantos processos e threads o núcleo aguenta ao mesmo tempo. */
 #define PROCESSOS_MAX     64u

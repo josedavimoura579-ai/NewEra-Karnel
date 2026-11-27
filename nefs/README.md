@@ -92,6 +92,7 @@ A pasta [`livro/`](livro/) tem o Livro 1, em português:
 15. [Sockets: uma linha de conversa entre programas](livro/15-sockets.md)
 16. [A tela gráfica](livro/16-a-tela-grafica.md)
 17. [O mouse](livro/17-o-mouse.md)
+18. [Desenhar](livro/18-desenhar.md)
 
 ### Livro 2: o guia de instalação (`nefs guia`)
 
