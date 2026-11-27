@@ -53,10 +53,17 @@ Cada etapa termina com algo testável no QEMU (e uma foto da tela).
     `run.sh grafico` e `run.sh vnc`; o menu do GRUB (ISO e `instalar-boot`)
     tem a opção "modo gráfico"; o modo texto continua o padrão. Ainda não:
     o framebuffer do GRUB (VBE) para PCs sem a BGA.
-- [ ] **Etapa 2 — o mouse**
+- [x] **Etapa 2 — o mouse** ([livro, capítulo 17](livro/17-o-mouse.md))
   - o driver do mouse PS/2 (a IRQ 12): movimento, botões, roda
   - a seta na tela; quem quiser recebe os eventos
   - *Teste: a seta acompanha o mouse; um programa mostra os cliques.*
+  - Feito: o driver do teclado é também o do mouse PS/2 (o bit 5 do estado
+    separa os bytes; IRQ 12; a roda pela "batida" 200/100/80); manda os
+    movimentos ao vídeo (`MSG_MOUSE`). O vídeo desenha a seta (guarda o
+    que havia embaixo; esconde para escrever texto) e entrega os eventos a
+    quem pergunta (`MOUSE_ESPERAR`, com a resposta adiada e uma fila por
+    programa). Comando `mouse`. Conferido no QEMU pelo monitor
+    (`mouse_move`, `mouse_button`).
 - [ ] **Etapa 3 — desenhar: a biblioteca gráfica**
   - pontos, linhas, retângulos, preencher, copiar áreas, transparência
   - imagens: o porte do **stb_image** (PNG, JPEG, BMP)

@@ -127,6 +127,15 @@ typedef struct {
 #define MSG_TECLA          20    /* teclado -> terminal: arg[0] = caractere */
 #define MSG_REINICIAR      21    /* o driver do teclado controla a linha RESET (só o root) */
 #define MSG_DESLIGAR       22    /* desliga a máquina (ACPI do QEMU/VirtualBox; só o root) */
+/* O mouse (PS/2): o driver do teclado cuida dos dois (o mesmo controlador). */
+#define MSG_MOUSE          23    /* driver -> vídeo: arg[0] = dx, arg[1] = dy (para baixo é +),
+                                    arg[2] = botões (MOUSE_*), arg[3] = roda (+ = para cima) */
+#define MOUSE_ESPERAR      24    /* programa -> vídeo: espera o próximo evento do mouse (só no
+                                    modo gráfico). Resposta: arg[0] = x, arg[1] = y (na tela),
+                                    arg[2] = botões, arg[3] = roda (os giros desde o último) */
+#define MOUSE_ESQUERDO     1u
+#define MOUSE_DIREITO      2u
+#define MOUSE_MEIO         4u
 
 /* Entrada e saída: o MESMO protocolo no terminal, nos pipes e nos arquivos.
  * Um "canal" diz qual pipe ou qual arquivo aberto (no terminal, sempre 0). */
