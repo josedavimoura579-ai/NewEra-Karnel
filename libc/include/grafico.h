@@ -61,6 +61,20 @@ void   gr_copiar(gr_imagem_t *dest, int x, int y, const gr_imagem_t *orig);     
 void   gr_escalar(gr_imagem_t *dest, int x, int y, int l, int a, const gr_imagem_t *orig);
 int    gr_texto(gr_imagem_t *im, int x, int y, const char *utf8, gr_cor c, int escala);   /* devolve a largura */
 
+/* Letras bonitas: fontes TrueType (.ttf) pela stb_truetype (domínio
+ * público), com o contorno suave. O tamanho é a altura da letra em pontos.
+ *   gr_fonte_t *f = gr_fonte_abrir(GR_FONTE_NORMAL);
+ *   gr_fonte_texto(tela, f, 20, 20, "Ação, coração!", 32, GR_BRANCO);
+ * (x, y) é o canto de cima à esquerda da linha; '\n' pula linha. */
+#define GR_FONTE_NORMAL   "/usr/share/fonts/dejavu/DejaVuSans.ttf"
+#define GR_FONTE_NEGRITO  "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf"
+typedef struct gr_fonte gr_fonte_t;
+gr_fonte_t *gr_fonte_abrir(const char *caminho);        /* NULL se não deu */
+void gr_fonte_fechar(gr_fonte_t *f);
+int  gr_fonte_texto(gr_imagem_t *im, gr_fonte_t *f, int x, int y, const char *utf8, int tamanho, gr_cor c);
+int  gr_fonte_largura(gr_fonte_t *f, const char *utf8, int tamanho);   /* da linha mais larga */
+int  gr_fonte_altura(gr_fonte_t *f, int tamanho);       /* de uma linha (com o espaço entre linhas) */
+
 /* A tela (só no modo gráfico: bash run.sh grafico ou vnc) */
 gr_imagem_t *gr_tela_abrir(void);                       /* NULL se não há tela gráfica */
 void gr_tela_mostrar(gr_imagem_t *tela, int x, int y, int l, int a);

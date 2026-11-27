@@ -281,6 +281,9 @@ mkdir -p build/initrd/usr/lib/nefs build/initrd/usr/share/nefs
 cp build/libc/libc.a build/initrd/usr/lib/nefs/libc.a
 cp -r libc/include build/initrd/usr/include
 [ -d exemplos ] && cp -r exemplos build/initrd/usr/share/nefs/exemplos
+# As fontes TrueType (grafico.h: GR_FONTE_NORMAL, GR_FONTE_NEGRITO).
+mkdir -p build/initrd/usr/share/fonts/dejavu
+[ -d letras ] && cp letras/*.ttf letras/LICENCA-DEJAVU build/initrd/usr/share/fonts/dejavu/
 # O Livro do NEFS (nefs livro) e o GRUB das ISOs (nefs iso).
 [ -d nefs/livro ] && cp -r nefs/livro build/initrd/usr/share/nefs/livro
 [ -d nefs/guia ] && cp -r nefs/guia build/initrd/usr/share/nefs/guia     # o Livro 2 (nefs guia)
@@ -375,7 +378,7 @@ for f in kernel.c novaera.h boot.s cpu.s linker.ld build.sh sistema.conf \
          programas.lista logo.txt LICENSE; do
     [ -f "$f" ] && cp "$f" "$SRC/$f"
 done
-for d in usuario libc ferramentas exemplos portes nefs/livro nefs/guia etc; do
+for d in usuario libc ferramentas exemplos letras portes nefs/livro nefs/guia etc; do
     [ -d "$d" ] || continue
     find "$d" -type f ! -name '.*' | while read -r f; do
         case "$f" in portes/fontes/*|ferramentas/testes/*) continue ;; esac
