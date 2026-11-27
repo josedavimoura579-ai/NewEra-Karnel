@@ -34,6 +34,7 @@
  */
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -643,6 +644,7 @@ static void grava(const char *saida, int binario, u64 entrada)
         if (fwrite(cab, 1, sizeof cab, f) != sizeof cab) erro("erro ao gravar", saida);
     }
     if (fwrite(imagem, 1, tam, f) != tam || fclose(f) != 0) erro("erro ao gravar", saida);
+    chmod(saida, 0755);                       /* um programa: todos podem rodar (rwxr-xr-x) */
 }
 
 static void mapa(void)

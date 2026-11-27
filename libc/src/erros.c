@@ -23,6 +23,8 @@ int __erro_c(long e)
     case ERRO_SEM_ESPACO:    return ENOSPC;
     case ERRO_INTERROMPIDO:  return EINTR;
     case ERRO_TUBO:          return EPIPE;
+    case ERRO_OCUPADO:       return EBUSY;
+    case ERRO_DE_NOVO:       return EAGAIN;
     }
     return EIO;
 }
@@ -83,6 +85,7 @@ char *strerror(int e)
     case ENAMETOOLONG: return "Caminho longo demais (o NovaEra aceita ate 63 letras)";
     case ENOSYS:  return "Ainda nao existe no NovaEra";
     case ENOTEMPTY: return "A pasta nao esta vazia";
+    case EBUSY:   return "Em uso";
     }
     return "Erro desconhecido";
 }

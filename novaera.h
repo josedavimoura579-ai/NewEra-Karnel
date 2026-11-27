@@ -22,7 +22,7 @@ typedef unsigned long long u64;
 
 /* A versão do NÚCLEO. A do sistema (a "distribuição") fica em sistema.conf,
  * como o /etc/os-release do Linux: o núcleo não sabe qual é a distro. */
-#define NOVAERA_VERSAO     "3.7"
+#define NOVAERA_VERSAO     "3.8"
 #define NOVAERA_ARQUITETURA "x86_64"
 
 /* ---------------------- Chamadas de sistema (int 0x80) -------------------
@@ -47,7 +47,7 @@ typedef unsigned long long u64;
 #define SYS_COPIAR_DE   16   /* (pid, copia_t*)  copia da memória de quem me CHAMOU para a minha */
 #define SYS_AMBIENTE    17   /* (msg*)           entrada, saída padrão e pasta atual */
 #define SYS_PASTA       18   /* (caminho)        muda a pasta atual          */
-#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.7 x86_64" (como o uname) */
+#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.8 x86_64" (como o uname) */
 #define SYS_SINAL       20   /* (pid, sinal)     envia um sinal; pid < 0: ao grupo -pid; 0: ao meu grupo */
 #define SYS_SINAL_TRATAR 21  /* (sinal, sinal_acao_t*) troca o tratador; devolve o antigo na mesma struct */
 #define SYS_SINAL_VOLTAR 22  /* ()               fim do tratador: volta ao ponto interrompido */
@@ -58,6 +58,10 @@ typedef unsigned long long u64;
                                 de um cliente esperando a minha resposta, ou a minha */
 #define SYS_LINHA_BOOT  27   /* (msg*)           texto = a linha de comando que o GRUB passou
                                 ("/boot/kernel.bin root=sda1"); vazio se não houve */
+#define SYS_THREAD_CRIAR 28  /* (thread_t*)      uma thread nova no MEU espaço de memória; devolve o id */
+#define SYS_THREAD_SAIR 29   /* (código)         só esta thread termina (a última encerra o programa) */
+#define SYS_FUTEX_ESPERAR 30 /* (endereço, valor) dorme se *endereço == valor (senão ERRO_DE_NOVO) */
+#define SYS_FUTEX_ACORDAR 31 /* (endereço, n)    acorda até n threads dormindo nesse endereço */
 
 #define ERRO_INVALIDO   (-1) /* argumento ou ponteiro inválido */
 #define ERRO_SEM_PERMISSAO (-2)
@@ -72,6 +76,7 @@ typedef unsigned long long u64;
 #define ERRO_INTERROMPIDO (-11) /* a espera foi interrompida por um sinal (o EINTR) */
 #define ERRO_TUBO       (-12) /* escrever num pipe que ninguém mais lê (o EPIPE) */
 #define ERRO_OCUPADO    (-13) /* em uso (desmontar com arquivos abertos: o EBUSY) */
+#define ERRO_DE_NOVO    (-14) /* o valor mudou: tente de novo (o EAGAIN do futex) */
 
 /* --------------------------- Processos fixos ----------------------------
  * O NovaEra ainda não tem um servidor de nomes: cada servidor tem um
@@ -328,6 +333,31 @@ typedef struct {
 #define ESTADO_MORTO      4      /* servidor que falhou demais e desistiu  */
 #define ESTADO_ESPERANDO  5      /* em SYS_ESPERAR, aguardando um filho    */
 #define ESTADO_ZUMBI      6      /* terminou; o pai ainda não leu o código */
+#define ESTADO_FUTEX      7      /* uma thread dormindo num futex (SYS_FUTEX_ESPERAR) */
+
+/* Quantos processos e threads o núcleo aguenta ao mesmo tempo. */
+#define PROCESSOS_MAX     64u
+
+/* ------------------------------- Threads ---------------------------------
+ * Uma thread é mais um "fio" de execução DENTRO de um programa: ela tem os
+ * seus registradores e a sua pilha, mas a memória (o código, as variáveis
+ * globais, o heap) é a mesma das outras threads do programa. Para o
+ * núcleo, cada thread é uma tarefa, com um id próprio; todas apontam para
+ * o mesmo espaço de endereçamento (o mesmo CR3) e para a mesma "líder"
+ * (a thread que o programa tinha ao começar). Uma falha ou um exit() em
+ * qualquer thread encerra o programa inteiro; o programa só acaba quando
+ * a última thread sai.
+ *
+ * Para uma thread esperar outra (um mutex, um join), o futex ("fast
+ * userspace mutex", do Linux): a espera mora num número da memória; quem
+ * espera dorme no núcleo só enquanto o número tiver o valor que viu. */
+typedef struct {
+    u64 entrada;                 /* a função: void f(u64 arg) */
+    u64 pilha;                   /* o topo da pilha dela (RSP inicial) */
+    u64 arg;                     /* vai em RDI */
+    u64 tid_endereco;            /* ao terminar, o núcleo põe 0 aqui (u32) e acorda quem
+                                    espera nesse futex: é o pthread_join */
+} thread_t;
 
 /* Uma exceção da CPU num programa vira um sinal: falha de página e GPF
  * viram SIGSEGV, divisão por zero vira SIGFPE, opcode inválido vira

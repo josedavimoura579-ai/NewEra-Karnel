@@ -99,9 +99,20 @@ Cada etapa termina com algo testável no QEMU.
     pelo disco, criar usuário, religar e ele continua lá; o `e2fsck` vê o
     disco "clean". Corrigido no ext2: sobrescrever um arquivo grande
     reaproveitava um bloco ainda no cache sem zerar.
-- [ ] **Etapa 6 — threads e mutex**
+- [x] **Etapa 6 — threads e mutex** (núcleo 3.8; [livro, capítulo 13](livro/13-threads.md))
   - threads no núcleo (o mesmo espaço de memória); espera/acorda
   - nlibc: `pthread_create`, `pthread_join`, `pthread_mutex_*`
+  - Feito: `SYS_THREAD_CRIAR`/`SYS_THREAD_SAIR` (tarefas no mesmo espaço,
+    com uma líder que guarda o heap, a pilha principal e o pai; falha ou
+    `exit` em qualquer thread encerra todas), `SYS_FUTEX_ESPERAR`/
+    `SYS_FUTEX_ACORDAR` (o join, o mutex e as condições). Até 64 tarefas.
+    Operações atômicas em `sys.s` (`xchg`, `lock cmpxchg`, `lock xadd`).
+    nlibc: `pthread.h` (create, join, exit, detach, self, mutex, cond,
+    once) e `sched.h`; o `malloc` e o stdio com trava. O `testelibc` ganhou
+    9 testes (80000 somas com 4 threads, produtor e consumidor, 100 threads
+    seguidas, `exit` e falha numa thread); `exemplos/threads.c`. Corrigido:
+    o `nefs-ld` não ligava o `x` do programa que gera, e o `cp` agora
+    mantém o modo da origem.
 - [ ] **Etapa 7 — `mmap` e memória compartilhada**
   - `mmap` anônimo; memória compartilhada entre processos (`shm_open`)
 - [ ] **Etapa 8 — sockets locais (`AF_UNIX`)**

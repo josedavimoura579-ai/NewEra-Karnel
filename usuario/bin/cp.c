@@ -14,6 +14,8 @@ static int copia(const char *de, const char *para)
 {
     FILE *a = fopen(de, "rb");
     if (!a) { fprintf(stderr, "cp: não consegui abrir %s: %s\n", de, strerror(errno)); return 1; }
+    struct stat st_de, st_para;
+    int novo = stat(para, &st_para) != 0;           /* um arquivo novo ganha o modo da origem */
     FILE *b = fopen(para, "wb");
     if (!b) { fprintf(stderr, "cp: não consegui criar %s: %s\n", para, strerror(errno)); fclose(a); return 1; }
     static char buf[32768];
@@ -24,6 +26,7 @@ static int copia(const char *de, const char *para)
     fclose(a);
     if (fclose(b) != 0) erro = 1;
     if (erro) fprintf(stderr, "cp: erro ao gravar %s (disco cheio?)\n", para);
+    if (novo && stat(de, &st_de) == 0) chmod(para, st_de.st_mode & 0755);   /* um programa continua rodável */
     return erro;
 }
 

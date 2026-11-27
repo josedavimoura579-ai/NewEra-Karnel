@@ -189,7 +189,7 @@ Experimente no shell:
 
 ### O que o NovaEra **ainda não** tem
 
-Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), threads, mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, relógio (a data dos arquivos é 1980), rede e interface gráfica. Veja o [Roteiro](#roteiro).
+Transparência importa. Ainda faltam: suporte a mais de 1 GiB de RAM, servidor de nomes (os PIDs dos servidores são fixos), mapa de portas de E/S por driver (hoje um driver com IOPL 3 pode acessar qualquer porta), memória compartilhada, relógio (a data dos arquivos é 1980), rede e interface gráfica. Veja o [Roteiro](#roteiro).
 
 ### Estrutura do repositório
 
@@ -466,6 +466,7 @@ degraus, e cada fase já entrega algo usável. Detalhes em
   - [x] Etapa 3 — **ext2** (o sistema de arquivos do Linux, com dono e permissões): `formatar -t ext2`, `montar` descobre o tipo; o `e2fsck` do Linux aprova ([livro, capítulo 10](nefs/livro/10-o-ext2.md))
   - [x] Etapa 4 — **usuários e permissões**: `adduser`, `login`, `su`, `sudo`, `passwd`, `chmod`, `chown`, `id`, `whoami`, `ls -l`; senhas com SHA-256 na `/etc/sombra` ([livro, capítulo 11](nefs/livro/11-usuarios-e-permissoes.md))
   - [x] Etapa 5 — **instalar no disco e ligar por ele**: `instalar-sistema`, `instalar-boot` (o GRUB no disco), o `init` com login e o `/etc/montagens`, `desligar` ([livro, capítulo 12](nefs/livro/12-instalando-no-disco.md))
+  - [x] Etapa 6 — **threads**: `pthread_create`, `pthread_join`, mutex e condições, com futex no núcleo ([livro, capítulo 13](nefs/livro/13-threads.md))
 - [ ] **Fase 5 — gráficos**: framebuffer em alta resolução, mouse, fontes e um servidor de janelas no anel 3
 - [ ] **Fase 6 — a área de trabalho do NovaEra e o modo pronto**: painel, menu, janelas, gerenciador de arquivos e terminal gráfico (no estilo do XFCE), pacotes e um **instalador estilo Debian/Ubuntu** com a opção "com área de trabalho"
 - [ ] **Fase 7 — rede e o XFCE4 de verdade**: TCP/IP, porte do GCC ou do clang, do X11, do GTK e do **XFCE4**

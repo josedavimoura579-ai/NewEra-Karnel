@@ -147,10 +147,12 @@ static int pede_esvaziar(FILE *f, char c)
 int fputc(int c, FILE *f)
 {
     if (!f->escrever) { f->erro = 1; errno = EBADF; return EOF; }
+    __stdio_travar();
     if (!f->escrevendo) { f->pos = f->n = 0; f->escrevendo = 1; }
     f->buf[f->n++] = (char)c;
-    if (pede_esvaziar(f, (char)c) && esvaziar(f) == EOF) return EOF;
-    return (unsigned char)c;
+    int r = pede_esvaziar(f, (char)c) && esvaziar(f) == EOF ? EOF : (unsigned char)c;
+    __stdio_destravar();
+    return r;
 }
 
 int putc(int c, FILE *f) { return fputc(c, f); }
@@ -160,8 +162,10 @@ size_t fwrite(const void *buf, size_t tam, size_t n, FILE *f)
 {
     const char *p = buf;
     size_t total = tam * n;
+    __stdio_travar();                        /* a linha inteira, sem misturar */
     for (size_t i = 0; i < total; i++)
-        if (fputc(p[i], f) == EOF) return i / (tam ? tam : 1);
+        if (fputc(p[i], f) == EOF) { __stdio_destravar(); return i / (tam ? tam : 1); }
+    __stdio_destravar();
     return n;
 }
 
@@ -243,7 +247,13 @@ static void para_arquivo(void *ctx, const char *s, size_t n)
     for (size_t i = 0; i < n; i++) fputc(s[i], (FILE *)ctx);
 }
 
-int vfprintf(FILE *f, const char *fmt, va_list ap) { return __formatar(para_arquivo, f, fmt, ap); }
+int vfprintf(FILE *f, const char *fmt, va_list ap)
+{
+    __stdio_travar();
+    int r = __formatar(para_arquivo, f, fmt, ap);
+    __stdio_destravar();
+    return r;
+}
 int vprintf(const char *fmt, va_list ap)            { return vfprintf(stdout, fmt, ap); }
 
 int fprintf(FILE *f, const char *fmt, ...)

@@ -55,6 +55,15 @@ static inline const char *sinal_nome(u32 s)
     return s < SINAL_MAX ? nomes[s] : 0;
 }
 
+/* Threads e futex (sys.s tem as operações atômicas) */
+int atomico_troca(int *p, int v);
+int atomico_cmpxchg(int *p, int esperado, int novo);
+int atomico_soma(int *p, int v);
+static inline long sys_thread_criar(thread_t *t)           { return syscall2(SYS_THREAD_CRIAR, (u64)t, 0); }
+static inline void sys_thread_sair(int codigo)             { syscall2(SYS_THREAD_SAIR, (u64)(long)codigo, 0); for (;;) ; }
+static inline long sys_futex_esperar(int *p, int valor)    { return syscall2(SYS_FUTEX_ESPERAR, (u64)p, (u64)(u32)valor); }
+static inline long sys_futex_acordar(int *p, int n)        { return syscall2(SYS_FUTEX_ACORDAR, (u64)p, (u64)n); }
+
 /* Usuários: quem é um processo (pid 0 = eu); só o root muda. */
 static inline long sys_identidade(u32 pid, identidade_t *id)       { return syscall2(SYS_IDENTIDADE, pid, (u64)id); }
 static inline long sys_identidade_mudar(u32 pid, identidade_t *id) { return syscall2(SYS_IDENTIDADE_MUDAR, pid, (u64)id); }

@@ -21,7 +21,7 @@
 #include "ulib.h"
 #include "contas.h"
 
-#define MAX_PIDS 32u
+#define MAX_PIDS PROCESSOS_MAX
 static u32 conferido[MAX_PIDS];          /* pid -> uid + 1 da última senha conferida */
 
 static char *ler_texto(const char *caminho)

@@ -32,6 +32,32 @@ __sinal_volta:
     int $0x80
     hlt                              # nunca chega aqui (e daria GPF no anel 3)
 
+# Operações atômicas (para as threads): ninguém consegue ver o número no
+# meio da troca, nem outra thread, nem uma interrupção. Em bytes porque o
+# nefs-as ainda não conhece cmpxchg e xadd.
+#
+# int atomico_troca(int *p, int v)        guarda v, devolve o que havia
+.globl atomico_troca
+atomico_troca:
+    .byte 0x87, 0x37                 # xchgl %esi, (%rdi)
+    movl %esi, %eax
+    ret
+
+# int atomico_cmpxchg(int *p, int esperado, int novo)
+# se *p == esperado, guarda novo; devolve o que havia em *p
+.globl atomico_cmpxchg
+atomico_cmpxchg:
+    movl %esi, %eax
+    .byte 0xf0, 0x0f, 0xb1, 0x17     # lock cmpxchgl %edx, (%rdi)
+    ret
+
+# int atomico_soma(int *p, int v)         soma v, devolve o valor de antes
+.globl atomico_soma
+atomico_soma:
+    .byte 0xf0, 0x0f, 0xc1, 0x37     # lock xaddl %esi, (%rdi)
+    movl %esi, %eax
+    ret
+
 # u64 rdtsc(void) - o contador de ciclos da CPU (para sortear um "sal")
 .globl rdtsc
 rdtsc:

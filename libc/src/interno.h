@@ -27,6 +27,14 @@ nfd_t *__fd(int fd);                     /* 0 se o fd não existe */
 int    __fd_novo(u32 servidor, u32 canal, u32 ponta, int dono);
 void   __fds_fechar_todos(void);
 
+/* -------------------------------- Threads --------------------------------
+ * Travas da própria libc (threads.c): o malloc e o stdio. */
+extern int __threads_ativas;
+void __trava(int *m);
+void __destrava(int *m);
+void __stdio_travar(void);
+void __stdio_destravar(void);
+
 /* ---------------------------------- stdio --------------------------------- */
 #define NLIBC_BUF 1024
 

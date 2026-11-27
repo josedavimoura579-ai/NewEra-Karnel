@@ -7,6 +7,7 @@
  */
 #include <errno.h>
 #include <limits.h>
+#include <pthread.h>
 #include <signal.h>
 #include <spawn.h>
 #include <stdint.h>
@@ -289,6 +290,9 @@ static void testa_processos(char *eu)
 
 /* -------------------------------- Sinais ---------------------------------- */
 
+#include <sched.h>
+static void sched_yield_ou_nada(void) { sched_yield(); }
+
 static int    recebidos, ultimo;
 static double no_tratador;
 int *nulo;                              /* global (não static): o compilador não sabe que é 0 */
@@ -377,8 +381,121 @@ static void testa_sinais(char *eu)
     signal(SIGUSR1, SIG_DFL);
 }
 
+/* -------------------------------- Threads --------------------------------- */
+
+static pthread_mutex_t trava = PTHREAD_MUTEX_INITIALIZER;
+static long contador;
+
+static void *somar(void *arg)
+{
+    for (int i = 0; i < 20000; i++) {
+        pthread_mutex_lock(&trava);
+        contador++;
+        pthread_mutex_unlock(&trava);
+        if (i % 1000 == 0) sched_yield_ou_nada();
+    }
+    return arg;
+}
+
+static void *dobro(void *arg) { return (void *)((long)arg * 2); }
+
+/* produtor e consumidor: uma fila de 4 lugares */
+static pthread_mutex_t fila_trava = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  tem_item = PTHREAD_COND_INITIALIZER, tem_lugar = PTHREAD_COND_INITIALIZER;
+static int fila[4], fila_n, fila_ini, consumidos_soma;
+
+static void *produtor(void *arg)
+{
+    (void)arg;
+    for (int i = 1; i <= 100; i++) {
+        pthread_mutex_lock(&fila_trava);
+        while (fila_n == 4) pthread_cond_wait(&tem_lugar, &fila_trava);
+        fila[(fila_ini + fila_n++) % 4] = i;
+        pthread_cond_signal(&tem_item);
+        pthread_mutex_unlock(&fila_trava);
+    }
+    return NULL;
+}
+
+static void *consumidor(void *arg)
+{
+    (void)arg;
+    for (int i = 0; i < 100; i++) {
+        pthread_mutex_lock(&fila_trava);
+        while (fila_n == 0) pthread_cond_wait(&tem_item, &fila_trava);
+        consumidos_soma += fila[fila_ini];
+        fila_ini = (fila_ini + 1) % 4;
+        fila_n--;
+        pthread_cond_signal(&tem_lugar);
+        pthread_mutex_unlock(&fila_trava);
+    }
+    return NULL;
+}
+
+static void *sair_7(void *arg) { (void)arg; exit(7); }
+static void *falhar(void *arg) { (void)arg; return (void *)(long)*nulo; }
+static void *contas_thread(void *arg) { (void)arg; return contas(200000) == contas(200000) ? (void *)1 : NULL; }
+
+static void testa_threads(char *eu)
+{
+    pthread_t t[4];
+    int criadas = 0;
+    for (int i = 0; i < 4; i++) if (pthread_create(&t[i], NULL, somar, (void *)(long)i) == 0) criadas++;
+    long soma_ret = 0;
+    for (int i = 0; i < criadas; i++) { void *r; pthread_join(t[i], &r); soma_ret += (long)r; }
+    confere(criadas == 4 && contador == 80000, "4 threads somando com mutex: 80000");
+    confere(soma_ret == 0 + 1 + 2 + 3, "pthread_join devolve o valor de cada thread");
+
+    void *r = NULL;
+    pthread_t d;
+    confere(pthread_create(&d, NULL, dobro, (void *)21) == 0 && pthread_join(d, &r) == 0 && (long)r == 42,
+            "pthread_create + join: 21 * 2 = 42");
+
+    pthread_t p, c;
+    pthread_create(&p, NULL, produtor, NULL);
+    pthread_create(&c, NULL, consumidor, NULL);
+    pthread_join(p, NULL);
+    pthread_join(c, NULL);
+    confere(consumidos_soma == 5050, "produtor e consumidor com pthread_cond: 1 + ... + 100");
+
+    int ok = 1;                                 /* muitas threads, uma depois da outra */
+    for (int i = 0; i < 100 && ok; i++) {
+        if (pthread_create(&d, NULL, dobro, (void *)(long)i) != 0 || pthread_join(d, &r) != 0 || (long)r != 2 * i) ok = 0;
+    }
+    confere(ok, "100 threads criadas e esperadas em sequência");
+
+    pthread_t f[3];
+    int certas = 0;
+    for (int i = 0; i < 3; i++) pthread_create(&f[i], NULL, contas_thread, NULL);
+    for (int i = 0; i < 3; i++) { pthread_join(f[i], &r); certas += r != NULL; }
+    confere(certas == 3, "threads fazendo contas com vírgula ao mesmo tempo");
+
+    int st = espera(filho(eu, "--thread-exit"));
+    confere(st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 7, "exit() numa thread encerra o programa todo");
+    st = espera(filho(eu, "--thread-falha"));
+    confere(st != -1 && WIFSIGNALED(st) && WTERMSIG(st) == SIGSEGV, "falha numa thread: SIGSEGV no programa todo");
+    st = espera(filho(eu, "--principal-sai"));
+    confere(st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 0, "a principal sai com pthread_exit; a outra termina");
+}
+
 int main(int argc, char **argv)
 {
+    if (argc == 2 && !strcmp(argv[1], "--thread-exit")) {
+        pthread_t t;
+        pthread_create(&t, NULL, sair_7, NULL);
+        for (;;) sched_yield_ou_nada();
+    }
+    if (argc == 2 && !strcmp(argv[1], "--thread-falha")) {
+        pthread_t t;
+        pthread_create(&t, NULL, falhar, NULL);
+        pthread_join(t, NULL);
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--principal-sai")) {
+        pthread_t t;
+        pthread_create(&t, NULL, contas_thread, NULL);
+        pthread_exit(NULL);
+    }
     if (argc == 2 && !strcmp(argv[1], "--laco")) for (;;) ;
     if (argc == 2 && !strcmp(argv[1], "--falha")) return *nulo;
     if (argc == 2 && !strcmp(argv[1], "--trata-falha")) { signal(SIGSEGV, tratador_segv); return *nulo; }
@@ -412,6 +529,7 @@ int main(int argc, char **argv)
     testa_getopt();
     testa_processos(argv[0]);
     testa_sinais(argv[0]);
+    testa_threads(argv[0]);
     printf("%s: %d de %d testes passaram\n", falhas ? "FALHAS" : "OK", total - falhas, total);
     return falhas;
 }

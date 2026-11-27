@@ -89,7 +89,7 @@ static void escreve_coluna(const char *s, u32 largura, u8 cor)
 /* ---------------------------- Comandos internos --------------------------- */
 
 static const char *const ESTADOS[] = {
-    "livre", "pronto", "enviando", "recebendo", "morto", "esperando", "zumbi"
+    "livre", "pronto", "enviando", "recebendo", "morto", "esperando", "zumbi", "futex"
 };
 static const char *const EXCECOES[] = {
     "Divisao por zero", "Debug", "NMI", "Breakpoint", "Overflow",
@@ -140,7 +140,7 @@ static void cmd_ps(void)
         else str_copia(quem, "?", sizeof quem);
         escreve_coluna(quem, 9, v);
         escreve_coluna(num_texto(m.arg[3], buf), 5, v);
-        escreve_coluna(m.arg[0] <= ESTADO_ZUMBI ? ESTADOS[m.arg[0]] : "?", 12, v);
+        escreve_coluna(m.arg[0] <= ESTADO_FUTEX ? ESTADOS[m.arg[0]] : "?", 12, v);
         escreve_num(m.arg[1], v);
         escreve("\n", v);
     }
