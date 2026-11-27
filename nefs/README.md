@@ -91,6 +91,20 @@ A pasta [`livro/`](livro/) tem o Livro 1, em português:
 14. [Memória compartilhada: dois programas, a mesma memória](livro/14-memoria-compartilhada.md)
 15. [Sockets: uma linha de conversa entre programas](livro/15-sockets.md)
 
+### Livro 2: o guia de instalação (`nefs guia`)
+
+Instalar o NovaEra à mão, passo a passo, como no guia do Arch Linux:
+
+1. [Antes de começar](guia/01-antes-de-comecar.md)
+2. [Ligar pela ISO](guia/02-ligar-a-iso.md)
+3. [Particionar o disco](guia/03-particionar.md)
+4. [Formatar e montar](guia/04-formatar-e-montar.md)
+5. [Instalar o sistema](guia/05-instalar-o-sistema.md)
+6. [Configurar o sistema novo](guia/06-configurar.md)
+7. [O carregador de boot](guia/07-carregador-de-boot.md)
+8. [Reiniciar](guia/08-reiniciar.md)
+9. [Depois da instalação](guia/09-depois-da-instalacao.md)
+
 ## Construindo a ISO do NEFS
 
 Num Debian ou Ubuntu x86_64, com internet:

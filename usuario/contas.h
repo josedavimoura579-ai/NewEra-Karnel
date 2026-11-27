@@ -235,6 +235,47 @@ static inline char *texto_de(const char *caminho)
     return t;
 }
 
+/* Troca o campo da senha de 'nome' no /etc/sombra. */
+static inline long sombra_trocar(const char *nome, const char *hash)
+{
+    char *sombra = texto_de("/etc/sombra");
+    if (!sombra) return ERRO_NAO_ACHADO;
+    u32 cap = str_tam(sombra) + HASH_MAX + 64;
+    char *novo = umalloc(cap);
+    if (!novo) { ufree(sombra); return ERRO_SEM_MEMORIA; }
+    u32 n = 0;
+    int achou = 0;
+    for (const char *l = sombra; l && *l; ) {
+        const char *prox = proxima_linha(l);
+        u32 tam = prox ? (u32)(prox - l) : str_tam(l);
+        char quem[NOME_CONTA_MAX];
+        if (campo(l, 0, quem, sizeof quem) && str_igual(quem, nome)) {
+            achou = 1;
+            const char *resto = l;                       /* depois do 2º ':' */
+            u32 dois = 0;
+            while (resto < l + tam && dois < 2) { if (*resto == ':') dois++; resto++; }
+            str_copia(novo + n, nome, cap - n); n += str_tam(nome);
+            novo[n++] = ':';
+            str_copia(novo + n, hash, cap - n); n += str_tam(hash);
+            novo[n++] = ':';
+            while (resto < l + tam && *resto != '\n') novo[n++] = *resto++;
+            novo[n++] = '\n';
+        } else {
+            mem_copia(novo + n, l, tam);
+            n += tam;
+            if (!prox) novo[n++] = '\n';
+        }
+        l = prox;
+    }
+    ufree(sombra);
+    if (!achou) { ufree(novo); return ERRO_NAO_ACHADO; }
+    long c = arq_abrir_com("/etc/sombra", ARQ_MODO_ESCREVER, 0600);
+    long r = c < 0 ? c : escreve_em(ARQ_SERVIDOR(c), (u32)c, novo, n, 0);
+    if (c >= 0) arq_fechar((u32)c);
+    ufree(novo);
+    return r < 0 ? r : 0;
+}
+
 /* Roda um programa (o caminho, ou /bin/NOME) com a entrada e a saída
  * herdadas e espera ele terminar; devolve o código de saída. */
 static inline long rodar_e_esperar(const char *nome, char **argv)

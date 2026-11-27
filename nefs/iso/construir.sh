@@ -198,6 +198,7 @@ cp -r "$REPO/portes" "$MODELO/portes"
 #       -initrd /usr/share/nefs/novaera/initrd.tar -display curses
 (cd "$REPO" && sh build.sh >/dev/null) && cp "$REPO/kernel.bin" "$REPO/initrd.tar" "$MODELO/"
 cp -r "$REPO/nefs/livro" "$RAIZ/usr/share/nefs/livro"
+cp -r "$REPO/nefs/guia" "$RAIZ/usr/share/nefs/guia"
 
 cp "$AQUI/raiz/init" "$RAIZ/init"
 chmod 755 "$RAIZ/init"

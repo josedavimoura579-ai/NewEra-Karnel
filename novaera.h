@@ -22,7 +22,7 @@ typedef unsigned long long u64;
 
 /* A versão do NÚCLEO. A do sistema (a "distribuição") fica em sistema.conf,
  * como o /etc/os-release do Linux: o núcleo não sabe qual é a distro. */
-#define NOVAERA_VERSAO     "3.10"
+#define NOVAERA_VERSAO     "4.0"
 #define NOVAERA_ARQUITETURA "x86_64"
 
 /* ---------------------- Chamadas de sistema (int 0x80) -------------------
@@ -47,7 +47,7 @@ typedef unsigned long long u64;
 #define SYS_COPIAR_DE   16   /* (pid, copia_t*)  copia da memória de quem me CHAMOU para a minha */
 #define SYS_AMBIENTE    17   /* (msg*)           entrada, saída padrão e pasta atual */
 #define SYS_PASTA       18   /* (caminho)        muda a pasta atual          */
-#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 3.10 x86_64" (como o uname) */
+#define SYS_NUCLEO      19   /* (msg*)           texto = "NovaEra 4.0 x86_64" (como o uname) */
 #define SYS_SINAL       20   /* (pid, sinal)     envia um sinal; pid < 0: ao grupo -pid; 0: ao meu grupo */
 #define SYS_SINAL_TRATAR 21  /* (sinal, sinal_acao_t*) troca o tratador; devolve o antigo na mesma struct */
 #define SYS_SINAL_VOLTAR 22  /* ()               fim do tratador: volta ao ponto interrompido */
@@ -67,6 +67,11 @@ typedef unsigned long long u64;
 #define SYS_SHM_ABRIR   34   /* (shm_pedido_t*)  abre ou cria um objeto de memória compartilhada; devolve o id */
 #define SYS_SHM_TAMANHO 35   /* (id, bytes)      o tamanho do objeto (o ftruncate); só cresce */
 #define SYS_SHM_APAGAR  36   /* (nome)           tira o nome; a memória vai embora com o último mapa */
+#define SYS_RAIZ        37   /* (caminho, msg*)  a "raiz" do processo (o chroot; só o root muda;
+                                caminho = 0 só consulta). Os filhos herdam. A ulib põe a raiz
+                                na frente de todo caminho: com raiz /mnt, /etc é /mnt/etc */
+#define SYS_RELOGIO     38   /* (msg*)           o relógio do computador (CMOS): arg[0] = ano,
+                                arg[1] = mês << 8 | dia, arg[2] = hora << 16 | min << 8 | seg */
 
 #define ERRO_INVALIDO   (-1) /* argumento ou ponteiro inválido */
 #define ERRO_SEM_PERMISSAO (-2)

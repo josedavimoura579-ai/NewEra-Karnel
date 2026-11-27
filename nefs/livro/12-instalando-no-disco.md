@@ -1,5 +1,8 @@
 # 12. Instalando o NovaEra no disco
 
+> O passo a passo completo, com o nome da máquina, o usuário e um disco
+> para dados, está no **Livro 2**: `nefs guia`.
+
 Até aqui, o NovaEra ligava "emprestado": o QEMU (ou a ISO) entregava o
 sistema pronto na memória, e tudo o que você criava sumia ao desligar.
 Agora ele se **instala num disco** e **liga sozinho** por ele, com tela de

@@ -114,7 +114,8 @@ static void cmd_ajuda(void)
     escreve("  ls cat echo mkdir rm cp cmp base64 novafetch ola codigo memoria falha filho\n", c);
     escreve("  kill sleep  (sinais: Ctrl+C interrompe o comando; nefs livro 8)\n", c);
     escreve("  adduser login su sudo passwd chmod chown id whoami  (nefs livro 11)\n", c);
-    escreve("  instalar-sistema instalar-boot desligar  (instalar no disco; nefs livro 12)\n", c);
+    escreve("  instalar-sistema instalar-boot entrar gerar-montagens desligar data\n", c);
+    escreve("      (instalar o NovaEra no disco, passo a passo: nefs guia)\n", c);
     escreve("  discos particionar formatar montar desmontar  (discos; nefs livro 9 e 10)\n", c);
     escreve("  cproc qbe nefs-cpp nefs-as nefs-ld nefs-ar  (o compilador; nefs livro 4)\n", c);
     escreve("  nefs compilar  (em /usr/src/novaera: o NovaEra se compila; nefs livro 6)\n", c);
@@ -458,8 +459,9 @@ int main(int argc, char **argv)
 
     /* Quem sou eu: o root não aparece no prompt; os outros, sim. */
     identidade_t id;
-    char quem[NOME_CONTA_MAX];
+    char quem[NOME_CONTA_MAX], maquina[32];
     quem[0] = '\0';
+    str_copia(maquina, SISTEMA_PROMPT, sizeof maquina);
     if (sys_identidade(0, &id) == 0 && id.uid != UID_ROOT) nome_usuario(id.uid, quem, sizeof quem);
 
     /* Fui reiniciado pelo núcleo? Ele guarda quantas vezes e por quê. */
@@ -468,6 +470,21 @@ int main(int argc, char **argv)
     u32 reinicios = eu.arg[1], falha = eu.arg[2];
 
     if (do_boot) modo_init();                 /* instalado num disco? vira o init */
+
+    /* o nome da máquina (/etc/hostname), se o sistema tiver um */
+    {
+        u32 tam;
+        u8 *h = arq_carregar("/etc/hostname", &tam);
+        if (h && tam) {
+            u32 k = 0;
+            while (k < tam && k + 1 < sizeof maquina && h[k] != '\n' && h[k] != '\r' && h[k] != ' ') {
+                maquina[k] = (char)h[k];
+                k++;
+            }
+            if (k) maquina[k] = '\0';
+        }
+        ufree(h);
+    }
 
     if (!do_boot) {
         sinal_tratar(SINAL_INT, (void (*)(int))SINAL_IGNORAR);   /* o Ctrl+C é para os comandos */
@@ -490,7 +507,7 @@ int main(int argc, char **argv)
             escreve(quem, COR(COR_VERDE_CLARO));
             escreve("@", COR(COR_CINZA_CLARO));
         }
-        escreve(SISTEMA_PROMPT, COR(COR_CIANO_CLARO));
+        escreve(maquina, COR(COR_CIANO_CLARO));
         escreve(":", COR(COR_CINZA_CLARO));
         escreve(ambiente()->pasta, COR(COR_AZUL_CLARO));
         escreve("> ", COR(COR_AMARELO));

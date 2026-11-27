@@ -283,6 +283,7 @@ cp -r libc/include build/initrd/usr/include
 [ -d exemplos ] && cp -r exemplos build/initrd/usr/share/nefs/exemplos
 # O Livro do NEFS (nefs livro) e o GRUB das ISOs (nefs iso).
 [ -d nefs/livro ] && cp -r nefs/livro build/initrd/usr/share/nefs/livro
+[ -d nefs/guia ] && cp -r nefs/guia build/initrd/usr/share/nefs/guia     # o Livro 2 (nefs guia)
 # O GRUB: eltorito.img para as ISOs; boot.img e disco.img para o instalar-boot.
 mkdir -p build/initrd/usr/lib/nefs/grub
 for g in eltorito.img boot.img disco.img; do
@@ -374,7 +375,7 @@ for f in kernel.c novaera.h boot.s cpu.s linker.ld build.sh sistema.conf \
          programas.lista logo.txt LICENSE; do
     [ -f "$f" ] && cp "$f" "$SRC/$f"
 done
-for d in usuario libc ferramentas exemplos portes nefs/livro etc; do
+for d in usuario libc ferramentas exemplos portes nefs/livro nefs/guia etc; do
     [ -d "$d" ] || continue
     find "$d" -type f ! -name '.*' | while read -r f; do
         case "$f" in portes/fontes/*|ferramentas/testes/*) continue ;; esac
