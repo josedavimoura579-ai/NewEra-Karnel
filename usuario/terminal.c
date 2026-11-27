@@ -12,6 +12,9 @@
  *    shell está rodando, avisado com TERM_GRUPO) e joga fora a linha e o
  *    que estava digitado adiantado. Sem comando rodando, só pula de linha.
  *  - TERM_ECO 0 esconde o que se digita (para as senhas).
+ *  - TERM_CRU 1 é o modo "cru": cada tecla vai na hora para quem lê, sem
+ *    eco nem edição (o servidor de janelas usa). O Ctrl+C continua valendo,
+ *    e o modo volta ao normal quando o shell retoma o terminal.
  *  - MSG_ESCREVER de qualquer programa vai para o servidor de vídeo.
  *
  *  É a entrada e a saída padrão de todo programa que não foi redirecionado
@@ -37,6 +40,7 @@ static u32      leitores_n;
 static u32      fins;                     /* Ctrl+D digitados, ainda não entregues */
 static u32      primeiro_plano;           /* grupo que recebe o Ctrl+C (0 = nenhum) */
 static int      eco = 1;                  /* 0: não mostra o que se digita (senhas) */
+static int      cru;                      /* 1: cada tecla vai na hora, sem eco (TERM_CRU) */
 
 static void tela(const char *dados, u32 n, u8 cor)
 {
@@ -94,6 +98,7 @@ static void interromper(void)
     tela("^C\n", 3, COR(COR_CINZA_CLARO));
     linha_n = 0;
     eco = 1;
+    cru = 0;
     if (!primeiro_plano) {                      /* no prompt do shell: linha vazia */
         fila_n = fila_ini = 0;
         fila[0] = '\n';
@@ -112,6 +117,9 @@ static void tecla(char c)
 {
     if (c == 3) {                               /* Ctrl+C */
         interromper();
+    } else if (cru) {                           /* a tecla vai como veio */
+        if (fila_n < FILA_TAM) fila[(fila_ini + fila_n++) % FILA_TAM] = c;
+        atender_leitores();
     } else if (c == 4) {                               /* Ctrl+D */
         if (linha_n == 0) { fins++; tela("^D\n", 3, COR(COR_CINZA_CLARO)); atender_leitores(); }
     } else if (c == '\b') {
@@ -143,7 +151,12 @@ int main(int argc, char **argv)
         } else if (m.tipo == TERM_GRUPO) {
             u32 antes = primeiro_plano;
             primeiro_plano = m.arg[0];
+            if (!primeiro_plano) { cru = 0; eco = 1; }   /* o shell retomou: modo normal */
             responder(m.origem, MSG_OK, antes);
+        } else if (m.tipo == TERM_CRU) {
+            cru = m.arg[0] != 0;
+            if (cru) linha_n = 0;
+            responder(m.origem, MSG_OK, 0);
         } else if (m.tipo == TERM_ECO) {
             eco = m.arg[0] != 0;
             responder(m.origem, MSG_OK, 0);

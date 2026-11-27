@@ -245,6 +245,9 @@ typedef struct {
  * comando que o shell está rodando. 0 = nenhum (o shell espera a linha). */
 #define TERM_GRUPO         32    /* arg[0] = grupo do primeiro plano; resposta: arg[0] = o anterior */
 #define TERM_ECO           33    /* arg[0] = 0: não mostra o que se digita (senhas); 1: mostra */
+#define TERM_CRU           34    /* arg[0] = 1: o modo "cru": cada tecla vai na hora para quem lê,
+                                    sem eco e sem editar a linha (jogos, janelas); 0: volta ao normal.
+                                    Volta sozinho quando o shell retoma o terminal ou no Ctrl+C. */
 
 /* Sockets locais (PID_SOCKETS), como os AF_UNIX do Linux: um programa
  * "ouve" num nome (/tmp/servidor.sock) e outros se conectam a ele. Cada
