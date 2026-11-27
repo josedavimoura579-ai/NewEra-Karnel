@@ -95,6 +95,64 @@ static long acum_dx, acum_dy, acum_roda;
 static u32  botoes;
 static int  mudou;
 
+/* ---- O mouse absoluto (vmmouse) das máquinas virtuais ----
+ * O QEMU e o VMware sabem onde a seta do computador de fora está (no VNC,
+ * onde está o dedo). Pela "porta dos fundos" do VMware, o vmmouse entrega
+ * essa posição EXATA (0 a 65535), e a seta do NovaEra fica embaixo do
+ * dedo. Ele continua mandando pacotes PS/2, só como aviso de "tem dado". */
+void vmware_porta(u32 r[4]);                       /* sys.s */
+#define VMW_MAGICO   0x564D5868u
+#define VMW_PORTA    0x5658u
+#define VMM_DADOS    39u
+#define VMM_ESTADO   40u
+#define VMM_COMANDO  41u
+static int vmmouse;
+static u32 abs_x, abs_y;
+static int abs_mudou;
+
+static u32 vmw(u32 comando, u32 arg, u32 *b, u32 *c, u32 *d)
+{
+    u32 r[4] = { VMW_MAGICO, arg, comando, VMW_PORTA };
+    vmware_porta(r);
+    if (b) *b = r[1];
+    if (c) *c = r[2];
+    if (d) *d = r[3];
+    return r[0];
+}
+
+static void vmmouse_iniciar(void)
+{
+    u32 b;
+    if (vmw(10, ~0u, &b, 0, 0) == 0xFFFFFFFFu || b != VMW_MAGICO) return;   /* não é máquina virtual */
+    vmw(VMM_COMANDO, 0x45414552u, 0, 0, 0);                 /* "READ_ID" */
+    if ((vmw(VMM_ESTADO, 0, 0, 0, 0) & 0xFFFF) == 0) return;
+    if (vmw(VMM_DADOS, 1, 0, 0, 0) != 0x3442554Au) return;  /* a versão do vmmouse */
+    vmw(VMM_COMANDO, 0x53424152u, 0, 0, 0);                 /* "REQUEST_ABSOLUTE" */
+    vmmouse = 1;
+}
+
+/* Lê da fila do vmmouse: grupos de 4 números (botões, x, y, roda).
+ * Devolve 0 se a fila estava vazia (o movimento veio relativo, pelo PS/2). */
+static int vmmouse_ler(void)
+{
+    int leu = 0;
+    for (;;) {
+        u32 st = vmw(VMM_ESTADO, 0, 0, 0, 0);
+        if ((st & 0xFFFF0000u) == 0xFFFF0000u) { vmmouse = 0; return leu; }   /* erro: volta ao PS/2 */
+        if ((st & 0xFFFF) < 4) return leu;
+        leu = 1;
+        u32 x, y, z;
+        u32 bt = vmw(VMM_DADOS, 4, &x, &y, &z);
+        abs_x = x & 0xFFFF;
+        abs_y = y & 0xFFFF;
+        botoes = (bt & 0x20 ? MOUSE_ESQUERDO : 0) | (bt & 0x10 ? MOUSE_DIREITO : 0) |
+                 (bt & 0x08 ? MOUSE_MEIO : 0);
+        acum_roda -= (long)(signed char)(u8)z;          /* + = para cima */
+        abs_mudou = 1;
+        mudou = 1;
+    }
+}
+
 static void ps2_espera_escrever(void)
 {
     for (u32 n = 0; n < 100000 && (inb(TECLADO_STATUS) & 0x02); n++) { }
@@ -141,6 +199,7 @@ static void mouse_iniciar(void)
     if (mouse_cmd(0xF2)) ps2_le(&id);         /* 3 = tem roda */
     mouse_roda = id == 3;
     mouse_ok = mouse_cmd(0xF4);               /* começa a mandar os movimentos */
+    if (mouse_ok) vmmouse_iniciar();          /* numa máquina virtual: a posição exata */
 }
 
 static void mouse_byte(u8 b)
@@ -149,6 +208,7 @@ static void mouse_byte(u8 b)
     pacote[pacote_n++] = b;
     if (pacote_n < (mouse_roda ? 4u : 3u)) return;
     pacote_n = 0;
+    if (vmmouse && vmmouse_ler()) return;              /* o pacote só avisou: a posição veio do vmmouse */
     if (pacote[0] & 0xC0) return;                      /* estourou: descarta */
     long dx = pacote[1], dy = pacote[2];
     if (pacote[0] & 0x10) dx -= 256;
@@ -167,13 +227,13 @@ static void entregar_mouse(void)
     msg_t m;
     msg_zera(&m);
     m.tipo   = MSG_MOUSE;
-    m.arg[0] = (u32)acum_dx;
-    m.arg[1] = (u32)acum_dy;
-    m.arg[2] = botoes;
+    m.arg[0] = abs_mudou ? abs_x : (u32)acum_dx;
+    m.arg[1] = abs_mudou ? abs_y : (u32)acum_dy;
+    m.arg[2] = botoes | (abs_mudou ? MOUSE_ABSOLUTO : 0);
     m.arg[3] = (u32)acum_roda;
     if (sys_enviar(PID_VIDEO, &m) < 0) return;
     acum_dx = acum_dy = acum_roda = 0;
-    mudou = 0;
+    mudou = abs_mudou = 0;
 }
 
 static void reiniciar(void)

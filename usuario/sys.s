@@ -126,6 +126,27 @@ inl:
     inl %dx, %eax
     ret
 
+# void vmware_porta(u32 r[4])
+# A "porta dos fundos" do VMware (o QEMU também a tem): com EAX = 0x564D5868
+# ("VMXh"), ECX = o comando e DX = 0x5658, um "in" pergunta coisas à máquina
+# virtual. r[0..3] = EAX, EBX, ECX, EDX, na ida e na volta. É por ela que o
+# mouse absoluto (vmmouse) diz a posição exata da seta.
+.globl vmware_porta
+vmware_porta:
+    pushq %rbx
+    movq %rdi, %r8
+    movl (%r8), %eax
+    movl 4(%r8), %ebx
+    movl 8(%r8), %ecx
+    movl 12(%r8), %edx
+    inl %dx, %eax
+    movl %eax, (%r8)
+    movl %ebx, 4(%r8)
+    movl %ecx, 8(%r8)
+    movl %edx, 12(%r8)
+    popq %rbx
+    ret
+
 # void outs16(u16 porta, const void *buf, u64 n) - escreve n palavras na porta
 # (o disco ATA entrega e recebe os setores assim: 256 palavras cada)
 .globl ins16

@@ -44,6 +44,25 @@ A roda tem uma curiosidade: o mouse só a liga depois de uma "batida
 secreta", três pedidos seguidos de taxas diferentes (200, 100 e 80). Um
 mouse com roda responde "sou o modelo 3"; um sem roda continua "modelo 0".
 
+## O mouse "absoluto" das máquinas virtuais
+
+No VNC (o celular) e na janela do QEMU, o computador de fora sabe **onde**
+está o dedo ou a seta dele. Se o NovaEra só recebesse "movimentos", como
+num mouse PS/2, as duas setas iam se desencontrando. Por isso o NovaEra
+usa também o **vmmouse**, o mouse das máquinas virtuais do VMware que o
+QEMU e o VirtualBox imitam: ele diz a posição **exata** (de 0 a 65535 na
+tela inteira), e a seta do NovaEra fica embaixo do dedo.
+
+A conversa com ele é por uma "porta dos fundos": uma porta de E/S especial
+(`0x5658`), com um número mágico no registrador EAX (`0x564D5868`, que em
+texto é "VMXh"). Num PC de verdade essa porta não existe, e o NovaEra usa
+só o PS/2.
+
+**No celular:** o app de VNC desenha um cursor dele (um quadradinho ou um
+ponto) onde está o seu dedo. Agora ele fica em cima da seta do NovaEra. Se
+quiser ver só a seta do NovaEra, procure nas configurações do app uma
+opção como "cursor local" ou "local mouse pointer" e desligue.
+
 ## Como funciona no NovaEra
 
 1. O **driver do teclado** (PID 2) também é o driver do mouse: os dois

@@ -136,6 +136,8 @@ typedef struct {
 #define MOUSE_ESQUERDO     1u
 #define MOUSE_DIREITO      2u
 #define MOUSE_MEIO         4u
+#define MOUSE_ABSOLUTO     0x80000000u   /* em MSG_MOUSE: arg[0], arg[1] são a posição exata,
+                                            de 0 a 65535 na tela inteira (o vmmouse) */
 
 /* Entrada e saída: o MESMO protocolo no terminal, nos pipes e nos arquivos.
  * Um "canal" diz qual pipe ou qual arquivo aberto (no terminal, sempre 0). */

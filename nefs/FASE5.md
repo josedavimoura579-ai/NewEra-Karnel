@@ -64,6 +64,11 @@ Cada etapa termina com algo testável no QEMU (e uma foto da tela).
     quem pergunta (`MOUSE_ESPERAR`, com a resposta adiada e uma fila por
     programa). Comando `mouse`. Conferido no QEMU pelo monitor
     (`mouse_move`, `mouse_button`).
+  - E o **vmmouse** (a "porta dos fundos" do VMware, `0x5658`): numa
+    máquina virtual, a posição exata (0-65535), e a seta fica embaixo do
+    dedo no VNC; sem dados nele, volta ao PS/2 relativo. Conferido com um
+    cliente VNC de teste: o dedo em sete pontos (cantos e meio) e a seta
+    exatamente lá.
 - [ ] **Etapa 3 — desenhar: a biblioteca gráfica**
   - pontos, linhas, retângulos, preencher, copiar áreas, transparência
   - imagens: o porte do **stb_image** (PNG, JPEG, BMP)

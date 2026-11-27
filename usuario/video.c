@@ -502,8 +502,14 @@ static void mouse_esperar(u32 quem)
 static void mouse_movimento(const msg_t *m)
 {
     seta_esconder();
-    seta_x += (int)m->arg[0];
-    seta_y += (int)m->arg[1];
+    if (m->arg[2] & MOUSE_ABSOLUTO) {              /* o vmmouse: a posição exata (0-65535) */
+        /* o QEMU manda x × 65534 / largura (sem o -1): a conta de volta */
+        seta_x = (int)(((u64)m->arg[0] * LARG + 32767) / 65534);
+        seta_y = (int)(((u64)m->arg[1] * ALT + 32767) / 65534);
+    } else {
+        seta_x += (int)m->arg[0];
+        seta_y += (int)m->arg[1];
+    }
     if (seta_x < 0) seta_x = 0;
     if (seta_y < 0) seta_y = 0;
     if (seta_x > (int)LARG - 1) seta_x = (int)LARG - 1;
