@@ -12,13 +12,26 @@ cd "$(dirname "$0")"
 QEMU="$(command -v qemu-system-x86_64 || true)"   # o NovaEra é 64 bits
 [ -n "$QEMU" ] || { echo "QEMU não encontrado. No Termux: pkg install qemu-system-x86-64-headless"; exit 1; }
 
+# O teclado: o NovaEra usa o ABNT2 (o brasileiro). O QEMU traduz o que se
+# digita (no VNC e no curses) por um mapa; o pt-br combina com o ABNT2. Para o
+# americano: TECLADO=us bash run.sh ... (e, dentro do NovaEra: layout us)
+TECLADO_QEMU=()
+if [ "${TECLADO:-br}" != "us" ]; then
+    MAPAS="$(dirname "$QEMU")/../share/qemu/keymaps"
+    [ -f "$MAPAS/pt-br" ] || MAPAS=/usr/share/qemu/keymaps
+    [ -f "$MAPAS/pt-br" ] && TECLADO_QEMU=(-k pt-br)
+fi
+
 MODO="${1:-curses}"
+LINHA=""
+case "$MODO" in grafico|vnc) LINHA="grafico" ;; esac               # a tela gráfica (1024x768)
+[ ${#TECLADO_QEMU[@]} -eq 0 ] && LINHA="${LINHA:+$LINHA }teclado=us"   # sem o mapa pt-br: o teclado americano
 APPEND=()
-case "$MODO" in grafico|vnc) APPEND=(-append grafico) ;; esac   # a tela gráfica (1024x768)
+[ -n "$LINHA" ] && APPEND=(-append "$LINHA")
 if [ "$MODO" = "disco" ]; then
     # O NovaEra instalado no disco.img (instalar-sistema + instalar-boot):
     # a BIOS lê o disco e o GRUB dele dá o boot. Nada de -kernel/-initrd.
-    BASE=(-m 64M -nic none)
+    BASE=(-m 64M -nic none "${TECLADO_QEMU[@]}")
     if [ "${2:-}" = "vnc" ]; then
         MODO="vnc"
     else
@@ -28,7 +41,7 @@ if [ "$MODO" = "disco" ]; then
         MODO="curses"
     fi
 else
-    BASE=(-kernel kernel.bin -m 64M -nic none "${APPEND[@]}")
+    BASE=(-kernel kernel.bin -m 64M -nic none "${APPEND[@]}" "${TECLADO_QEMU[@]}")
     [ -f initrd.tar ] && BASE+=(-initrd initrd.tar)   # os programas que o shell executa
 fi
 

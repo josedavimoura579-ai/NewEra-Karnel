@@ -117,15 +117,41 @@ static void limpar_tela(void)
     sujar(0, linhas - 1);
 }
 
-/* O que o shell escreveu: letras (UTF-8), \n, \b, \t e as cores (27, 1, cor) */
+/* O cursor anda n letras (com a quebra de linha), sem apagar */
+static void andar(int n)
+{
+    sujar(cy, cy);
+    while (n < 0) { if (cx > 0) cx--; else if (cy > 0) { cy--; cx = colunas - 1; } n++; }
+    while (n > 0) { if (++cx >= colunas) { cx = 0; if (cy + 1 < linhas) cy++; } n--; }
+    sujar(cy, cy);
+}
+
+/* O que o shell escreveu: letras (UTF-8), \n, \b, \t, as cores (27, 1, cor) e
+ * as sequências do cursor: Esc [ n D (esquerda), Esc [ n C (direita), Esc [ K */
 static void processar(const u8 *b, long n)
 {
-    static int estado, falta;
+    static int estado, falta, num;
     static u32 u;
     for (long i = 0; i < n; i++) {
         u8 c = b[i];
-        if (estado == 1) { estado = c == TERM_COR ? 2 : 0; if (c == TERM_LIMPA) limpar_tela(); continue; }
+        if (estado == 1) {
+            estado = c == TERM_COR ? 2 : c == '[' ? 3 : 0;
+            num = 0;
+            if (c == TERM_LIMPA) limpar_tela();
+            continue;
+        }
         if (estado == 2) { cor = c; estado = 0; continue; }
+        if (estado == 3) {
+            if (c >= '0' && c <= '9') { num = num * 10 + (c - '0'); continue; }
+            estado = 0;
+            if (c == 'D') andar(-(num ? num : 1));
+            else if (c == 'C') andar(num ? num : 1);
+            else if (c == 'K') {
+                for (int k = cx; k < colunas; k++) { grade[cy * colunas + k].letra = ' '; grade[cy * colunas + k].cor = cor; }
+                sujar(cy, cy);
+            }
+            continue;
+        }
         if (falta) {                                   /* o meio de uma letra UTF-8 */
             if ((c & 0xC0) == 0x80) {
                 u = u << 6 | (c & 63);
@@ -280,7 +306,13 @@ int main(int argc, char **argv)
         jn_evento_t e;
         pthread_mutex_lock(&g);
         if (!jn_esperar(j, &e) || e.tipo == JN_FECHAR) terminar();
-        if (e.tipo == JN_TECLA) { char k = (char)e.tecla; pthread_mutex_unlock(&g); teclas(&k, 1); continue; }
+        if (e.tipo == JN_TECLA) {                     /* a tecla volta a ser bytes (UTF-8, Esc [ A...) */
+            char k[8];
+            int nk = jn_tecla_bytes(e.tecla, e.botoes, k);
+            pthread_mutex_unlock(&g);
+            if (nk) teclas(k, (u32)nk);
+            continue;
+        }
         if (e.tipo == JN_FOCO) { ativa = e.x; sujar(cy, cy); }
         if (e.tipo == JN_REDIMENSIONAR) nova_grade((e.l - 2 * MARGEM) / CL, (e.a - 2 * MARGEM) / CA);
         mostrar();

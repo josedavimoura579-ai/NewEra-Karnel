@@ -35,7 +35,8 @@
 #define JN_TROCAR   4       /* l, a, shm: a memória nova, depois de redimensionar (a biblioteca faz) */
 /* O que o servidor manda (os eventos) */
 #define JN_CRIADA  10       /* id, x, y: a janela apareceu */
-#define JN_TECLA   11       /* tecla: o caractere (ASCII; '\n', '\b', 27 = Esc) */
+#define JN_TECLA   11       /* tecla: a letra (Unicode: 'a', 0xE7 = ç; '\n', '\b', 27 = Esc) ou uma
+                               das especiais abaixo; botoes & JN_ALT: com o Alt */
 #define JN_MOUSE   12       /* evento, x, y (dentro da janela), botoes; JN_RODA: a = o giro */
 #define JN_FECHAR  13       /* clicaram no X da janela */
 #define JN_FOCO    14       /* x = 1: a janela foi para a frente; 0: saiu da frente */
@@ -44,6 +45,20 @@
 
 /* As opções de jn_abrir_com */
 #define JN_REDIMENSIONAVEL 1    /* um canto para arrastar e mudar o tamanho */
+
+/* As teclas especiais (em JN_TECLA) */
+#define JN_CIMA      0xE100
+#define JN_BAIXO     0xE101
+#define JN_DIREITA_T 0xE102
+#define JN_ESQUERDA_T 0xE103
+#define JN_INICIO    0xE104     /* Home */
+#define JN_FIM       0xE105     /* End */
+#define JN_PG_CIMA   0xE106
+#define JN_PG_BAIXO  0xE107
+#define JN_INSERT    0xE108
+#define JN_DELETE    0xE109
+#define JN_F(n)      (0xE110 + (n))   /* JN_F(1) a JN_F(12) */
+#define JN_ALT       0x100      /* em botoes, com JN_TECLA */
 
 #define JN_APERTOU 1
 #define JN_SOLTOU  2
@@ -118,4 +133,10 @@ void jn_desenhar_controles(jn_janela_t *j);                                   /*
  * NULL se não foi com os controles (aí o programa decide). */
 jn_controle_t *jn_tratar(jn_janela_t *j, const jn_evento_t *e);
 gr_fonte_t *jn_fonte(int negrito);                    /* a DejaVu (normal ou negrito), aberta uma vez */
+
+/* As teclas como chegam do terminal (UTF-8, Esc [ A...) <-> os códigos de
+ * JN_TECLA. jn_teclas devolve quantas teclas achou nos n bytes (mods: JN_ALT). */
+int jn_teclas(const char *bytes, int n, int *teclas, int *mods, int max);
+int jn_tecla_bytes(int tecla, int mods, char *saida);   /* devolve quantos bytes (até 8) */
+int jn_utf8(int letra, char *saida);                    /* uma letra Unicode em UTF-8 (até 4 bytes) */
 #endif

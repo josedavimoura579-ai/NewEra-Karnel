@@ -131,7 +131,8 @@ typedef struct {
                                     arg[1] = altura */
 #define VIDEO_TELA_MOSTRAR 13    /* arg[0] = x, arg[1] = y, arg[2] = largura, arg[3] = altura: copia para a tela */
 #define VIDEO_TELA_FECHAR  14    /* devolve a tela; arg[0] = 1: deixa a imagem (outro programa vai abrir) */
-#define MSG_TECLA          20    /* teclado -> terminal: arg[0] = caractere */
+#define MSG_TECLA          20    /* teclado -> terminal: texto = os bytes da tecla, arg[1] = quantos
+                                    (UTF-8; as especiais como no Linux: Esc [ A...); arg[0] = o 1º */
 #define MSG_REINICIAR      21    /* o driver do teclado controla a linha RESET (só o root) */
 #define MSG_DESLIGAR       22    /* desliga a máquina (ACPI do QEMU/VirtualBox; só o root) */
 /* O mouse (PS/2): o driver do teclado cuida dos dois (o mesmo controlador). */
@@ -145,6 +146,7 @@ typedef struct {
 #define MOUSE_MEIO         4u
 #define MOUSE_ABSOLUTO     0x80000000u   /* em MSG_MOUSE: arg[0], arg[1] são a posição exata,
                                             de 0 a 65535 na tela inteira (o vmmouse) */
+#define TECLADO_MAPA       26    /* -> teclado: arg[0] = 0 US, 1 ABNT2, 2 só pergunta; resposta: arg[0] = 1 se ABNT2 */
 
 /* Entrada e saída: o MESMO protocolo no terminal, nos pipes e nos arquivos.
  * Um "canal" diz qual pipe ou qual arquivo aberto (no terminal, sempre 0). */

@@ -635,12 +635,52 @@ static void saida(u32 cp, u8 cor)
     else g_putc(glifo_de(cp), 0, cor);
 }
 
+/* As sequências do terminal (as do Linux): Esc [ n D (o cursor n letras para
+ * a esquerda), Esc [ n C (para a direita), Esc [ K (apaga até o fim da linha).
+ * O terminal usa para editar a linha (as setas, o histórico). */
+static void cursor_andar(int n)
+{
+    if (!grafico) {
+        while (n < 0) { if (col > 0) col--; else if (lin > 0) { lin--; col = COLUNAS - 1; } n++; }
+        while (n > 0) { if (++col >= COLUNAS) { col = 0; if (lin + 1 < LINHAS) lin++; } n--; }
+        return;
+    }
+    g_cursor(0);
+    while (n < 0) { if (g_col > 0) g_col--; else if (g_lin > 0) { g_lin--; g_col = G_COLUNAS - 1; } n++; }
+    while (n > 0) { if (++g_col >= G_COLUNAS) { g_col = 0; if (g_lin + 1 < G_LINHAS) g_lin++; } n--; }
+    g_cursor(1);
+}
+
+static void apagar_fim_da_linha(u8 cor)
+{
+    if (!grafico) {
+        for (u32 c = col; c < COLUNAS; c++) celula(lin * COLUNAS + c, (u16)(cor << 8 | ' '));
+        return;
+    }
+    g_cursor(0);
+    for (u32 c = g_col; c < G_COLUNAS; c++) g_celula(g_lin, c, glifo_de(' '), cor);
+    g_cursor(1);
+}
+
+static u32 esc_estado, esc_num;          /* 0: texto; 1: veio o Esc; 2: dentro de Esc [ */
+
 static u8  utf8_lider;        /* 1º byte de uma sequência em andamento */
 static u32 utf8_resta;        /* quantos bytes de continuação faltam */
 static u32 utf8_valor;
 
 static void escreve_byte(u8 b, u8 cor)
 {
+    if (esc_estado == 1) { esc_estado = b == '[' ? 2 : 0; esc_num = 0; return; }
+    if (esc_estado == 2) {
+        if (b >= '0' && b <= '9') { esc_num = esc_num * 10 + (b - '0'); return; }
+        esc_estado = 0;
+        int n = esc_num ? (int)esc_num : 1;
+        if (b == 'D') cursor_andar(-n);
+        else if (b == 'C') cursor_andar(n);
+        else if (b == 'K') apagar_fim_da_linha(cor);
+        return;
+    }
+    if (b == 27 && !utf8_resta) { esc_estado = 1; return; }
     if (utf8_resta) {
         if ((b & 0xC0) == 0x80) {                    /* continuação */
             utf8_valor = (utf8_valor << 6) | (b & 0x3F);

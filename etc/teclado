@@ -1,0 +1,4 @@
+# /etc/teclado: o layout do teclado, lido no boot.
+#   br   o ABNT2 (o brasileiro: ç e os acentos)
+#   us   o americano
+br

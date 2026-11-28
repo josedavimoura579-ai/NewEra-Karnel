@@ -55,8 +55,13 @@ int main(void)
     while (jn_esperar(j, &e) && e.tipo != JN_FECHAR) {
         if (e.tipo == JN_FOCO) { ativa = e.x; desenhar(); }
         if (e.tipo != JN_TECLA) continue;
-        if (e.tecla == '\b') { if (n) texto[--n] = 0; }
-        else if ((e.tecla == '\n' || (e.tecla >= 32 && e.tecla < 127)) && n < MAX) { texto[n++] = (char)e.tecla; texto[n] = 0; }
+        if (e.tecla == '\b') {                         /* a última letra (UTF-8: 1 a 3 bytes) */
+            while (n > 0 && ((unsigned char)texto[n - 1] & 0xC0) == 0x80) texto[--n] = 0;
+            if (n) texto[--n] = 0;
+        } else if ((e.tecla == '\n' || (e.tecla >= 32 && e.tecla != 127 && e.tecla < 0xE000)) && n + 4 < MAX) {
+            n += jn_utf8(e.tecla, texto + n);
+            texto[n] = 0;
+        }
         desenhar();
     }
     jn_fechar(j);
