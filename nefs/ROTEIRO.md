@@ -50,6 +50,8 @@ do GRUB (VBE) para PCs sem a placa BGA, e o mouse USB.
 
 ## Fase 6 — a área de trabalho do NovaEra e o modo pronto
 
+O plano em 9 etapas: [`FASE6.md`](FASE6.md).
+
 Uma área de trabalho própria, leve, no estilo do XFCE:
 
 - painel com menu, relógio e lista de janelas
