@@ -36,13 +36,20 @@
 #define MAX_LEITORES  8u
 #define SAIDA_TAM  16384u         /* terminal virtual: o que foi escrito, esperando o dono ler */
 #define MAX_ESCRITORES 8u         /* quem escreveu com a saída cheia, esperando espaço */
+#define HISTORICO  32u            /* linhas lembradas (a seta para cima) */
 
 typedef struct { u32 pid, max, buffer; } leitor_t;
 
 typedef struct {
     int      usado;
-    char     linha[LINHA_MAX];    /* a linha sendo digitada */
+    char     linha[LINHA_MAX];    /* a linha sendo digitada (UTF-8) */
     u32      linha_n;
+    u32      pos;                 /* onde está o cursor na linha (em bytes) */
+    char     esc[8];              /* uma sequência Esc [ ... chegando */
+    u32      esc_n;
+    char     hist[HISTORICO][LINHA_MAX];   /* as últimas linhas digitadas */
+    u32      hist_n, hist_ver;    /* quantas; qual está sendo vista (hist_n = a linha nova) */
+    char     guardada[LINHA_MAX]; /* a linha nova, enquanto se olha o histórico */
     char     fila[FILA_TAM];      /* bytes de linhas já terminadas (FIFO) */
     u32      fila_ini, fila_n;
     leitor_t leitores[MAX_LEITORES];   /* quem está esperando uma linha */
@@ -163,7 +170,8 @@ static void atender_leitores(tty_t *t)
 static void interromper(tty_t *t)
 {
     tela(t, "^C\n", 3, COR(COR_CINZA_CLARO));
-    t->linha_n = 0;
+    t->linha_n = t->pos = 0;
+    t->hist_ver = t->hist_n;
     t->eco = 1;
     t->cru = 0;
     if (!t->primeiro_plano) {                   /* no prompt do shell: linha vazia */
@@ -180,30 +188,183 @@ static void interromper(tty_t *t)
     sys_sinal(-(long)t->primeiro_plano, SINAL_INT);
 }
 
-static void tecla(tty_t *t, char c)
+/* ------------------------- Editar a linha ---------------------------------
+ * A linha é UTF-8 (um "ç" ocupa 2 bytes); o cursor anda de letra em letra.
+ * Para redesenhar sem apagar a tela, o eco usa as sequências do Linux:
+ * Esc [ n D (o cursor n letras para a esquerda), Esc [ n C (para a
+ * direita) e Esc [ K (apaga até o fim da linha). */
+
+static int continuacao(char c) { return ((u8)c & 0xC0) == 0x80; }
+
+static u32 letras(const char *s, u32 n)          /* quantas letras em n bytes */
 {
-    if (t->cru) {                               /* a tecla vai como veio (até o Ctrl+C) */
-        if (t->fila_n < FILA_TAM) t->fila[(t->fila_ini + t->fila_n++) % FILA_TAM] = c;
-        atender_leitores(t);
-    } else if (c == 3) {                        /* Ctrl+C */
-        interromper(t);
-    } else if (c == 4) {                        /* Ctrl+D */
-        if (t->linha_n == 0) { t->fins++; tela(t, "^D\n", 3, COR(COR_CINZA_CLARO)); atender_leitores(t); }
-    } else if (c == '\b') {
-        if (t->linha_n > 0) { t->linha_n--; if (t->eco) tela(t, "\b", 1, 0); }
-    } else if (c == '\n') {
-        tela(t, "\n", 1, 0);
-        for (u32 i = 0; i <= t->linha_n && t->fila_n < FILA_TAM; i++) {
-            t->fila[(t->fila_ini + t->fila_n) % FILA_TAM] = i < t->linha_n ? t->linha[i] : '\n';
-            t->fila_n++;
-        }
-        t->linha_n = 0;
-        atender_leitores(t);
-    } else if (c >= 32 && c < 127 && t->linha_n < LINHA_MAX - 1) {
-        t->linha[t->linha_n++] = c;
-        if (t->eco) tela(t, &c, 1, 0);
+    u32 k = 0;
+    for (u32 i = 0; i < n; i++) if (!continuacao(s[i])) k++;
+    return k;
+}
+
+/* Escreve, em pedaços (cada mensagem leva até 60 bytes), se o eco está ligado */
+static void eco(tty_t *t, const char *s, u32 n)
+{
+    if (!t->eco) return;
+    while (n) {
+        u32 k = n > 60 ? 60 : n;
+        while (k < n && k > 1 && continuacao(s[k])) k--;   /* não corta uma letra ao meio */
+        tela(t, s, k, 0);
+        s += k;
+        n -= k;
     }
 }
+
+static void mover(tty_t *t, int letras_n)        /* + direita, - esquerda */
+{
+    if (!letras_n) return;
+    char seq[16];
+    u32 k = 0, v = (u32)(letras_n < 0 ? -letras_n : letras_n);
+    seq[k++] = 27;
+    seq[k++] = '[';
+    char num[11];
+    num_texto(v, num);
+    for (u32 i = 0; num[i]; i++) seq[k++] = num[i];
+    seq[k++] = letras_n < 0 ? 'D' : 'C';
+    eco(t, seq, k);
+}
+
+/* Redesenha do cursor até o fim e volta o cursor para o lugar */
+static void redesenhar_resto(tty_t *t)
+{
+    eco(t, t->linha + t->pos, t->linha_n - t->pos);
+    eco(t, "\033[K", 3);
+    mover(t, -(int)letras(t->linha + t->pos, t->linha_n - t->pos));
+}
+
+static void inserir(tty_t *t, const char *b, u32 n)
+{
+    if (t->linha_n + n >= LINHA_MAX) return;
+    for (u32 i = t->linha_n; i > t->pos; i--) t->linha[i - 1 + n] = t->linha[i - 1];
+    mem_copia(t->linha + t->pos, b, n);
+    t->linha_n += n;
+    eco(t, b, n);
+    t->pos += n;
+    if (t->pos < t->linha_n) redesenhar_resto(t);
+}
+
+static void apagar(tty_t *t, u32 de, u32 ate)    /* tira os bytes [de, ate) */
+{
+    for (u32 i = ate; i < t->linha_n; i++) t->linha[i - (ate - de)] = t->linha[i];
+    t->linha_n -= ate - de;
+}
+
+static u32 anterior(tty_t *t, u32 p) { do p--; while (p > 0 && continuacao(t->linha[p])); return p; }
+static u32 proxima(tty_t *t, u32 p)  { do p++; while (p < t->linha_n && continuacao(t->linha[p])); return p; }
+
+/* Troca a linha inteira (o histórico) */
+static void trocar_linha(tty_t *t, const char *nova)
+{
+    mover(t, -(int)letras(t->linha, t->pos));
+    t->linha_n = str_tam(nova);
+    mem_copia(t->linha, nova, t->linha_n);
+    t->pos = t->linha_n;
+    eco(t, t->linha, t->linha_n);
+    eco(t, "\033[K", 3);
+}
+
+static void historico(tty_t *t, int direcao)
+{
+    if (direcao < 0 && t->hist_ver == 0) return;
+    if (direcao > 0 && t->hist_ver >= t->hist_n) return;
+    if (t->hist_ver == t->hist_n) {               /* saindo da linha nova: guarda ela */
+        mem_copia(t->guardada, t->linha, t->linha_n);
+        t->guardada[t->linha_n] = 0;
+    }
+    t->hist_ver = (u32)((int)t->hist_ver + direcao);
+    trocar_linha(t, t->hist_ver == t->hist_n ? t->guardada : t->hist[t->hist_ver % HISTORICO]);
+}
+
+static void lembrar(tty_t *t)
+{
+    if (!t->eco || !t->linha_n) return;              /* senhas não vão para o histórico */
+    t->linha[t->linha_n] = 0;
+    if (t->hist_n && str_igual(t->hist[(t->hist_n - 1) % HISTORICO], t->linha)) return;
+    str_copia(t->hist[t->hist_n % HISTORICO], t->linha, LINHA_MAX);
+    t->hist_n++;
+}
+
+/* Uma tecla especial (Esc [ ...) com a linha sendo editada */
+static void tecla_especial(tty_t *t, const char *seq)
+{
+    if (str_igual(seq, "[D") && t->pos > 0) { t->pos = anterior(t, t->pos); mover(t, -1); }
+    else if (str_igual(seq, "[C") && t->pos < t->linha_n) { t->pos = proxima(t, t->pos); mover(t, 1); }
+    else if (str_igual(seq, "[H") || str_igual(seq, "[1~")) { mover(t, -(int)letras(t->linha, t->pos)); t->pos = 0; }
+    else if (str_igual(seq, "[F") || str_igual(seq, "[4~")) {
+        mover(t, (int)letras(t->linha + t->pos, t->linha_n - t->pos));
+        t->pos = t->linha_n;
+    } else if (str_igual(seq, "[3~") && t->pos < t->linha_n) {             /* Delete */
+        apagar(t, t->pos, proxima(t, t->pos));
+        redesenhar_resto(t);
+    } else if (str_igual(seq, "[A")) historico(t, -1);
+    else if (str_igual(seq, "[B")) historico(t, 1);
+    /* (as outras, como F1, não fazem nada numa linha) */
+}
+
+static void enter(tty_t *t)
+{
+    mover(t, (int)letras(t->linha + t->pos, t->linha_n - t->pos));     /* o cursor vai para o fim */
+    tela(t, "\n", 1, 0);
+    lembrar(t);
+    t->hist_ver = t->hist_n;
+    for (u32 i = 0; i <= t->linha_n && t->fila_n < FILA_TAM; i++) {
+        t->fila[(t->fila_ini + t->fila_n) % FILA_TAM] = i < t->linha_n ? t->linha[i] : '\n';
+        t->fila_n++;
+    }
+    t->linha_n = t->pos = 0;
+    atender_leitores(t);
+}
+
+/* As teclas de uma mensagem: um caractere, uma letra UTF-8, ou uma sequência Esc */
+static void teclas(tty_t *t, const char *b, u32 n)
+{
+    if (t->cru) {                               /* vão como vieram (até o Ctrl+C), de uma vez */
+        for (u32 i = 0; i < n && t->fila_n < FILA_TAM; i++) t->fila[(t->fila_ini + t->fila_n++) % FILA_TAM] = b[i];
+        atender_leitores(t);
+        return;
+    }
+    for (u32 i = 0; i < n; i++) {
+        char c = b[i];
+        if (t->esc_n) {                         /* no meio de Esc [ ... */
+            if (t->esc_n < sizeof t->esc - 1) t->esc[t->esc_n - 1] = c;
+            t->esc_n++;
+            int fim = (t->esc_n == 2 && c != '[' && c != 'O') || (t->esc_n > 2 && (c >= 0x40 && c <= 0x7E));
+            if (fim) {
+                t->esc[t->esc_n - 1 < sizeof t->esc ? t->esc_n - 1 : sizeof t->esc - 1] = 0;
+                if (t->esc[0] == 'O') t->esc[0] = '[';   /* Esc O H/F = Esc [ H/F */
+                tecla_especial(t, t->esc);
+                t->esc_n = 0;
+            }
+            continue;
+        }
+        if (c == 27) { if (i + 1 < n) t->esc_n = 1; continue; }   /* Esc sozinho: nada */
+        if (c == 3) interromper(t);                                 /* Ctrl+C */
+        else if (c == 4) {                                          /* Ctrl+D */
+            if (t->linha_n == 0) { t->fins++; tela(t, "^D\n", 3, COR(COR_CINZA_CLARO)); atender_leitores(t); }
+        } else if (c == '\b' || c == 127) {
+            if (t->pos > 0) {
+                u32 p = anterior(t, t->pos);
+                apagar(t, p, t->pos);
+                t->pos = p;
+                if (t->eco) { mover(t, -1); redesenhar_resto(t); }
+            }
+        } else if (c == '\n') enter(t);
+        else if ((u8)c >= 0xC0) {                                   /* uma letra UTF-8 inteira */
+            u32 k = 1;
+            while (i + k < n && continuacao(b[i + k])) k++;
+            inserir(t, b + i, k);
+            i += k - 1;
+        } else if ((u8)c >= 32 && c != 127 && !continuacao(c)) inserir(t, &c, 1);
+    }
+}
+
+static void tecla(tty_t *t, char c) { teclas(t, &c, 1); }
 
 /* MSG_ESCREVER; num terminal virtual com a saída cheia, a resposta espera */
 static int escrever(tty_t *t, msg_t *m)
@@ -259,7 +420,9 @@ int main(int argc, char **argv)
         tty_t *t = tty_de(no_arg1 ? m.arg[1] : m.arg[0]);
 
         if (m.tipo == MSG_TECLA && m.origem == PID_TECLADO) {
-            tecla(&ttys[0], (char)m.arg[0]);
+            u32 n = m.arg[1] >= 1 && m.arg[1] <= MSG_TEXTO_MAX ? m.arg[1] : 0;
+            if (n) teclas(&ttys[0], m.texto, n);
+            else tecla(&ttys[0], (char)m.arg[0]);
         } else if (m.tipo == TERM_PTY_CRIAR) {
             u32 c = 0;
             for (u32 i = 1; i <= TERM_PTY_MAX && !c; i++) {
@@ -281,7 +444,7 @@ int main(int argc, char **argv)
             atender_escritores(t);
         } else if (m.tipo == TERM_PTY_TECLAS && t != &ttys[0]) {
             u32 n = m.arg[2] < MSG_TEXTO_MAX ? m.arg[2] : MSG_TEXTO_MAX;
-            for (u32 i = 0; i < n; i++) tecla(t, m.texto[i]);
+            teclas(t, m.texto, n);
             responder(m.origem, MSG_OK, n);
         } else if (m.tipo == TERM_PTY_FECHAR && t != &ttys[0]) {
             pty_fechar(t);
@@ -302,7 +465,7 @@ int main(int argc, char **argv)
             responder(m.origem, MSG_OK, 0);
         } else if (m.tipo == TERM_CRU) {
             t->cru = m.arg[0] != 0;
-            if (t->cru) t->linha_n = 0;
+            if (t->cru) t->linha_n = t->pos = 0;
             responder(m.origem, MSG_OK, 0);
         } else if (m.tipo == TERM_ECO) {
             t->eco = m.arg[0] != 0;

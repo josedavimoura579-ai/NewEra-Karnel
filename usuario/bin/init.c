@@ -75,6 +75,7 @@ int main(int argc, char **argv)
     (void)argc; (void)argv;
     sinal_tratar(SINAL_INT, (void (*)(int))SINAL_IGNORAR);
     montar_tudo();
+    teclado_do_etc();                       /* o layout do disco (br ou us) */
 
     /* o root ainda sem senha? avisa (como na primeira vez de um Arch) */
     char *sombra = texto_de("/etc/sombra");

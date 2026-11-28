@@ -39,7 +39,7 @@ etapa, e quem monta o próprio sistema pelo NEFS herda tudo isso no código
 
 Cada etapa termina com algo testável no QEMU (e uma foto da tela).
 
-- [ ] **Etapa 1 — o teclado completo**
+- [x] **Etapa 1 — o teclado completo** ([livro, capítulo 24](livro/24-o-teclado.md))
   - o layout ABNT2 (ç, acentos com as teclas mortas, o / e o ? da tecla
     do lado do Shift direito) e o US; o `/etc/teclado`
   - as teclas especiais: setas, Home, End, Page Up/Down, Insert, Delete,
@@ -49,6 +49,22 @@ Cada etapa termina com algo testável no QEMU (e uma foto da tela).
   - nas janelas, as teclas especiais chegam como eventos próprios
   - *Teste: digitar "ação, você, à, pôr" no terminal e no bloco de notas;
     a seta para cima traz o comando anterior.*
+  - Feito: o driver tem os layouts ABNT2 (o padrão) e US, com Shift, AltGr
+    e Caps Lock; as teclas mortas ´ ` ~ ^ ¨ (e ´c = ç); as setas, Home,
+    End, Insert, Delete, Page Up/Down, F1–F12 e Alt como as sequências do
+    xterm; uma mensagem por tecla (`MSG_TECLA` com os bytes). O
+    `TECLADO_MAPA` troca o layout (o comando `layout`); o `/etc/teclado`
+    (lido pelo shell do boot e pelo `init`) e o `teclado=us` na linha de
+    boot. O servidor de terminal edita a linha (as setas, Home, End,
+    Delete, Backspace no meio, UTF-8) e guarda as últimas 32 linhas (a
+    seta para cima), menos as senhas; o vídeo e o `term` entendem
+    Esc [ n D, Esc [ n C e Esc [ K. Nas janelas, `jn_teclas` e
+    `jn_tecla_bytes` (a libc): as letras em Unicode e as especiais como
+    `JN_CIMA`, `JN_F(n)`...; a caixa de texto, o bloco e a tela de
+    entrada aceitam acentos. O `run.sh` liga o QEMU com `-k pt-br` (ou,
+    sem o mapa, o `teclado=us`). Conferido no QEMU: "ação, você, à, pôr é
+    Ç"; o histórico; inserir no meio da linha; os acentos no `term` e no
+    bloco.
 - [ ] **Etapa 2 — o painel e o menu**
   - o painel embaixo: o botão do menu (com a logo), a lista das janelas
     abertas, o relógio e o botão de sair

@@ -177,9 +177,16 @@ jn_controle_t *jn_tratar(jn_janela_t *j, const jn_evento_t *e)
             }
             return NULL;
         }
-        if (e->tecla == '\b') { if (n) c->texto[n - 1] = 0; }
-        else if (e->tecla >= 32 && e->tecla < 127 && n + 1 < sizeof c->texto) { c->texto[n] = (char)e->tecla; c->texto[n + 1] = 0; }
-        else return NULL;
+        if (e->tecla == '\b') {                      /* apaga a última letra (UTF-8: 1 a 3 bytes) */
+            while (n > 0 && ((unsigned char)c->texto[n - 1] & 0xC0) == 0x80) c->texto[--n] = 0;
+            if (n) c->texto[--n] = 0;
+        } else if (e->tecla >= 32 && e->tecla != 127 && e->tecla < 0xE000 && !(e->botoes & JN_ALT)) {
+            char u[4];
+            int k = jn_utf8(e->tecla, u);
+            if (n + (size_t)k + 1 >= sizeof c->texto) return NULL;
+            memcpy(c->texto + n, u, (size_t)k);
+            c->texto[n + (size_t)k] = 0;
+        } else return NULL;
         jn_desenhar_controle(j, c);
         return NULL;
     }

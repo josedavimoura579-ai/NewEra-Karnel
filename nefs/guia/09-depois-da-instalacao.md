@@ -7,7 +7,11 @@ whoami                          quem sou eu
 sudo adduser beto               mais um usuário
 echo oi > /dados/oi.txt         o FAT32: abre no Windows e no celular
 nefs livro                      o Livro 1: como o NovaEra funciona
+layout us                       o teclado americano (o padrão é o ABNT2: br)
 ```
+
+Para o teclado valer em todo boot, o root põe `br` ou `us` no
+`/etc/teclado`.
 
 ## O modo gráfico
 

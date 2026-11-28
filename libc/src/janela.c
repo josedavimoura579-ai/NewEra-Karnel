@@ -223,3 +223,74 @@ void jn_fechar(jn_janela_t *j)
     free(j->im);
     free(j);
 }
+
+/* ------------------------------- As teclas -------------------------------- */
+
+int jn_utf8(int u, char *o)
+{
+    if (u < 0x80) { o[0] = (char)u; return 1; }
+    if (u < 0x800) { o[0] = (char)(0xC0 | u >> 6); o[1] = (char)(0x80 | (u & 63)); return 2; }
+    o[0] = (char)(0xE0 | u >> 12); o[1] = (char)(0x80 | ((u >> 6) & 63)); o[2] = (char)(0x80 | (u & 63));
+    return 3;
+}
+
+static const struct { const char *seq; int tecla; } especiais[] = {
+    { "[A", JN_CIMA }, { "[B", JN_BAIXO }, { "[C", JN_DIREITA_T }, { "[D", JN_ESQUERDA_T },
+    { "[H", JN_INICIO }, { "[F", JN_FIM }, { "[1~", JN_INICIO }, { "[4~", JN_FIM },
+    { "[2~", JN_INSERT }, { "[3~", JN_DELETE }, { "[5~", JN_PG_CIMA }, { "[6~", JN_PG_BAIXO },
+    { "OP", JN_F(1) }, { "OQ", JN_F(2) }, { "OR", JN_F(3) }, { "OS", JN_F(4) },
+    { "[15~", JN_F(5) }, { "[17~", JN_F(6) }, { "[18~", JN_F(7) }, { "[19~", JN_F(8) },
+    { "[20~", JN_F(9) }, { "[21~", JN_F(10) }, { "[23~", JN_F(11) }, { "[24~", JN_F(12) },
+    { "OH", JN_INICIO }, { "OF", JN_FIM }, { 0, 0 } };
+
+int jn_teclas(const char *b, int n, int *teclas, int *mods, int max)
+{
+    int k = 0;
+    for (int i = 0; i < n && k < max; ) {
+        unsigned char c = (unsigned char)b[i];
+        int mod = 0;
+        if (c == 27 && i + 1 < n) {
+            unsigned char d = (unsigned char)b[i + 1];
+            if (d == '[' || d == 'O') {                       /* Esc [ ... : uma tecla especial */
+                int j = i + 2;
+                while (j < n && !((unsigned char)b[j] >= 0x40 && (unsigned char)b[j] <= 0x7E)) j++;
+                char seq[8];
+                int l = j - i;                                /* sem o Esc, com o último */
+                if (l > 7) l = 7;
+                memcpy(seq, b + i + 1, (size_t)l);
+                seq[l] = 0;
+                int t = 0;
+                for (int e = 0; especiais[e].seq; e++) if (!strcmp(especiais[e].seq, seq)) t = especiais[e].tecla;
+                if (t) { teclas[k] = t; mods[k++] = 0; }
+                i = j + 1;
+                continue;
+            }
+            mod = JN_ALT;                                     /* Esc e uma tecla: Alt+tecla */
+            i++;
+            c = (unsigned char)b[i];
+        }
+        int u = c, extra = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
+        if (extra) u = c & (0x3F >> extra);
+        i++;
+        for (int e = 0; e < extra && i < n && ((unsigned char)b[i] & 0xC0) == 0x80; e++, i++)
+            u = u << 6 | ((unsigned char)b[i] & 63);
+        if (u == '\r') u = '\n';
+        teclas[k] = u;
+        mods[k++] = mod;
+    }
+    return k;
+}
+
+int jn_tecla_bytes(int tecla, int mods, char *o)
+{
+    int k = 0;
+    for (int e = 0; especiais[e].seq; e++)
+        if (especiais[e].tecla == tecla) {
+            o[k++] = 27;
+            for (const char *p = especiais[e].seq; *p; p++) o[k++] = *p;
+            return k;
+        }
+    if (tecla >= 0xE000 && tecla < 0xF900) return 0;          /* uma especial que não tem bytes */
+    if (mods & JN_ALT) o[k++] = 27;
+    return k + jn_utf8(tecla, o + k);
+}

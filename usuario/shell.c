@@ -113,6 +113,7 @@ static void cmd_ajuda(void)
     escreve("Programas em /bin (veja: ls /bin):\n", COR(COR_CIANO_CLARO));
     escreve("  ls cat echo mkdir rm cp cmp base64 novafetch ola codigo memoria falha filho\n", c);
     escreve("  kill sleep  (sinais: Ctrl+C interrompe o comando; nefs livro 8)\n", c);
+    escreve("  layout br|us  (o teclado; a seta para cima traz o comando anterior; nefs livro 24)\n", c);
     escreve("  janelas term relogio calculadora rabisco bloco bolas  mouse ver letras\n", c);
     escreve("      (modo grafico: bash run.sh grafico ou vnc; nefs livro 16 a 23)\n", c);
     escreve("  adduser login su sudo passwd chmod chown id whoami  (nefs livro 11)\n", c);
@@ -477,6 +478,7 @@ int main(int argc, char **argv)
     sys_tarefa_info((u32)sys_pid(), &eu);
     u32 reinicios = eu.arg[1], falha = eu.arg[2];
 
+    if (do_boot) teclado_do_etc();            /* o layout (br ou us) do /etc/teclado */
     if (do_boot) modo_init();                 /* instalado num disco? vira o init */
 
     /* o nome da máquina (/etc/hostname), se o sistema tiver um */

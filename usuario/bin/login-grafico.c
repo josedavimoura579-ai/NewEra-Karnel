@@ -23,6 +23,7 @@
 #include <math.h>
 #include <pthread.h>
 #include <grafico.h>
+#include <janela.h>      /* (só jn_teclas: as teclas que chegam do terminal) */
 #include "contas.h"
 #include "papel.h"
 #include "sistema.h"     /* gerado de sistema.conf pelo build.sh */
@@ -215,9 +216,12 @@ static void tecla(int c)
     size_t k = strlen(s);
     if (c == '\t') campo_ativo = !campo_ativo;
     else if (c == '\n') { if (campo_ativo == 0 && usuario[0]) campo_ativo = 1; else if (usuario[0]) tentar = 1; }
-    else if (c == '\b') { if (k) s[k - 1] = 0; }
+    else if (c == '\b') {                             /* a última letra (UTF-8: 1 a 3 bytes) */
+        while (k > 0 && ((unsigned char)s[k - 1] & 0xC0) == 0x80) s[--k] = 0;
+        if (k) s[--k] = 0;
+    }
     else if (c == 27) { s[0] = 0; }
-    else if (c > ' ' && c < 127 && k < CAMPO_MAX) { s[k] = (char)c; s[k + 1] = 0; }
+    else if (c > ' ' && c != 127 && c < 0xE000 && k + 3 < CAMPO_MAX) { k += (size_t)jn_utf8(c, s + k); s[k] = 0; }
     else return;
     if (c != '\n') aviso[0] = 0;
     sujo = 1;
@@ -228,11 +232,14 @@ static void *thread_teclado(void *x)
 {
     (void)x;
     thread_teclado_id = (u32)sys_pid();
-    char c;
-    while (read(0, &c, 1) == 1) {
+    char b[32];
+    long n;
+    while ((n = read(0, b, sizeof b)) > 0) {
+        int teclas[32], mods[32];
+        int k = jn_teclas(b, (int)n, teclas, mods, 32);
         pthread_mutex_lock(&g);
         if (entrou) { pthread_mutex_unlock(&g); break; }
-        tecla((unsigned char)c);
+        for (int i = 0; i < k; i++) if (!mods[i]) tecla(teclas[i]);   /* (as setas e o Alt não fazem nada aqui) */
         pthread_mutex_unlock(&g);
     }
     return NULL;

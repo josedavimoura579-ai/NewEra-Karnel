@@ -492,12 +492,16 @@ static void sair(int codigo)
 static void *thread_teclado(void *x)
 {
     (void)x;
-    char c;
-    while (read(0, &c, 1) == 1) {
+    char b[32];
+    long n;
+    while ((n = read(0, b, sizeof b)) > 0) {   /* uma tecla (ou algumas) por leitura */
+        int teclas[32], mods[32];
+        int k = jn_teclas(b, (int)n, teclas, mods, 32);
         pthread_mutex_lock(&g);
-        if (c == CTRL_Q) sair(0);
-        if (c == '\r') c = '\n';
-        evento(frente(), JN_TECLA, 0, 0, 0, 0, (unsigned char)c, 0);
+        for (int i = 0; i < k; i++) {
+            if (teclas[i] == CTRL_Q) sair(0);
+            evento(frente(), JN_TECLA, 0, 0, 0, mods[i], teclas[i], 0);
+        }
         pthread_mutex_unlock(&g);
     }
     return NULL;

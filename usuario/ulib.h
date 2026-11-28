@@ -823,4 +823,36 @@ static inline void discos_sincronizar(void)
 
 int main(int argc, char **argv);
 
+/* O layout do teclado do /etc/teclado ("br" ou "us", na 1ª linha que não é
+ * um comentário), ou do "teclado=us" na linha de boot: o shell do boot e o
+ * init chamam. */
+static inline void teclado_do_etc(void)
+{
+    msg_t lb;                                   /* "teclado=us" na linha de boot vale mais */
+    sys_linha_boot(&lb);
+    for (const char *p = lb.texto; *p; p++)
+        if (mem_igual(p, "teclado=", 8)) {
+            msg_t m;
+            msg_zera(&m);
+            m.tipo = TECLADO_MAPA;
+            m.arg[0] = p[8] == 'u' ? 0 : 1;
+            sys_chamar(PID_TECLADO, &m);
+            return;
+        }
+    u32 tam;
+    u8 *t = arq_carregar("/etc/teclado", &tam);
+    if (!t) return;
+    u32 i = 0;
+    while (i < tam && (t[i] == '#' || t[i] == '\n' || t[i] == ' ')) {   /* pula os comentários */
+        if (t[i] == '#') while (i < tam && t[i] != '\n') i++;
+        else i++;
+    }
+    msg_t m;
+    msg_zera(&m);
+    m.tipo = TECLADO_MAPA;
+    m.arg[0] = i + 1 < tam && t[i] == 'u' && t[i + 1] == 's' ? 0 : 1;
+    ufree(t);
+    sys_chamar(PID_TECLADO, &m);
+}
+
 #endif
