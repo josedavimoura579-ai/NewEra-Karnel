@@ -516,7 +516,7 @@ degraus, e cada fase já entrega algo usável. Detalhes em
   - [x] Etapa 7 — **o terminal gráfico**: o shell numa janela (`term`), vários ao mesmo tempo, cada um com o seu Ctrl+C ([livro, capítulo 22](nefs/livro/22-o-terminal-grafico.md))
   - [x] Etapa 8 — **o modo gráfico no boot**: o sistema instalado liga numa tela de entrada gráfica; o modo texto continua como opção ([livro, capítulo 23](nefs/livro/23-o-modo-grafico-no-boot.md))
   - [x] Etapa 9 — **o livro e o lançamento**: o Livro 1 com a parte gráfica (capítulos 16 a 23), o guia de instalação com o modo gráfico, e o **NEFS 0.3**: a ISO que liga em modo gráfico
-- [ ] **Fase 6 — a área de trabalho do NovaEra e o modo pronto**: painel, menu, janelas, gerenciador de arquivos e terminal gráfico (no estilo do XFCE), pacotes e um **instalador estilo Debian/Ubuntu** com a opção "com área de trabalho"
+- [ ] **Fase 6 — a área de trabalho do NovaEra e o modo pronto** (plano em 9 etapas: [`nefs/FASE6.md`](nefs/FASE6.md)): painel, menu, janelas, gerenciador de arquivos e terminal gráfico (no estilo do XFCE), pacotes e um **instalador estilo Debian/Ubuntu** com a opção "com área de trabalho"
 - [ ] **Fase 7 — rede e o XFCE4 de verdade**: TCP/IP, porte do GCC ou do clang, do X11, do GTK e do **XFCE4**
 
 ---
